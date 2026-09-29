@@ -3,200 +3,363 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Truy xuất nguồn gốc và giám sát chuỗi lạnh nông sản</title>
+  <title>AGRI-CHAIN · Giám Sát Chuỗi Lạnh & Truy Xuất Nguồn Gốc Nông Sản</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
+  <!-- Background Glow Orbs -->
+  <div class="bg-mesh">
+    <div class="glow-orb orb-1"></div>
+    <div class="glow-orb orb-2"></div>
+    <div class="glow-orb orb-3"></div>
+  </div>
+
   <!-- ================================= HEADER ================================= -->
   <header class="app-header">
     <div class="app-header__inner">
-      <div>
-        <h1 class="app-title">Truy xuất nguồn gốc và giám sát chuỗi lạnh nông sản</h1>
-        <p class="app-subtitle">Frontend demo · HTML5 + CSS + JavaScript thuần (không framework)</p>
+      <div class="brand">
+        <div class="brand__logo">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10S2 17.523 2 12c0-2.5 1-5 3-7"/>
+            <path d="M12 6v6l4 2"/>
+            <path d="M7 16c2-4 6-6 10-6"/>
+            <circle cx="12" cy="12" r="3" fill="#10b981" stroke="none"/>
+          </svg>
+        </div>
+        <div class="brand__text">
+          <div class="brand__name">AGRI-CHAIN <span class="badge-version">v2.0 · ICTU</span></div>
+          <p class="brand__tagline">Truy xuất nguồn gốc & giám sát chuỗi lạnh nông sản · Khối 18 - Nhóm 5</p>
+        </div>
       </div>
+
       <div class="app-header__actions">
-        <span id="health-badge" class="badge badge--muted">Đang kiểm tra backend…</span>
-        <span id="user-badge" class="badge badge--muted" hidden>Chưa đăng nhập</span>
-        <button id="btn-reload" class="btn btn--light" type="button" hidden>Tải lại dữ liệu</button>
-        <button id="btn-logout" class="btn btn--light" type="button" hidden>Đăng xuất</button>
+        <div id="health-badge" class="badge badge--pulse badge--muted">
+          <span class="pulse-dot"></span>
+          <span class="badge-text">Đang kết nối backend…</span>
+        </div>
+        <div id="user-badge" class="badge badge--user" hidden>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span id="user-badge-text">Chưa đăng nhập</span>
+        </div>
+        <button id="btn-reload" class="btn btn--glass" type="button" title="Làm mới dữ liệu" hidden>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+          <span>Làm mới</span>
+        </button>
+        <button id="btn-logout" class="btn btn--danger-glass" type="button" title="Đăng xuất khỏi hệ thống" hidden>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          <span>Đăng xuất</span>
+        </button>
       </div>
     </div>
   </header>
 
+  <!-- ============================== MÀN HÌNH ĐĂNG NHẬP ============================== -->
   <main class="container">
-    <!-- ============================== ĐĂNG NHẬP ============================== -->
-    <!-- Màn hình login đơn giản: gọi POST /auth/login, không dùng JWT. -->
     <section id="login-view" class="login" aria-label="Đăng nhập hệ thống">
-      <div class="login__card card">
-        <header class="card__header">
-          <div>
-            <h2 class="card__title">Đăng nhập hệ thống</h2>
-            <p class="card__desc">Đăng nhập để dùng chức năng theo vai trò (phân quyền cơ bản).</p>
+      <div class="login-split">
+        <!-- Visual Art Side -->
+        <div class="login-art">
+          <div class="login-art__badge">
+            <span class="sparkle">✨</span> Hệ Thống Chuỗi Cung Ứng Nông Nghiệp Số
           </div>
-          <p class="card__endpoints">
-            <code>POST /auth/login</code>
+          <h2 class="login-art__title">Minh Bạch Từ Vườn Trồng<br><span class="gradient-text">Đến Bàn Ăn</span></h2>
+          <p class="login-art__desc">
+            Nền tảng kiểm định nguồn gốc nông sản theo tiêu chuẩn VietGAP kết hợp giám sát nhiệt độ chuỗi lạnh liên tục.
           </p>
-        </header>
 
-        <form id="login-form" class="form">
-          <label class="field">
-            <span class="field__label">Tên đăng nhập <em>*</em></span>
-            <input id="login-username" type="text" maxlength="50" required
-                   autocomplete="username" placeholder="admin hoặc farmer" />
-          </label>
-          <label class="field">
-            <span class="field__label">Mật khẩu <em>*</em></span>
-            <input id="login-password" type="password" maxlength="128" required
-                   autocomplete="current-password" placeholder="123456" />
-          </label>
-          <div class="form__actions">
-            <button id="login-submit" class="btn btn--primary" type="submit">Đăng nhập</button>
+          <div class="art-preview-card">
+            <div class="art-preview__header">
+              <div class="art-sensor">
+                <span class="art-sensor__dot"></span>
+                <span>CẢM BIẾN CHUỖI LẠNH TRỰC TUYẾN</span>
+              </div>
+              <span class="art-temp">4.8°C</span>
+            </div>
+            <div class="art-preview__body">
+              <div class="art-meta-item">
+                <span class="label">Mã lô mẫu:</span>
+                <span class="val font-mono">BATCH-CL-2026-09</span>
+              </div>
+              <div class="art-meta-item">
+                <span class="label">Nông sản:</span>
+                <span class="val">Xoài cát Chu Cao Lãnh (Loại 1)</span>
+              </div>
+              <div class="art-meta-item">
+                <span class="label">Trạng thái:</span>
+                <span class="val text-success">✓ Chuỗi lạnh chuẩn đạt 100%</span>
+              </div>
+            </div>
           </div>
-        </form>
 
-        <p class="login__hint">
-          Tài khoản demo: <code>admin / 123456</code> (role <strong>admin</strong> — toàn bộ chức năng)
-          · <code>farmer / 123456</code> (role <strong>farmer</strong> — quản lý nông sản)
-        </p>
+          <div class="login-art__features">
+            <div class="feat-pill">🛡️ Băm dữ liệu chống sửa lén</div>
+            <div class="feat-pill">📍 Toạ độ thửa VietGAP</div>
+            <div class="feat-pill">❄️ Giám sát nhiệt độ thời gian thực</div>
+          </div>
+        </div>
+
+        <!-- Form Side -->
+        <div class="login__card card">
+          <div class="card__header">
+            <div>
+              <div class="pill-tag">Xác thực hệ thống</div>
+              <h2 class="card__title">Đăng nhập tài khoản</h2>
+              <p class="card__desc">Vui lòng đăng nhập để bắt đầu phiên làm việc.</p>
+            </div>
+          </div>
+
+          <!-- Quick Fill Buttons for Demo -->
+          <div class="quick-fill-box">
+            <span class="quick-fill-label">Điền nhanh tài khoản demo:</span>
+            <div class="quick-fill-buttons">
+              <button type="button" class="btn-chip" onclick="quickFill('admin', '123456')">
+                <span class="chip-role chip-admin">Admin</span> admin / 123456
+              </button>
+              <button type="button" class="btn-chip" onclick="quickFill('farmer', '123456')">
+                <span class="chip-role chip-farmer">Farmer</span> farmer / 123456
+              </button>
+            </div>
+          </div>
+
+          <form id="login-form" class="form">
+            <label class="field">
+              <span class="field__label">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Tên đăng nhập <em>*</em>
+              </span>
+              <input id="login-username" type="text" maxlength="50" required
+                     autocomplete="username" placeholder="Nhập admin hoặc farmer" />
+            </label>
+            <label class="field">
+              <span class="field__label">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Mật khẩu <em>*</em>
+              </span>
+              <input id="login-password" type="password" maxlength="128" required
+                     autocomplete="current-password" placeholder="Nhập mật khẩu (123456)" />
+            </label>
+            <div class="form__actions">
+              <button id="login-submit" class="btn btn--primary btn--block" type="submit">
+                <span>Vào hệ thống quản trị</span>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+              </button>
+            </div>
+          </form>
+
+          <div class="login__hint">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <span>Phân quyền cơ bản: <strong>Admin</strong> (toàn quyền & quản trị tài khoản), <strong>Farmer</strong> (quản lý vùng trồng & lô thu hoạch).</span>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
-  <!-- ================ ỨNG DỤNG (chỉ hiện sau khi đăng nhập) ================ -->
+  <!-- ================ ỨNG DỤNG CHÍNH (hiện sau khi đăng nhập) ================ -->
   <div id="app-view" class="container" hidden>
-    <!-- =============================== THỐNG KÊ =============================== -->
+    <!-- Welcome Hero Banner -->
+    <div class="hero-welcome">
+      <div class="hero-welcome__content">
+        <div class="hero-pill">🌿 KHÔNG GIAN LÀM VIỆC NÔNG SẢN SỐ</div>
+        <h2 class="hero-welcome__title">Bảng Điều Khiển Nông Nghiệp & Truy Xuất Nguồn Gốc</h2>
+        <p class="hero-welcome__desc">Quản lý định danh các vùng canh tác thửa đất, kiểm soát từng mẻ thu hoạch và giám sát điều kiện bảo quản chuỗi lạnh.</p>
+      </div>
+      <div class="hero-welcome__actions">
+        <div class="system-time" id="system-time">Sprint 1 · ICTU K18C4-N5</div>
+      </div>
+    </div>
+
+    <!-- =============================== THỐNG KÊ NHANH =============================== -->
     <section class="stats" aria-label="Thống kê nhanh">
-      <article class="stat-card">
-        <span class="stat-card__label">Tổng vùng trồng</span>
-        <strong id="stat-farms" class="stat-card__value">0</strong>
-        <span class="stat-card__hint">Đếm từ <code>GET /farms</code></span>
+      <article class="stat-card stat-card--farms">
+        <div class="stat-card__icon-box">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        </div>
+        <div class="stat-card__content">
+          <span class="stat-card__label">Vùng Trồng Canh Tác</span>
+          <div class="stat-card__value-wrap">
+            <strong id="stat-farms" class="stat-card__value">0</strong>
+            <span class="stat-unit">thửa</span>
+          </div>
+          <span class="stat-card__hint">Đã đăng ký địa lý VietGAP</span>
+        </div>
       </article>
-      <article class="stat-card">
-        <span class="stat-card__label">Tổng lô nông sản</span>
-        <strong id="stat-batches" class="stat-card__value">0</strong>
-        <span class="stat-card__hint">Đếm từ <code>GET /batches</code></span>
+
+      <article class="stat-card stat-card--batches">
+        <div class="stat-card__icon-box">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        </div>
+        <div class="stat-card__content">
+          <span class="stat-card__label">Lô Hàng Đã Ghi Nhận</span>
+          <div class="stat-card__value-wrap">
+            <strong id="stat-batches" class="stat-card__value">0</strong>
+            <span class="stat-unit">lô</span>
+          </div>
+          <span class="stat-card__hint">Được gắn mã phả hệ truy xuất</span>
+        </div>
       </article>
-      <article class="stat-card">
-        <span class="stat-card__label">Tổng sản lượng (kg)</span>
-        <strong id="stat-yield" class="stat-card__value">0</strong>
-        <span class="stat-card__hint">Cộng <code>quantity</code> của mọi lô</span>
+
+      <article class="stat-card stat-card--yield">
+        <div class="stat-card__icon-box">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+        </div>
+        <div class="stat-card__content">
+          <span class="stat-card__label">Tổng Sản Lượng Lưu Hành</span>
+          <div class="stat-card__value-wrap">
+            <strong id="stat-yield" class="stat-card__value">0</strong>
+            <span class="stat-unit">kg</span>
+          </div>
+          <span class="stat-card__hint">Nông sản thu hoạch bảo đảm</span>
+        </div>
       </article>
-      <article class="stat-card">
-        <span class="stat-card__label">API backend</span>
-        <code id="stat-api" class="stat-card__api">http://127.0.0.1:8000</code>
+
+      <article class="stat-card stat-card--api">
+        <div class="stat-card__icon-box">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+        </div>
+        <div class="stat-card__content">
+          <span class="stat-card__label">Cổng API Backend</span>
+          <div class="stat-card__value-wrap">
+            <code id="stat-api" class="stat-card__api font-mono">http://127.0.0.1:8000</code>
+          </div>
+          <span class="stat-card__hint text-success">✓ FastAPI Core Online</span>
+        </div>
       </article>
     </section>
 
     <!-- ========================= 1. QUẢN LÝ VÙNG TRỒNG ========================= -->
-    <section class="card">
-      <header class="card__header">
-        <div>
-          <h2 class="card__title">1. Quản lý vùng trồng</h2>
-          <p class="card__desc">
-            Thêm và sửa vùng trồng ngay tại form; nút <strong>Xoá</strong> chỉ hiện với
-            tài khoản <strong>admin</strong> (farmer gọi API xoá sẽ nhận <code>403 Forbidden</code>).
-          </p>
+    <section class="card card--main">
+      <div class="card__header">
+        <div class="header-title-group">
+          <div class="section-icon-badge">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"/><circle cx="12" cy="10" r="3"/></svg>
+          </div>
+          <div>
+            <h2 class="card__title">1. Quản lý vùng trồng (Thửa đất canh tác)</h2>
+            <p class="card__desc">
+              Khai báo và định danh thửa đất theo yêu cầu Sprint Goal 1. Quyền <strong>Xoá</strong> độc quyền cho <strong>admin</strong>.
+            </p>
+          </div>
         </div>
-        <p class="card__endpoints">
-          <code>POST /farms</code>
-          <code>GET /farms</code>
-          <code>PUT /farms/{id}</code>
-          <code>DELETE /farms/{id}</code>
-        </p>
-      </header>
+        <div class="card__endpoints">
+          <span class="endpoint-pill get">GET /farms</span>
+          <span class="endpoint-pill post">POST /farms</span>
+          <span class="endpoint-pill put">PUT /farms/{id}</span>
+          <span class="endpoint-pill del">DELETE /farms/{id}</span>
+        </div>
+      </div>
 
-      <form id="farm-form" class="form">
-        <p id="farm-form-mode" class="form__mode" hidden></p>
+      <form id="farm-form" class="form modern-form">
+        <div id="farm-form-mode" class="form__mode" hidden></div>
         <div class="form__row">
           <label class="field">
             <span class="field__label">Tên vùng trồng <em>*</em></span>
             <input id="farm-name" type="text" maxlength="255" required
-                   placeholder="VD: Vùng trồng xoài Cao Lãnh" />
+                   placeholder="VD: Vùng trồng Xoài Cát Chu Cao Lãnh" />
           </label>
           <label class="field">
-            <span class="field__label">Địa điểm <em>*</em></span>
+            <span class="field__label">Địa điểm địa lý <em>*</em></span>
             <input id="farm-location" type="text" maxlength="255" required
-                   placeholder="VD: Xã Mỹ Xương, Cao Lãnh, Đồng Tháp" />
+                   placeholder="VD: Xã Mỹ Xương, Huyện Cao Lãnh, Tỉnh Đồng Tháp" />
           </label>
         </div>
 
         <div class="form__row">
           <label class="field">
-            <span class="field__label">Diện tích (ha) <em>*</em></span>
+            <span class="field__label">Diện tích canh tác (ha) <em>*</em></span>
             <input id="farm-area" type="number" min="0.1" step="0.1" required
-                   placeholder="VD: 2.5" />
+                   placeholder="VD: 3.5 (chặn số âm theo AC)" />
           </label>
           <label class="field">
-            <span class="field__label">Chủ sở hữu <em>*</em></span>
+            <span class="field__label">Chủ sở hữu / Hợp tác xã <em>*</em></span>
             <input id="farm-owner" type="text" maxlength="255" required
-                   placeholder="VD: Hợp tác xã Xoài Mỹ Xương" />
+                   placeholder="VD: Hợp tác xã Nông nghiệp Xoài Mỹ Xương" />
           </label>
         </div>
 
         <div class="form__actions">
-          <button id="farm-submit" class="btn btn--primary" type="submit">Thêm vùng trồng</button>
-          <button id="farm-cancel" class="btn btn--ghost" type="button" hidden>Huỷ sửa</button>
+          <button id="farm-submit" class="btn btn--primary" type="submit">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            <span>Thêm vùng trồng</span>
+          </button>
+          <button id="farm-cancel" class="btn btn--ghost" type="button" hidden>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <span>Huỷ sửa</span>
+          </button>
         </div>
       </form>
 
-      <h3 class="table-title">Danh sách vùng trồng</h3>
+      <div class="table-section-head">
+        <h3 class="table-title">Danh sách vùng trồng đã xác thực</h3>
+        <span class="table-count-badge">Dữ liệu nguồn gốc</span>
+      </div>
       <div class="table-wrap">
         <table class="table">
           <thead>
             <tr>
-              <th>ID</th>
+              <th style="width: 70px;">ID</th>
               <th>Tên vùng trồng</th>
               <th>Địa điểm</th>
-              <th class="is-right">Diện tích (ha)</th>
+              <th class="is-right" style="width: 140px;">Diện tích (ha)</th>
               <th>Chủ sở hữu</th>
-              <th class="is-center">Thao tác</th>
+              <th class="is-center" style="width: 160px;">Thao tác</th>
             </tr>
           </thead>
           <tbody id="farm-table-body"></tbody>
         </table>
       </div>
-      <p id="farm-empty" class="empty" hidden>Chưa có vùng trồng nào. Hãy thêm ở form phía trên.</p>
+      <div id="farm-empty" class="empty-state" hidden>
+        <div class="empty-icon">🌱</div>
+        <h4>Chưa có vùng trồng nào được khai báo</h4>
+        <p>Hãy sử dụng biểu mẫu phía trên để thêm vùng canh tác đầu tiên cho hợp tác xã.</p>
+      </div>
     </section>
 
     <!-- ======================== 2. QUẢN LÝ LÔ NÔNG SẢN ======================== -->
-    <section class="card">
-      <header class="card__header">
-        <div>
-          <h2 class="card__title">2. Quản lý lô nông sản</h2>
-          <p class="card__desc">
-            Tạo và sửa lô nông sản của một vùng trồng; nút <strong>Xoá</strong> chỉ hiện
-            với tài khoản <strong>admin</strong>.
-          </p>
+    <section class="card card--main">
+      <div class="card__header">
+        <div class="header-title-group">
+          <div class="section-icon-badge badge--amber">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+          </div>
+          <div>
+            <h2 class="card__title">2. Quản lý lô thu hoạch nông sản</h2>
+            <p class="card__desc">
+              Ghi nhận từng đợt thu hoạch gắn trực tiếp với vùng trồng xuất xứ để phục vụ phả hệ truy xuất và dán nhãn chuỗi lạnh.
+            </p>
+          </div>
         </div>
-        <p class="card__endpoints">
-          <code>POST /batches</code>
-          <code>GET /batches</code>
-          <code>GET /batches/{id}</code>
-          <code>PUT /batches/{id}</code>
-          <code>DELETE /batches/{id}</code>
-        </p>
-      </header>
+        <div class="card__endpoints">
+          <span class="endpoint-pill get">GET /batches</span>
+          <span class="endpoint-pill post">POST /batches</span>
+          <span class="endpoint-pill put">PUT /batches/{id}</span>
+          <span class="endpoint-pill del">DELETE /batches/{id}</span>
+        </div>
+      </div>
 
-      <form id="batch-form" class="form">
-        <p id="batch-form-mode" class="form__mode" hidden></p>
+      <form id="batch-form" class="form modern-form">
+        <div id="batch-form-mode" class="form__mode" hidden></div>
         <div class="form__row">
           <label class="field">
-            <span class="field__label">Vùng trồng (farm_id) <em>*</em></span>
+            <span class="field__label">Vùng trồng xuất xứ <em>*</em></span>
             <select id="batch-farm-id" required></select>
-            <span class="field__hint">Danh sách lấy từ <code>GET /farms</code>.</span>
+            <span class="field__hint">Liên kết dữ liệu khoá ngoại <code>farm_id</code>.</span>
           </label>
           <label class="field">
-            <span class="field__label">Tên sản phẩm <em>*</em></span>
+            <span class="field__label">Tên sản phẩm nông sản <em>*</em></span>
             <input id="batch-product-name" type="text" maxlength="255" required
-                   placeholder="VD: Xoài cát Chu" />
+                   placeholder="VD: Xoài Cát Chu xuất khẩu chuẩn VietGAP" />
           </label>
         </div>
 
         <div class="form__row">
           <label class="field">
-            <span class="field__label">Số lượng (kg) <em>*</em></span>
+            <span class="field__label">Khối lượng thu hoạch (kg) <em>*</em></span>
             <input id="batch-quantity" type="number" min="0.1" step="0.1" required
-                   placeholder="VD: 120.5" />
+                   placeholder="VD: 500.0" />
           </label>
           <label class="field">
             <span class="field__label">Ngày thu hoạch <em>*</em></span>
@@ -205,87 +368,126 @@
         </div>
 
         <div class="form__actions">
-          <button id="batch-submit" class="btn btn--primary" type="submit">Tạo lô nông sản</button>
-          <button id="batch-cancel" class="btn btn--ghost" type="button" hidden>Huỷ sửa</button>
+          <button id="batch-submit" class="btn btn--primary" type="submit">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            <span>Tạo lô nông sản</span>
+          </button>
+          <button id="batch-cancel" class="btn btn--ghost" type="button" hidden>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <span>Huỷ sửa</span>
+          </button>
         </div>
       </form>
 
-      <h3 class="table-title">Danh sách lô nông sản</h3>
+      <div class="table-section-head">
+        <h3 class="table-title">Danh sách các lô thu hoạch theo dõi</h3>
+        <span class="table-count-badge">Nhãn chuỗi lạnh</span>
+      </div>
       <div class="table-wrap">
         <table class="table">
           <thead>
             <tr>
-              <th>ID</th>
+              <th style="width: 70px;">ID</th>
               <th>Vùng trồng</th>
               <th>Tên sản phẩm</th>
-              <th class="is-right">Số lượng (kg)</th>
-              <th>Ngày thu hoạch</th>
-              <th class="is-center">Thao tác</th>
+              <th class="is-right" style="width: 140px;">Khối lượng (kg)</th>
+              <th style="width: 130px;">Ngày thu hoạch</th>
+              <th class="is-center" style="width: 160px;">Thao tác</th>
             </tr>
           </thead>
           <tbody id="batch-table-body"></tbody>
         </table>
       </div>
-      <p id="batch-empty" class="empty" hidden>Chưa có lô nông sản nào. Hãy tạo ở form phía trên.</p>
+      <div id="batch-empty" class="empty-state" hidden>
+        <div class="empty-icon">📦</div>
+        <h4>Chưa có lô thu hoạch nào được tạo</h4>
+        <p>Khai báo lô hàng bằng biểu mẫu trên để theo dõi hành trình chuỗi lạnh.</p>
+      </div>
     </section>
 
     <!-- ==================== TÀI KHOẢN (chỉ admin - Sprint 4) ==================== -->
-    <section id="users-card" class="card" hidden>
-      <header class="card__header">
-        <div>
-          <h2 class="card__title">Tài khoản hệ thống <span class="tag">admin</span></h2>
-          <p class="card__desc">
-            Chỉ <strong>admin</strong> xem được mục này; farmer gọi API sẽ nhận lỗi
-            <code>403 Forbidden</code>.
-          </p>
+    <section id="users-card" class="card card--main" hidden>
+      <div class="card__header">
+        <div class="header-title-group">
+          <div class="section-icon-badge badge--purple">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div>
+            <h2 class="card__title">3. Quản trị tài khoản phân quyền <span class="tag-admin">Chỉ Admin</span></h2>
+            <p class="card__desc">
+              Khu vực bảo mật: Chỉ tài khoản <strong>admin</strong> xem được danh sách. Tài khoản farmer sẽ bị chặn <code>403 Forbidden</code>.
+            </p>
+          </div>
         </div>
-        <p class="card__endpoints">
-          <code>GET /users</code>
-        </p>
-      </header>
+        <div class="card__endpoints">
+          <span class="endpoint-pill get">GET /users</span>
+        </div>
+      </div>
 
       <div class="table-wrap">
         <table class="table">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Tên đăng nhập</th>
-              <th>Vai trò (role)</th>
+              <th style="width: 70px;">ID</th>
+              <th>Tên tài khoản đăng nhập</th>
+              <th>Vai trò phân quyền (Role)</th>
+              <th>Trạng thái bảo mật</th>
             </tr>
           </thead>
           <tbody id="user-table-body"></tbody>
         </table>
       </div>
-      <p id="user-empty" class="empty" hidden>Chưa có tài khoản nào.</p>
+      <div id="user-empty" class="empty-state" hidden>
+        <p>Chưa có tài khoản nào được hiển thị.</p>
+      </div>
     </section>
   </div>
   <!-- /#app-view -->
 
   <!-- ================================== FOOTER ================================= -->
   <footer class="app-footer">
-    <p>
-      Dữ liệu lấy từ backend
-      <a href="http://127.0.0.1:8000/docs" target="_blank" rel="noopener">http://127.0.0.1:8000/docs</a>
-      · Chạy backend: <code>uvicorn app.main:app --reload</code>
-    </p>
-    <p>
-      Đăng nhập demo: <code>admin / 123456</code> (admin) · <code>farmer / 123456</code> (farmer)
-      · API: <code>POST /auth/login</code> — xác thực HTTP Basic, không dùng JWT
-    </p>
-    <p>
-      CRUD: <code>POST</code>/<code>GET</code>/<code>PUT</code>/<code>DELETE</code> cho
-      <code>/farms</code> và <code>/batches</code> · xoá dữ liệu chỉ dành cho <code>admin</code>
-      (farmer nhận <code>403 Forbidden</code>)
-    </p>
+    <div class="app-footer__inner">
+      <div class="footer-col">
+        <h4>AGRI-CHAIN TRACEABILITY</h4>
+        <p>Dự án thực tập cơ sở ICTU · Khối 18 - K18C4 - Nhóm 5</p>
+        <p class="footer-mentor">Mentor hướng dẫn: <strong>Lê Đình Tuấn (CodeGym)</strong></p>
+      </div>
+      <div class="footer-col">
+        <h4>KIẾN TRÚC KỸ THUẬT</h4>
+        <p>• Backend: Python FastAPI + SQLite + SQLAlchemy 2.0</p>
+        <p>• API Docs: <a href="http://127.0.0.1:8000/docs" target="_blank" rel="noopener">Swagger UI (http://127.0.0.1:8000/docs)</a></p>
+        <p>• Bảo mật: HTTP Basic Auth & SHA-256 Hash</p>
+      </div>
+      <div class="footer-col">
+        <h4>CHỨC NĂNG SPRINT 1</h4>
+        <p>✓ Khởi tạo khung ứng dụng & API Health Check</p>
+        <p>✓ Đăng nhập phân quyền theo vai trò Admin / Farmer</p>
+        <p>✓ Khai báo, sửa, xem danh sách vùng trồng & bắt validate</p>
+      </div>
+    </div>
   </footer>
 
-  <!-- Vùng hiển thị thông báo thêm thành công / thất bại -->
+  <!-- Vùng thông báo Toast -->
   <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
   <noscript>
     <p class="noscript">Trang này cần JavaScript để gọi API backend. Hãy bật JavaScript và tải lại trang.</p>
   </noscript>
 
+  <script>
+    function quickFill(user, pass) {
+      const u = document.getElementById('login-username');
+      const p = document.getElementById('login-password');
+      if (u && p) {
+        u.value = user;
+        p.value = pass;
+        u.dispatchEvent(new Event('input'));
+        p.dispatchEvent(new Event('input'));
+        // Visual cue
+        u.focus();
+      }
+    }
+  </script>
   <script src="js/app.js"></script>
 </body>
 </html>
