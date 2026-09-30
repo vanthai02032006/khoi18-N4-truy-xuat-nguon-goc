@@ -26,6 +26,7 @@ SHA-256 không salt nên không chống được brute-force - production nên d
 
 import hashlib
 from hmac import compare_digest
+from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -68,7 +69,7 @@ def verify_password(raw_password: str, hashed_password: str) -> bool:
     return compare_digest(hash_password(raw_password), hashed_password)
 
 
-def authenticate_user(db: Session, username: str, password: str) -> User | None:
+def authenticate_user(db: Session, username: str, password: str) -> Optional[User]:
     """Tra bảng ``users`` và trả về tài khoản nếu thông tin đăng nhập đúng.
 
     Args:
@@ -77,7 +78,7 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
         password: Mật khẩu dạng thô (hàm tự băm để so sánh).
 
     Returns:
-        User | None: Tài khoản nếu hợp lệ, ``None`` nếu sai username **hoặc**
+        Optional[User]: Tài khoản nếu hợp lệ, ``None`` nếu sai username **hoặc**
         sai mật khẩu (cố tình không phân biệt để tránh dò tài khoản).
     """
     user = db.scalar(select(User).where(User.username == username))
@@ -88,7 +89,7 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
 
 # ----------------------------------------------------------- Dependencies ---
 def get_current_user(
-    credentials: HTTPBasicCredentials | None = Depends(basic_scheme),
+    credentials: Optional[HTTPBasicCredentials] = Depends(basic_scheme),
     db: Session = Depends(get_db),
 ) -> User:
     """Dependency: lấy tài khoản đang gọi API từ header ``Authorization``.
