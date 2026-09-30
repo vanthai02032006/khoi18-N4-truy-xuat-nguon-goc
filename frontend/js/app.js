@@ -6,9 +6,12 @@
 
 "use strict";
 
-/* ---------------------------------------------------------- 1. Cấu hình --- */
-// Địa chỉ backend FastAPI (đổi ở đây nếu chạy cổng khác).
-const API_BASE_URL = "http://127.0.0.1:8000";
+// Địa chỉ backend FastAPI: tự động nhận diện localhost/live server hoặc production HTTPS
+const API_BASE_URL =
+  (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") &&
+  window.location.port === "5500"
+    ? "http://127.0.0.1:8000"
+    : "";
 
 // Khoá lưu phiên đăng nhập trong sessionStorage (tự mất khi đóng tab).
 const SESSION_STORAGE_KEY = "ttcs.session";
