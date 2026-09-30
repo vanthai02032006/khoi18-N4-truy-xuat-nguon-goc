@@ -159,12 +159,44 @@ def seed_sample_agricultural_data() -> None:
                     area=5.5,
                     owner="Tổ Hợp Tác Thanh Long Hàm Mỹ",
                 ),
+                Farm(
+                    name="Vườn Nhãn Lồng Hưng Yên Hương Chi (Thửa Đất #5)",
+                    location="Xã Hồng Nam, Thành Phố Hưng Yên, Tỉnh Hưng Yên",
+                    area=3.8,
+                    owner="Hợp Tác Xã Nhãn Miền Thiết",
+                ),
+                Farm(
+                    name="Trang Trại Bơ Booth & Sầu Riêng Đắk Lắk (Thửa Đất #6)",
+                    location="Xã Ea Ktur, Huyện Cư Kuin, Tỉnh Đắk Lắk",
+                    area=12.0,
+                    owner="Hộ Canh Tác Lê Hoàng Long",
+                ),
+                Farm(
+                    name="Vùng Trồng Vải Thiều Lục Ngạn (Thửa Đất #7)",
+                    location="Xã Quý Sơn, Huyện Lục Ngạn, Tỉnh Bắc Giang",
+                    area=7.5,
+                    owner="Hợp Tác Xã Nông Sản Quý Sơn",
+                ),
+                Farm(
+                    name="Thửa Đất Canh Tác Chè Ô Long Mộc Châu (Thửa Đất #8)",
+                    location="Thị Trấn Nông Trường Mộc Châu, Tỉnh Sơn La",
+                    area=15.0,
+                    owner="Công Ty CP Nông Sản Sạch Mộc Châu",
+                ),
             ]
             db.add_all(farms_data)
             db.commit()
 
-            # Lấy ID của các farm vừa tạo
-            f1, f2, f3, f4 = farms_data[0].id, farms_data[1].id, farms_data[2].id, farms_data[3].id
+            f1, f2, f3, f4, f5, f6, f7, f8 = (
+                farms_data[0].id,
+                farms_data[1].id,
+                farms_data[2].id,
+                farms_data[3].id,
+                farms_data[4].id,
+                farms_data[5].id,
+                farms_data[6].id,
+                farms_data[7].id,
+            )
 
             batches_data = [
                 Batch(
@@ -175,7 +207,7 @@ def seed_sample_agricultural_data() -> None:
                 ),
                 Batch(
                     farm_id=f1,
-                    product_name="Xoài Cát Chu Xuất Khẩu",
+                    product_name="Xoài Cát Chu Xuất Khẩu Sang Nhật",
                     quantity=2200.0,
                     harvest_date=date(2026, 9, 28),
                 ),
@@ -186,6 +218,12 @@ def seed_sample_agricultural_data() -> None:
                     harvest_date=date(2026, 9, 26),
                 ),
                 Batch(
+                    farm_id=f2,
+                    product_name="Sầu Riêng Ri6 Tuyển Chọn Loại Đặc Biệt",
+                    quantity=4000.0,
+                    harvest_date=date(2026, 9, 29),
+                ),
+                Batch(
                     farm_id=f3,
                     product_name="Bưởi Da Xanh Đạt Chuẩn GlobalGAP",
                     quantity=2800.0,
@@ -193,9 +231,33 @@ def seed_sample_agricultural_data() -> None:
                 ),
                 Batch(
                     farm_id=f4,
-                    product_name="Thanh Long Ruột Đỏ Hàng Chọn",
+                    product_name="Thanh Long Ruột Đỏ Hàng Chọn Xuất Khẩu",
                     quantity=4100.0,
                     harvest_date=date(2026, 9, 29),
+                ),
+                Batch(
+                    farm_id=f5,
+                    product_name="Nhãn Lồng Hưng Yên Hương Chi Loại 1",
+                    quantity=1800.0,
+                    harvest_date=date(2026, 9, 27),
+                ),
+                Batch(
+                    farm_id=f6,
+                    product_name="Bơ Booth 7 Đắk Lắk Trái To Đều",
+                    quantity=3200.0,
+                    harvest_date=date(2026, 9, 28),
+                ),
+                Batch(
+                    farm_id=f7,
+                    product_name="Vải Thiều Lục Ngạn Chuẩn VietGAP Đóng Hộp",
+                    quantity=5000.0,
+                    harvest_date=date(2026, 9, 26),
+                ),
+                Batch(
+                    farm_id=f8,
+                    product_name="Chè Ô Long Mộc Châu Búp Non Thu Hái Sớm",
+                    quantity=850.0,
+                    harvest_date=date(2026, 9, 30),
                 ),
             ]
             db.add_all(batches_data)

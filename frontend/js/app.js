@@ -226,10 +226,12 @@ function applySessionToUi() {
   $("btn-logout").hidden = !isLoggedIn;
 
   const badge = $("user-badge");
-  badge.hidden = !isLoggedIn;
-  if (isLoggedIn) {
-    badge.textContent = `${session.username} · role: ${session.role}`;
-    badge.className = isAdmin ? "badge badge--ok" : "badge badge--muted";
+  if (badge) {
+    badge.hidden = !isLoggedIn;
+    if (isLoggedIn) {
+      const displayName = session.username === "admin" ? "Quản Trị Viên (Admin)" : "Hộ Nông Dân Canh Tác";
+      badge.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> <span>${escapeHtml(displayName)}</span>`;
+    }
   }
 
   $("users-card").hidden = !isAdmin;
@@ -297,13 +299,17 @@ function handleLogout() {
 async function checkHealth() {
   const badge = $("health-badge");
   try {
-    const data = await apiRequest("/health");
-    badge.textContent = `Backend: ${data.status}`;
-    badge.className = "badge badge--ok";
+    await apiRequest("/health");
+    if (badge) {
+      badge.hidden = true; // Ẩn badge kỹ thuật Backend: running theo yêu cầu
+    }
   } catch (error) {
-    badge.textContent = "Backend: không kết nối được";
-    badge.className = "badge badge--error";
-    toast(error.message, "error");
+    if (badge) {
+      badge.hidden = false;
+      badge.textContent = "Mất kết nối máy chủ";
+      badge.className = "status-pill status-pill--error";
+    }
+    toast("Không thể kết nối đến máy chủ: " + error.message, "error");
   }
 }
 
@@ -812,7 +818,9 @@ async function reloadAll({ silent = false } = {}) {
  * 3. ngược lại, hiện màn hình đăng nhập.
  */
 async function init() {
-  $("stat-api").textContent = API_BASE_URL;
+  if ($("stat-api")) {
+    $("stat-api").textContent = API_BASE_URL;
+  }
   bindEvents();
   resetFarmForm(); // 2 form luôn khởi động ở chế độ "thêm mới / tạo mới"
   resetBatchForm();
