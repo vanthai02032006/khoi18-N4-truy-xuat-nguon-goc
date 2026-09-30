@@ -120,6 +120,92 @@ def seed_default_users() -> None:
         db.close()
 
 
+def seed_sample_agricultural_data() -> None:
+    """Tạo dữ liệu mẫu các thửa đất / vùng trồng và lô nông sản thu hoạch nếu database trống.
+
+    Giúp hệ thống có sẵn dữ liệu trực quan sinh động về đất canh tác, cây trồng,
+    sản lượng và ngày thu hoạch để phục vụ nghiệm thu và demo ngay khi khởi động.
+    """
+    from datetime import date
+    from sqlalchemy import func
+    from app.models import Farm, Batch
+
+    db: Session = SessionLocal()
+    try:
+        farm_count = db.scalar(select(func.count()).select_from(Farm)) or 0
+        if farm_count == 0:
+            farms_data = [
+                Farm(
+                    name="Vùng Trồng Xoài Cát Chu Cao Lãnh (Thửa Đất #1)",
+                    location="Xã Mỹ Xương, Huyện Cao Lãnh, Tỉnh Đồng Tháp",
+                    area=4.5,
+                    owner="Hợp tác xã Xoài Mỹ Xương",
+                ),
+                Farm(
+                    name="Vườn Sầu Riêng Ri6 Chợ Lách (Thửa Đất #2)",
+                    location="Xã Vĩnh Thành, Huyện Chợ Lách, Tỉnh Bến Tre",
+                    area=6.2,
+                    owner="Hộ Nông Dân Nguyễn Văn Nam",
+                ),
+                Farm(
+                    name="Trang Trại Bưởi Da Xanh Sông Xoài (Thửa Đất #3)",
+                    location="Xã Sông Xoài, Thị Xã Phú Mỹ, Bà Rịa - Vũng Tàu",
+                    area=8.0,
+                    owner="HTX Nông Nghiệp Sông Xoài",
+                ),
+                Farm(
+                    name="Vùng Canh Tác Thanh Long Ruột Đỏ (Thửa Đất #4)",
+                    location="Xã Hàm Mỹ, Huyện Hàm Thuận Nam, Bình Thuận",
+                    area=5.5,
+                    owner="Tổ Hợp Tác Thanh Long Hàm Mỹ",
+                ),
+            ]
+            db.add_all(farms_data)
+            db.commit()
+
+            # Lấy ID của các farm vừa tạo
+            f1, f2, f3, f4 = farms_data[0].id, farms_data[1].id, farms_data[2].id, farms_data[3].id
+
+            batches_data = [
+                Batch(
+                    farm_id=f1,
+                    product_name="Xoài Cát Chu Loại 1 (VietGAP)",
+                    quantity=1500.0,
+                    harvest_date=date(2026, 9, 25),
+                ),
+                Batch(
+                    farm_id=f1,
+                    product_name="Xoài Cát Chu Xuất Khẩu",
+                    quantity=2200.0,
+                    harvest_date=date(2026, 9, 28),
+                ),
+                Batch(
+                    farm_id=f2,
+                    product_name="Sầu Riêng Ri6 Cơm Vàng Hạt Lép",
+                    quantity=3400.0,
+                    harvest_date=date(2026, 9, 26),
+                ),
+                Batch(
+                    farm_id=f3,
+                    product_name="Bưởi Da Xanh Đạt Chuẩn GlobalGAP",
+                    quantity=2800.0,
+                    harvest_date=date(2026, 9, 27),
+                ),
+                Batch(
+                    farm_id=f4,
+                    product_name="Thanh Long Ruột Đỏ Hàng Chọn",
+                    quantity=4100.0,
+                    harvest_date=date(2026, 9, 29),
+                ),
+            ]
+            db.add_all(batches_data)
+            db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def init_db() -> None:
     """Tạo toàn bộ bảng trong database dựa trên metadata của các models.
 
@@ -129,11 +215,10 @@ def init_db() -> None:
       giữ nguyên (không làm mất dữ liệu đang lưu).
     - ``seed_default_users()``: tạo 2 tài khoản mặc định cho chức năng đăng nhập
       + phân quyền (Sprint 4).
+    - ``seed_sample_agricultural_data()``: nạp dữ liệu mẫu về thửa đất và lô nông sản.
     """
-    # Import models ngay trong hàm để tránh import vòng (circular import):
-    # models.py cần `Base` từ module này, còn module này cần models đã được
-    # đăng ký vào metadata trước khi gọi create_all().
     from app import models  # noqa: F401  (import để đăng ký metadata)
 
     Base.metadata.create_all(bind=engine)
     seed_default_users()
+    seed_sample_agricultural_data()

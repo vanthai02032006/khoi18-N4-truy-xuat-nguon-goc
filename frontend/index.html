@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AGRI-CHAIN · Hệ Thống Truy Xuất Nguồn Gốc & Chuỗi Lạnh Nông Sản</title>
+  <title>AGRI-TRACE · Hệ Thống Truy Xuất Nguồn Gốc & Chuỗi Lạnh Nông Sản</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -29,8 +29,8 @@
         </div>
         <div class="brand-info">
           <div class="brand-title-wrap">
-            <span class="brand-title">AGRI-CHAIN</span>
-            <span class="brand-badge">ICTU K18C4 · Nhóm 5</span>
+            <span class="brand-title">AGRI-TRACE</span>
+            <span class="brand-badge">ICTU K18C4 · Nhóm 4</span>
           </div>
           <span class="brand-subtitle">Truy xuất nguồn gốc VietGAP & Giám sát chuỗi lạnh nông sản</span>
         </div>
@@ -255,7 +255,7 @@
         </article>
       </section>
 
-      <!-- Section 1: Quản lý Vùng Trồng -->
+      <!-- Section 1: Quản lý Thửa Đất Canh Tác -->
       <section class="content-card">
         <header class="card-header">
           <div class="header-left">
@@ -263,9 +263,9 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"/><circle cx="12" cy="10" r="3"/></svg>
             </div>
             <div>
-              <h3 class="card-title">1. Quản lý vùng trồng (Thửa đất canh tác)</h3>
+              <h3 class="card-title">1. Khai báo thửa đất & Vùng trồng canh tác</h3>
               <p class="card-subtitle">
-                Đăng ký và xác thực toạ độ địa lý thửa đất. Phân quyền xoá dành riêng cho tài khoản <strong>admin</strong>.
+                Đăng ký diện tích đất canh tác, vị trí địa lý thửa đất theo tiêu chuẩn VietGAP. Phân quyền xoá dành riêng cho <strong>admin</strong>.
               </p>
             </div>
           </div>
@@ -282,15 +282,15 @@
           <div class="form-grid">
             <div class="form-group">
               <label for="farm-name" class="input-label">
-                Tên vùng trồng <span class="required">*</span>
+                Tên thửa đất / Vùng trồng <span class="required">*</span>
               </label>
               <input id="farm-name" type="text" maxlength="255" required
-                     placeholder="Ví dụ: Vùng trồng Xoài Cát Chu Cao Lãnh" />
+                     placeholder="Ví dụ: Vườn Xoài Cát Chu Cao Lãnh (Thửa Đất #1)" />
             </div>
 
             <div class="form-group">
               <label for="farm-location" class="input-label">
-                Địa điểm địa lý <span class="required">*</span>
+                Địa điểm / Vị trí thửa đất <span class="required">*</span>
               </label>
               <input id="farm-location" type="text" maxlength="255" required
                      placeholder="Ví dụ: Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp" />
@@ -298,25 +298,25 @@
 
             <div class="form-group">
               <label for="farm-area" class="input-label">
-                Diện tích canh tác (ha) <span class="required">*</span>
+                Diện tích thửa đất (ha) <span class="required">*</span>
               </label>
               <input id="farm-area" type="number" min="0.1" step="0.1" required
-                     placeholder="Ví dụ: 3.5 (chặn diện tích <= 0 theo AC)" />
+                     placeholder="Ví dụ: 4.5 (chặn diện tích <= 0 theo AC)" />
             </div>
 
             <div class="form-group">
               <label for="farm-owner" class="input-label">
-                Chủ sở hữu / Hợp tác xã <span class="required">*</span>
+                Chủ thửa đất / Hộ nông dân <span class="required">*</span>
               </label>
               <input id="farm-owner" type="text" maxlength="255" required
-                     placeholder="Ví dụ: Hợp tác xã Xoài Mỹ Xương" />
+                     placeholder="Ví dụ: Hợp tác xã Xoài Mỹ Xương / Nông dân" />
             </div>
           </div>
 
           <div class="form-buttons">
             <button id="farm-submit" class="btn-action-primary" type="submit">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-              <span>Thêm vùng trồng</span>
+              <span>Lưu thửa đất canh tác</span>
             </button>
             <button id="farm-cancel" class="btn-action-ghost" type="button" hidden>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -327,18 +327,18 @@
 
         <div class="table-container">
           <div class="table-subhead">
-            <span class="table-heading">Danh sách vùng canh tác đã chứng nhận</span>
-            <span class="table-tag">Dữ liệu nguồn gốc</span>
+            <span class="table-heading">Danh sách thửa đất canh tác đã khai báo</span>
+            <span class="table-tag">Dữ liệu đất đai VietGAP</span>
           </div>
           <div class="responsive-table">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th style="width: 80px;">MÃ SỐ</th>
-                  <th>TÊN VÙNG TRỒNG</th>
-                  <th>ĐỊA ĐIỂM</th>
-                  <th class="is-right" style="width: 150px;">DIỆN TÍCH (HA)</th>
-                  <th>CHỦ SỞ HỮU</th>
+                  <th style="width: 80px;">MÃ THỬA</th>
+                  <th>TÊN THỬA ĐẤT / VÙNG TRỒNG</th>
+                  <th>VỊ TRÍ THỬA ĐẤT</th>
+                  <th class="is-right" style="width: 160px;">DIỆN TÍCH (HA)</th>
+                  <th>CHỦ THỬA ĐẤT</th>
                   <th class="is-center" style="width: 160px;">THAO TÁC</th>
                 </tr>
               </thead>
@@ -349,13 +349,13 @@
             <div class="empty-icon-wrap">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8"><path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10S2 17.523 2 12c0-2.5 1-5 3-7"/><path d="M12 6v6l4 2"/></svg>
             </div>
-            <h4>Chưa có dữ liệu vùng trồng nào</h4>
-            <p>Vui lòng sử dụng biểu mẫu phía trên để khởi tạo vùng canh tác đầu tiên.</p>
+            <h4>Chưa có dữ liệu thửa đất nào</h4>
+            <p>Vui lòng sử dụng biểu mẫu phía trên để khai báo thửa đất đầu tiên.</p>
           </div>
         </div>
       </section>
 
-      <!-- Section 2: Quản lý Lô Nông Sản -->
+      <!-- Section 2: Quản lý Lô Nông Sản / Cây Trồng Thu Hoạch -->
       <section class="content-card">
         <header class="card-header">
           <div class="header-left">
@@ -363,9 +363,9 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
             </div>
             <div>
-              <h3 class="card-title">2. Quản lý lô nông sản thu hoạch</h3>
+              <h3 class="card-title">2. Ghi nhận thu hoạch cây trồng & Lô nông sản</h3>
               <p class="card-subtitle">
-                Ghi nhận từng đợt thu hoạch, gắn kết mã lô với vùng canh tác xuất xứ và phục vụ dán nhãn truy xuất.
+                Ghi nhận từng đợt thu hoạch từ các thửa đất, gắn nhãn mã lô phục vụ truy xuất nguồn gốc và chuỗi lạnh.
               </p>
             </div>
           </div>
@@ -382,25 +382,25 @@
           <div class="form-grid">
             <div class="form-group">
               <label for="batch-farm-id" class="input-label">
-                Vùng trồng xuất xứ <span class="required">*</span>
+                Thuộc thửa đất xuất xứ <span class="required">*</span>
               </label>
               <select id="batch-farm-id" required></select>
             </div>
 
             <div class="form-group">
               <label for="batch-product-name" class="input-label">
-                Tên sản phẩm nông sản <span class="required">*</span>
+                Loại cây trồng / Nông sản <span class="required">*</span>
               </label>
               <input id="batch-product-name" type="text" maxlength="255" required
-                     placeholder="Ví dụ: Xoài Cát Chu xuất khẩu chuẩn VietGAP" />
+                     placeholder="Ví dụ: Xoài Cát Chu Loại 1 (VietGAP) / Sầu Riêng Ri6" />
             </div>
 
             <div class="form-group">
               <label for="batch-quantity" class="input-label">
-                Khối lượng thu hoạch (kg) <span class="required">*</span>
+                Sản lượng thu hoạch (kg) <span class="required">*</span>
               </label>
               <input id="batch-quantity" type="number" min="0.1" step="0.1" required
-                     placeholder="Ví dụ: 120.5" />
+                     placeholder="Ví dụ: 1500" />
             </div>
 
             <div class="form-group">
@@ -414,7 +414,7 @@
           <div class="form-buttons">
             <button id="batch-submit" class="btn-action-primary" type="submit">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-              <span>Tạo lô nông sản</span>
+              <span>Ghi nhận lô thu hoạch</span>
             </button>
             <button id="batch-cancel" class="btn-action-ghost" type="button" hidden>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -425,17 +425,17 @@
 
         <div class="table-container">
           <div class="table-subhead">
-            <span class="table-heading">Danh sách các lô nông sản theo dõi</span>
-            <span class="table-tag">Gắn nhãn chuỗi lạnh</span>
+            <span class="table-heading">Danh sách các lô cây trồng & nông sản thu hoạch</span>
+            <span class="table-tag">Gắn nhãn truy xuất</span>
           </div>
           <div class="responsive-table">
             <table class="data-table">
               <thead>
                 <tr>
                   <th style="width: 80px;">MÃ LÔ</th>
-                  <th>VÙNG TRỒNG</th>
-                  <th>TÊN SẢN PHẨM</th>
-                  <th class="is-right" style="width: 160px;">KHỐI LƯỢNG (KG)</th>
+                  <th>THỬA ĐẤT XUẤT XỨ</th>
+                  <th>CÂY TRỒNG / NÔNG SẢN</th>
+                  <th class="is-right" style="width: 160px;">SẢN LƯỢNG (KG)</th>
                   <th style="width: 140px;">NGÀY THU HOẠCH</th>
                   <th class="is-center" style="width: 160px;">THAO TÁC</th>
                 </tr>
@@ -498,8 +498,8 @@
   <footer class="site-footer">
     <div class="footer-container">
       <div class="footer-column">
-        <h5>AGRI-CHAIN TRACEABILITY</h5>
-        <p>Hệ thống thực tập cơ sở tại ICTU · Khối 18 - K18C4 - Nhóm 5</p>
+        <h5>AGRI-TRACE TRACEABILITY</h5>
+        <p>Hệ thống thực tập cơ sở tại ICTU · Khối 18 - K18C4 - Nhóm 4</p>
         <p class="mentor-highlight">Mentor hướng dẫn: <strong>Lê Đình Tuấn (CodeGym)</strong></p>
       </div>
       <div class="footer-column">
