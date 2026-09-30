@@ -1,0 +1,41 @@
+name: CI Pipeline (Quality & Tests)
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - develop
+
+jobs:
+  backend-quality-and-test:
+    name: Backend Lint & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5 # Theo NFR của S-02: pipeline chạy dưới 5 phút
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
+          pip install pytest flake8
+
+      - name: Check code syntax & undefined names (flake8)
+        run: |
+          # Báo đỏ và dừng CI nếu có lỗi cú pháp Python hoặc biến chưa khai báo
+          flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Run Unit Tests (pytest)
+        run: |
+          if [ -d backend/tests ]; then pytest backend/tests; else echo "Chưa có thư mục backend/tests, bỏ qua unit test."; fi
