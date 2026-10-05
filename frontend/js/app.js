@@ -6,12 +6,11 @@
 
 "use strict";
 
-// Địa chỉ backend FastAPI: tự động nhận diện localhost/live server hoặc production HTTPS
+// Địa chỉ backend FastAPI: tự động nhận diện port 8000 (cùng domain) hoặc http://127.0.0.1:8000
 const API_BASE_URL =
-  (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") &&
-  window.location.port === "5500"
-    ? "http://127.0.0.1:8000"
-    : "";
+  window.location.port === "8000"
+    ? ""
+    : "http://127.0.0.1:8000";
 
 // Khoá lưu phiên đăng nhập trong sessionStorage (tự mất khi đóng tab).
 const SESSION_STORAGE_KEY = "ttcs.session";
@@ -510,6 +509,7 @@ async function loadBatches() {
     const data = await apiRequest("/batches");
     batches = Array.isArray(data) ? data : [];
     renderBatches();
+    renderBatchParentOptions();
   } catch (error) {
     toast(`Không tải được danh sách lô nông sản: ${error.message}`, "error");
   }
@@ -521,19 +521,60 @@ function farmLabel(farmId) {
   return farm ? `#${farmId} — ${farm.name}` : `#${farmId}`;
 }
 
-/** Vẽ bảng danh sách lô nông sản (kèm cột "Thao tác": Sửa/Xoá). */
+/** Đổ danh sách lô có thể làm cha vào select `#batch-parent-id` của form lô (T-49). */
+function renderBatchParentOptions() {
+  const select = $("batch-parent-id");
+  if (!select) return;
+  const selected = select.value;
+
+  let options = '<option value="">— Là Lô Gốc (thu hoạch ban đầu) —</option>';
+  batches.forEach((b) => {
+    // Không cho phép chọn chính mình làm cha khi đang sửa để tránh chu trình
+    if (editingBatchId !== null && b.id === editingBatchId) return;
+    options += `<option value="${escapeHtml(b.id)}">Lô #${escapeHtml(b.id)} — ${escapeHtml(b.product_name)} (${formatDate(b.harvest_date)})</option>`;
+  });
+
+  select.innerHTML = options;
+  if (selected && batches.some((b) => String(b.id) === selected && b.id !== editingBatchId)) {
+    select.value = selected;
+  }
+}
+
+/** Vẽ bảng danh sách lô nông sản (kèm cột "Thao tác": Nguồn gốc / Sửa / Xoá). */
 function renderBatches() {
   $("batch-table-body").innerHTML = batches
     .map(
       (batch) => `
       <tr class="${batch.id === editingBatchId ? "is-editing" : ""}">
-        <td class="id-cell">${escapeHtml(batch.id)}</td>
+        <td class="id-cell">
+          ${batch.batch_code ? `<span class="badge-batch-code">${escapeHtml(batch.batch_code)}</span><br>` : ""}
+          <span class="batch-sub-id">#${escapeHtml(batch.id)}</span>
+        </td>
         <td>${escapeHtml(farmLabel(batch.farm_id))}</td>
-        <td>${escapeHtml(batch.product_name)}</td>
+        <td>
+          <strong>${escapeHtml(batch.product_name)}</strong>
+          ${
+            batch.is_restricted
+              ? `<span class="badge-tag-restricted" title="Lô được bảo vệ quyền xem riêng tư theo T-54">Bảo mật T-54</span>`
+              : ""
+          }
+          ${
+            !batch.parent_id
+              ? `<span class="badge-tag-root" title="Lô gốc thu hoạch trực tiếp từ thửa đất">Lô gốc</span>`
+              : ""
+          }
+        </td>
         <td class="is-right">${formatNumber(batch.quantity)}</td>
         <td>${escapeHtml(formatDate(batch.harvest_date))}</td>
         <td>
           <div class="table__actions">
+            <button class="btn btn--info btn--sm" type="button"
+                    data-action="trace" data-entity="batch"
+                    data-id="${escapeHtml(batch.id)}"
+                    title="Xem chi tiết & mục Nguồn gốc T-49">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right: 4px; vertical-align: -1px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Nguồn gốc
+            </button>
             <button class="btn btn--primary btn--sm" type="button"
                     data-action="edit" data-entity="batch"
                     data-id="${escapeHtml(batch.id)}">Sửa</button>
@@ -578,11 +619,17 @@ async function handleBatchSubmit(event) {
     return;
   }
 
+  const parentIdSelect = $("batch-parent-id");
+  const parentIdVal = parentIdSelect && parentIdSelect.value ? Number(parentIdSelect.value) : null;
+  const isRestrictedVal = $("batch-is-restricted") ? $("batch-is-restricted").checked : false;
+
   const payload = {
     farm_id: Number(farmSelect.value),
     product_name: $("batch-product-name").value.trim(),
     quantity: Number($("batch-quantity").value),
     harvest_date: $("batch-harvest-date").value,
+    parent_id: parentIdVal,
+    is_restricted: isRestrictedVal,
   };
 
   const isEditing = editingBatchId !== null;
@@ -599,6 +646,8 @@ async function handleBatchSubmit(event) {
         `Tạo thành công lô #${created.id} "${created.product_name}" cho vùng trồng #${created.farm_id}`,
         "success"
       );
+      // Hiển thị modal mã lô cỡ chữ lớn phục vụ thao tác ngoài trời nắng (T-19)
+      showHarvestSuccessModal(created);
     }
     resetBatchForm(); // về lại chế độ "tạo mới"
     farmSelect.value = String(payload.farm_id); // giữ lại vùng trồng vừa chọn
@@ -617,6 +666,141 @@ function resetBatchForm() {
   $("batch-form-mode").hidden = true;
   $("batch-cancel").hidden = true;
   $("batch-submit").textContent = batchSubmitLabel();
+  if ($("batch-parent-id")) $("batch-parent-id").value = "";
+  if ($("batch-is-restricted")) $("batch-is-restricted").checked = false;
+  renderBatchParentOptions();
+  // Đặt mặc định ngày thu hoạch là hôm nay nếu chưa có
+  const today = new Date().toISOString().split("T")[0];
+  if ($("batch-harvest-date") && !$("batch-harvest-date").value) {
+    $("batch-harvest-date").value = today;
+  }
+}
+
+/* --------------------------------- 8.1. Modal Mã Lô Cỡ Lớn (T-19) --- */
+let currentHarvestBatch = null;
+
+/**
+ * Hiển thị cửa sổ ghi nhận thu hoạch với mã lô cỡ chữ lớn (T-19)
+ * Thiết kế tương phản cao, tối ưu khi xem và thao tác ngoài trời nắng gắt.
+ */
+function showHarvestSuccessModal(batch) {
+  currentHarvestBatch = batch;
+
+  // Lấy mã lô chuẩn T-19 trả về từ backend hoặc tự tạo dự phòng
+  const dateStr = String(batch.harvest_date || "").replace(/-/g, "");
+  const code =
+    batch.batch_code ||
+    `LOT-${String(batch.farm_id).padStart(2, "0")}-${dateStr || "20261005"}-${String(batch.id).padStart(2, "0")}`;
+
+  const codeDisplay = $("giant-batch-code-display");
+  if (codeDisplay) {
+    codeDisplay.textContent = code;
+  }
+
+  if ($("harvest-product-name")) {
+    $("harvest-product-name").textContent = batch.product_name || "—";
+  }
+  if ($("harvest-quantity")) {
+    $("harvest-quantity").textContent = `${formatNumber(batch.quantity)} kg`;
+  }
+  if ($("harvest-farm-name")) {
+    const farm = farms.find((f) => f.id === batch.farm_id);
+    $("harvest-farm-name").textContent = farm ? `#${farm.id} — ${farm.name}` : `Thửa #${batch.farm_id}`;
+  }
+  if ($("harvest-date-display")) {
+    $("harvest-date-display").textContent = formatDate(batch.harvest_date);
+  }
+
+  // Khôi phục trạng thái nút sao chép
+  resetCopyGiantButton();
+
+  // Mở modal
+  const modal = $("harvest-success-modal");
+  if (modal) {
+    modal.hidden = false;
+  }
+}
+
+/** Đóng modal mã lô cỡ lớn */
+function closeHarvestSuccessModal() {
+  const modal = $("harvest-success-modal");
+  if (modal) {
+    modal.hidden = true;
+  }
+}
+
+/** Đưa nút sao chép về trạng thái ban đầu */
+function resetCopyGiantButton() {
+  const btn = $("btn-copy-giant-code");
+  const copyText = $("copy-text");
+  const copyIcon = $("copy-icon");
+  if (!btn) return;
+
+  btn.classList.remove("copied");
+  if (copyText) {
+    copyText.textContent = "SAO CHÉP MÃ LÔ";
+  }
+  if (copyIcon) {
+    copyIcon.innerHTML = `
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+    `;
+  }
+}
+
+/**
+ * Xử lý sao chép mã lô bằng 1 click:
+ * Hỗ trợ cả navigator.clipboard hiện đại và fallback textarea cho trình duyệt di động cũ.
+ */
+async function copyGiantBatchCode() {
+  const codeDisplay = $("giant-batch-code-display");
+  if (!codeDisplay) return;
+  const code = codeDisplay.textContent.trim();
+  if (!code) return;
+
+  let copied = false;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(code);
+      copied = true;
+    } catch (err) {
+      console.warn("Clipboard API không khả dụng, sử dụng fallback:", err);
+    }
+  }
+
+  if (!copied) {
+    const textarea = document.createElement("textarea");
+    textarea.value = code;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      copied = document.execCommand("copy");
+    } catch (err) {
+      console.error("Fallback execCommand copy thất bại:", err);
+    }
+    document.body.removeChild(textarea);
+  }
+
+  const btn = $("btn-copy-giant-code");
+  const copyText = $("copy-text");
+  const copyIcon = $("copy-icon");
+
+  if (btn) btn.classList.add("copied");
+  if (copyText) copyText.textContent = "✓ ĐÃ SAO CHÉP MÃ LÔ!";
+  if (copyIcon) {
+    copyIcon.innerHTML = `<polyline points="20 6 9 17 4 12" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></polyline>`;
+  }
+
+  toast(`Đã sao chép mã lô ${code} vào bộ nhớ tạm!`, "success");
+
+  // Tự động khôi phục sau 2.5 giây
+  setTimeout(() => {
+    resetCopyGiantButton();
+  }, 2500);
 }
 
 /**
@@ -635,6 +819,13 @@ function startEditBatch(batchId) {
   $("batch-product-name").value = batch.product_name;
   $("batch-quantity").value = batch.quantity;
   $("batch-harvest-date").value = batch.harvest_date; // API trả sẵn dạng yyyy-MM-dd
+  renderBatchParentOptions(); // cập nhật lại danh sách loại trừ chính mình
+  if ($("batch-parent-id")) {
+    $("batch-parent-id").value = batch.parent_id ? String(batch.parent_id) : "";
+  }
+  if ($("batch-is-restricted")) {
+    $("batch-is-restricted").checked = Boolean(batch.is_restricted);
+  }
 
   const mode = $("batch-form-mode");
   mode.textContent = `Đang sửa lô #${batch.id} — ${batch.product_name}. Bấm "Cập nhật lô nông sản" để lưu.`;
@@ -667,6 +858,215 @@ async function deleteBatch(batchId) {
   } catch (error) {
     toast(`Xoá lô nông sản thất bại: ${error.message}`, "error");
   }
+}
+
+/* ---------------- 8.1. Truy vết nguồn gốc & phả hệ theo tầng (T-49, T-54) --- */
+let cacheCountdownTimer = null;
+
+/** Đóng modal chi tiết lô */
+function closeBatchDetailModal() {
+  const modal = $("batch-detail-modal");
+  if (modal) {
+    modal.hidden = true;
+  }
+  document.body.style.overflow = "";
+  if (cacheCountdownTimer) {
+    clearInterval(cacheCountdownTimer);
+    cacheCountdownTimer = null;
+  }
+}
+
+/** Cập nhật bộ đếm lùi thời gian cache 60s trên giao diện modal */
+function startCacheCountdown(remainingSeconds, isFromCache) {
+  if (cacheCountdownTimer) {
+    clearInterval(cacheCountdownTimer);
+    cacheCountdownTimer = null;
+  }
+
+  const pill = $("detail-cache-pill");
+  const text = $("detail-cache-text");
+  if (!pill || !text) return;
+
+  pill.className = "chip-cache";
+
+  let secondsLeft = Math.max(0, Number(remainingSeconds) || 0);
+
+  function updateDisplay() {
+    if (secondsLeft > 0) {
+      text.textContent = isFromCache
+        ? `Bộ nhớ đệm (còn ${secondsLeft}s)`
+        : `Mới nạp cache (còn ${secondsLeft}s)`;
+    } else {
+      text.textContent = `Cache 60s đã hết hạn (sẵn sàng làm mới)`;
+    }
+  }
+
+  updateDisplay();
+
+  cacheCountdownTimer = setInterval(() => {
+    secondsLeft--;
+    if (secondsLeft < 0) {
+      clearInterval(cacheCountdownTimer);
+      cacheCountdownTimer = null;
+      updateDisplay();
+    } else {
+      updateDisplay();
+    }
+  }, 1000);
+}
+
+/**
+ * Xem chi tiết lô nông sản & mục 'Nguồn gốc':
+ * - Gọi GET /batches/{batchId}/trace
+ * - Nếu không có quyền (T-54): backend trả 403 Forbidden -> hiển thị cảnh báo đỏ và thông báo lỗi.
+ * - Nếu hợp lệ: hiển thị đầy đủ thông tin lô gốc, vùng trồng của lô gốc và danh sách phả hệ theo tầng (T-49).
+ */
+async function viewBatchTrace(batchId) {
+  const modal = $("batch-detail-modal");
+  if (!modal) return;
+
+  // Mở modal và hiển thị trạng thái đang tải
+  modal.hidden = false;
+  document.body.style.overflow = "hidden";
+
+  $("detail-batch-id-pill").textContent = `LÔ #${batchId}`;
+  $("detail-modal-title").textContent = `Chi tiết lô nông sản #${batchId}`;
+  $("detail-forbidden-alert").hidden = true;
+  $("detail-success-content").hidden = true;
+
+  const cachePill = $("detail-cache-pill");
+  cachePill.className = "chip-cache is-loading";
+  $("detail-cache-text").textContent = "Đang tải dữ liệu...";
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/batches/${batchId}/trace`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeader(),
+      },
+    });
+
+    // Xử lý mã lỗi 403 Forbidden theo tiêu chí T-54
+    if (response.status === 403) {
+      const errData = await readJson(response);
+      $("detail-forbidden-alert").hidden = false;
+      $("detail-success-content").hidden = true;
+      $("detail-forbidden-message").textContent =
+        describeError(errData, 403) ||
+        `Tài khoản '${session ? session.username : "khách"}' không có quyền xem lô nông sản #${batchId} theo chính sách phân quyền T-54.`;
+      cachePill.className = "chip-cache is-forbidden";
+      $("detail-cache-text").textContent = "Bảo mật T-54 (403 Forbidden)";
+      return;
+    }
+
+    if (!response.ok) {
+      const errData = await readJson(response);
+      throw new Error(describeError(errData, response.status));
+    }
+
+    const data = await response.json();
+
+    // Hiển thị nội dung thành công
+    $("detail-forbidden-alert").hidden = true;
+    $("detail-success-content").hidden = false;
+
+    // 1. Thông tin lô hiện tại
+    $("detail-product-name").textContent = data.product_name || "—";
+    $("detail-quantity").textContent = `${formatNumber(data.quantity)} kg`;
+    $("detail-harvest-date").textContent = formatDate(data.harvest_date);
+    $("detail-farm-name").textContent = farmLabel(data.farm_id);
+    $("detail-current-status").textContent = data.is_restricted
+      ? "Lô bảo mật riêng tư (T-54)"
+      : "Đang lưu thông bình thường";
+
+    // 2. Thông tin Lô gốc (DoD T-49)
+    if (data.root_batch) {
+      $("root-batch-id").textContent = `#${data.root_batch.id}`;
+      $("root-product-name").textContent = data.root_batch.product_name || "—";
+      $("root-quantity").textContent = `${formatNumber(data.root_batch.quantity)} kg`;
+      $("root-harvest-date").textContent = formatDate(data.root_batch.harvest_date);
+    } else {
+      $("root-batch-id").textContent = `#${data.batch_id}`;
+      $("root-product-name").textContent = data.product_name || "—";
+      $("root-quantity").textContent = `${formatNumber(data.quantity)} kg`;
+      $("root-harvest-date").textContent = formatDate(data.harvest_date);
+    }
+
+    // 3. Thông tin Vùng trồng của lô gốc (DoD T-49)
+    if (data.origin_farm) {
+      $("origin-farm-name").textContent = data.origin_farm.name || "—";
+      $("origin-farm-location").textContent = data.origin_farm.location || "—";
+      $("origin-farm-area").textContent = `${formatNumber(data.origin_farm.area)} ha`;
+      $("origin-farm-owner").textContent = data.origin_farm.owner || "—";
+    } else {
+      $("origin-farm-name").textContent = "Chưa liên kết";
+      $("origin-farm-location").textContent = "—";
+      $("origin-farm-area").textContent = "—";
+      $("origin-farm-owner").textContent = "—";
+    }
+
+    // 4. Cache 60 giây (Ràng buộc kỹ thuật)
+    startCacheCountdown(data.cache_remaining_seconds || 60, Boolean(data.cached));
+
+    // 5. Danh sách phả hệ theo từng tầng (T-49)
+    renderLineageTree(Array.isArray(data.lineage) ? data.lineage : []);
+  } catch (error) {
+    $("detail-forbidden-alert").hidden = false;
+    $("detail-success-content").hidden = true;
+    $("detail-forbidden-message").textContent = `Không thể tải thông tin nguồn gốc: ${error.message}`;
+    cachePill.className = "chip-cache is-forbidden";
+    $("detail-cache-text").textContent = "Lỗi truy vấn";
+  }
+}
+
+/** Vẽ danh sách phả hệ theo từng tầng trong mục 'Nguồn gốc' */
+function renderLineageTree(lineage) {
+  const container = $("lineage-tier-list");
+  const countEl = $("lineage-tier-count");
+  if (!container) return;
+
+  if (countEl) {
+    countEl.textContent = `${lineage.length} tầng phả hệ`;
+  }
+
+  if (lineage.length === 0) {
+    container.innerHTML = `
+      <div class="lineage-empty">
+        <p>Lô hàng này là lô thu hoạch ban đầu (không có phả hệ con).</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = lineage
+    .map((item) => {
+      const isCurrent = Boolean(item.is_current);
+      const isRoot = item.tier === 1;
+
+      return `
+      <div class="lineage-tier-item">
+        <div class="lineage-node-dot"></div>
+        <div class="lineage-tier-card ${isCurrent ? "is-current" : ""}">
+          <div class="lineage-tier-header">
+            <span class="tier-badge">${escapeHtml(item.tier_name)}</span>
+            <strong>Lô #${escapeHtml(item.batch_id)} — ${escapeHtml(item.product_name)}</strong>
+            ${isCurrent ? `<span class="tier-current-tag">Lô đang xem</span>` : ""}
+            ${isRoot ? `<span class="badge-tag-root">Lô Gốc F0</span>` : ""}
+          </div>
+          <div class="lineage-meta">
+            <span>Sản lượng: <strong>${formatNumber(item.quantity)} kg</strong></span>
+            <span>Ngày thu hoạch: <strong>${formatDate(item.harvest_date)}</strong></span>
+            <span>Xuất xứ thửa: <strong>${escapeHtml(farmLabel(item.farm_id))}</strong></span>
+            ${
+              item.parent_id
+                ? `<span>Tách từ: <strong>Lô #${escapeHtml(item.parent_id)}</strong></span>`
+                : `<span>Nguồn: <strong>Thu hoạch trực tiếp</strong></span>`
+            }
+          </div>
+        </div>
+      </div>`;
+    })
+    .join("");
 }
 
 /* ------------------------------------------------------- 9. Thống kê --- */
@@ -731,6 +1131,65 @@ function bindEvents() {
   // liên tục nên chỉ gắn 1 listener cho mỗi <tbody> thay vì gắn cho từng nút.
   $("farm-table-body").addEventListener("click", handleTableAction);
   $("batch-table-body").addEventListener("click", handleTableAction);
+
+  // Sự kiện đóng modal chi tiết & mục Nguồn gốc
+  if ($("detail-modal-close")) {
+    $("detail-modal-close").addEventListener("click", closeBatchDetailModal);
+  }
+  if ($("btn-close-detail")) {
+    $("btn-close-detail").addEventListener("click", closeBatchDetailModal);
+  }
+  if ($("batch-detail-modal")) {
+    $("batch-detail-modal").addEventListener("click", (event) => {
+      if (event.target === $("batch-detail-modal")) {
+        closeBatchDetailModal();
+      }
+    });
+  }
+
+  // Sự kiện modal thu hoạch mã lô cỡ lớn (T-19)
+  if ($("btn-copy-giant-code")) {
+    $("btn-copy-giant-code").addEventListener("click", copyGiantBatchCode);
+  }
+  if ($("harvest-modal-close")) {
+    $("harvest-modal-close").addEventListener("click", closeHarvestSuccessModal);
+  }
+  if ($("btn-continue-harvest")) {
+    $("btn-continue-harvest").addEventListener("click", () => {
+      closeHarvestSuccessModal();
+      resetBatchForm();
+      const productInput = $("batch-product-name");
+      if (productInput) productInput.focus();
+    });
+  }
+  if ($("btn-view-harvest-trace")) {
+    $("btn-view-harvest-trace").addEventListener("click", () => {
+      if (currentHarvestBatch) {
+        const batchId = currentHarvestBatch.id;
+        closeHarvestSuccessModal();
+        viewBatchTrace(batchId);
+      }
+    });
+  }
+  if ($("harvest-success-modal")) {
+    $("harvest-success-modal").addEventListener("click", (event) => {
+      if (event.target === $("harvest-success-modal")) {
+        closeHarvestSuccessModal();
+      }
+    });
+  }
+
+  // Phím tắt Escape đóng mọi modal
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      if ($("harvest-success-modal") && !$("harvest-success-modal").hidden) {
+        closeHarvestSuccessModal();
+      }
+      if ($("batch-detail-modal") && !$("batch-detail-modal").hidden) {
+        closeBatchDetailModal();
+      }
+    }
+  });
 }
 
 /** Huỷ chế độ sửa của form vùng trồng / lô nông sản (nút "Huỷ sửa"). */
@@ -748,9 +1207,9 @@ function cancelEdit(entity) {
 }
 
 /**
- * Xử lý click ở cột "Thao tác" của cả 2 bảng (nút Sửa / Xoá).
+ * Xử lý click ở cột "Thao tác" của cả 2 bảng (nút Sửa / Xoá / Nguồn gốc).
  *
- * Đọc dữ liệu từ chính nút được bấm: `data-action` (edit|delete),
+ * Đọc dữ liệu từ chính nút được bấm: `data-action` (trace|edit|delete),
  * `data-entity` (farm|batch) và `data-id`.
  */
 function handleTableAction(event) {
@@ -762,6 +1221,11 @@ function handleTableAction(event) {
   const id = Number(button.dataset.id);
   const entity = button.dataset.entity;
   const action = button.dataset.action;
+
+  if (action === "trace") {
+    viewBatchTrace(id);
+    return;
+  }
 
   if (action === "edit") {
     if (entity === "farm") {

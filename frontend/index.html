@@ -381,6 +381,22 @@
               </label>
               <input id="batch-harvest-date" type="date" required />
             </div>
+
+            <div class="form-group">
+              <label for="batch-parent-id" class="input-label">
+                Phả hệ: Lô cha trực tiếp (T-49)
+              </label>
+              <select id="batch-parent-id">
+                <option value="">— Là Lô Gốc (thu hoạch ban đầu) —</option>
+              </select>
+            </div>
+
+            <div class="form-group form-group--checkbox">
+              <label class="checkbox-label" for="batch-is-restricted">
+                <input id="batch-is-restricted" type="checkbox" />
+                <span>Bảo vệ quyền xem riêng tư theo T-54 (Chỉ Admin / Chủ sở hữu)</span>
+              </label>
+            </div>
           </div>
 
           <div class="form-buttons">
@@ -407,9 +423,9 @@
                   <th style="width: 80px;">MÃ LÔ</th>
                   <th>THỬA ĐẤT XUẤT XỨ</th>
                   <th>CÂY TRỒNG / NÔNG SẢN</th>
-                  <th class="is-right" style="width: 160px;">SẢN LƯỢNG (KG)</th>
-                  <th style="width: 140px;">NGÀY THU HOẠCH</th>
-                  <th class="is-center" style="width: 160px;">THAO TÁC</th>
+                  <th class="is-right" style="width: 140px;">SẢN LƯỢNG (KG)</th>
+                  <th style="width: 120px;">NGÀY THU HOẠCH</th>
+                  <th class="is-center" style="width: 250px;">THAO TÁC & TRUY XUẤT</th>
                 </tr>
               </thead>
               <tbody id="batch-table-body"></tbody>
@@ -484,6 +500,238 @@
       </div>
     </div>
   </footer>
+
+  <!-- ==================== MODAL GHI NHẬN THU HOẠCH - MÃ LÔ CỠ LỚN (T-19) ==================== -->
+  <div id="harvest-success-modal" class="modal-backdrop" hidden>
+    <div class="modal-card modal-card--highlight" role="dialog" aria-modal="true" aria-labelledby="harvest-success-title">
+      <div class="modal-header modal-header--harvest">
+        <div class="modal-header__title-group">
+          <div class="modal-tags">
+            <span class="chip-vietgap">Chuẩn T-19</span>
+            <span class="chip-solar">Ghi nhận thu hoạch thành công</span>
+          </div>
+          <h3 id="harvest-success-title" class="modal-title">Lô Thu Hoạch Đã Được Cấp Mã</h3>
+          <p class="modal-subtitle">Mã định danh truy xuất nguồn gốc phục vụ in tem QR và giám sát thực địa</p>
+        </div>
+        <button id="harvest-modal-close" class="modal-close-btn" type="button" aria-label="Đóng cửa sổ">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <!-- VÙNG HIỂN THỊ MÃ LÔ CỠ CHỮ LỚN (GIANT BATCH CODE) - TƯƠNG PHẢN CAO CHO NGOÀI TRỜI NẮNG -->
+        <div class="giant-code-banner">
+          <div class="giant-code-header">
+            <div class="giant-code-label">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="11" y1="8" x2="11" y2="16"/><line x1="15" y1="8" x2="15" y2="12"/><line x1="17" y1="8" x2="17" y2="16"/></svg>
+              <span>MÃ LÔ NÔNG SẢN THU HOẠCH (T-19)</span>
+            </div>
+            <span class="giant-code-sun-badge">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+              Tương phản cao ngoài trời
+            </span>
+          </div>
+
+          <div class="giant-code-box">
+            <span id="giant-batch-code-display" class="giant-code-text font-mono">LOT-01-20261005-01</span>
+          </div>
+
+          <!-- Nút sao chép mã lô cỡ lớn -->
+          <button id="btn-copy-giant-code" class="btn-copy-giant" type="button" title="Nhấp để sao chép mã lô">
+            <svg id="copy-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            <span id="copy-text">SAO CHÉP MÃ LÔ</span>
+          </button>
+        </div>
+
+        <!-- Tóm tắt chi tiết mẻ thu hoạch -->
+        <div class="field-harvest-summary">
+          <div class="field-summary-item">
+            <span class="f-label">Cây trồng / Nông sản:</span>
+            <strong id="harvest-product-name" class="f-val">—</strong>
+          </div>
+          <div class="field-summary-item">
+            <span class="f-label">Khối lượng thu hoạch:</span>
+            <strong id="harvest-quantity" class="f-val text-primary font-mono">— kg</strong>
+          </div>
+          <div class="field-summary-item">
+            <span class="f-label">Thửa đất xuất xứ:</span>
+            <strong id="harvest-farm-name" class="f-val">—</strong>
+          </div>
+          <div class="field-summary-item">
+            <span class="f-label">Ngày thu hoạch:</span>
+            <strong id="harvest-date-display" class="f-val font-mono">—</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer modal-footer--field">
+        <button id="btn-continue-harvest" class="btn-action-primary btn-action--large" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span>Tiếp tục ghi nhận lô mới</span>
+        </button>
+        <button id="btn-view-harvest-trace" class="btn-action-ghost btn-action--large" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Xem chi tiết nguồn gốc (T-49)</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL CHI TIẾT & MỤC 'NGUỒN GỐC' (T-49 & T-54) ==================== -->
+  <div id="batch-detail-modal" class="modal-backdrop" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="detail-modal-title">
+      <div class="modal-header">
+        <div class="modal-header__title-group">
+          <div class="modal-tags">
+            <span id="detail-batch-id-pill" class="chip-batch font-mono">LÔ #—</span>
+            <span class="chip-vietgap">Tiêu chuẩn VietGAP</span>
+            <span id="detail-cache-pill" class="chip-cache">
+              <span class="cache-indicator"></span>
+              <span id="detail-cache-text">Đang tải...</span>
+            </span>
+          </div>
+          <h3 id="detail-modal-title" class="modal-title">Chi tiết lô nông sản</h3>
+          <p id="detail-modal-subtitle" class="modal-subtitle">Truy xuất nguồn gốc và phả hệ canh tác theo từng tầng</p>
+        </div>
+        <button id="detail-modal-close" class="modal-close-btn" type="button" aria-label="Đóng cửa sổ">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <!-- Nội dung chi tiết & mục Nguồn gốc -->
+      <div id="detail-modal-content" class="modal-body">
+        <!-- 403 Forbidden State (hiện khi không có quyền xem theo T-54) -->
+        <div id="detail-forbidden-alert" class="forbidden-alert" hidden>
+          <div class="forbidden-icon">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1.5"/></svg>
+          </div>
+          <div class="forbidden-body">
+            <h4 class="forbidden-title">403 Forbidden — Không Có Quyền Xem Lô Nông Sản</h4>
+            <p id="detail-forbidden-message" class="forbidden-desc">
+              Lô nông sản này được bảo vệ bởi chính sách phân quyền T-54. Tài khoản của bạn không được phép xem thông tin nguồn gốc của lô này.
+            </p>
+            <div class="forbidden-action">
+              <span class="badge-role-note">Chỉ Quản trị viên (Admin) hoặc Chủ thửa đất sở hữu mới có quyền truy cập.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dữ liệu thành công -->
+        <div id="detail-success-content">
+          <!-- Phần 1: Tóm tắt thông tin lô hiện tại -->
+          <div class="detail-summary-card">
+            <div class="summary-header">
+              <span class="summary-label">Thông tin lô hiện tại</span>
+              <span id="detail-current-status" class="summary-status">Đang lưu thông</span>
+            </div>
+            <div class="summary-grid">
+              <div class="summary-item">
+                <span class="s-label">Tên nông sản / cây trồng:</span>
+                <strong id="detail-product-name" class="s-value">—</strong>
+              </div>
+              <div class="summary-item">
+                <span class="s-label">Sản lượng:</span>
+                <strong id="detail-quantity" class="s-value font-mono">—</strong>
+              </div>
+              <div class="summary-item">
+                <span class="s-label">Ngày thu hoạch / ghi nhận:</span>
+                <strong id="detail-harvest-date" class="s-value">—</strong>
+              </div>
+              <div class="summary-item">
+                <span class="s-label">Thửa đất liên kết:</span>
+                <strong id="detail-farm-name" class="s-value">—</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- PHẦN 2: MỤC 'NGUỒN GỐC' (T-49 & T-54) -->
+          <div class="origin-section">
+            <div class="origin-section-header">
+              <div class="origin-icon-wrap">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10S2 17.523 2 12c0-2.5 1-5 3-7"/><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="2.5" fill="#10b981" stroke="none"/></svg>
+              </div>
+              <div>
+                <h4 class="origin-heading">Mục 'Nguồn gốc' — Phả Hệ Canh Tác & Thông Tin Lô Gốc</h4>
+                <p class="origin-subheading">Truy vết nguồn gốc T-49: thông tin thửa đất canh tác gốc và hành trình phả hệ theo từng tầng.</p>
+              </div>
+            </div>
+
+            <!-- Khối hiển thị Lô gốc & Vùng trồng của lô gốc -->
+            <div class="origin-cards-grid">
+              <!-- Thẻ Lô Gốc -->
+              <div class="origin-card origin-card--root">
+                <div class="origin-card-badge">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                  <span>LÔ GỐC THU HOẠCH ĐẦU TIÊN</span>
+                </div>
+                <div class="origin-card-body">
+                  <div class="origin-row">
+                    <span class="o-label">Mã lô gốc:</span>
+                    <strong id="root-batch-id" class="o-val font-mono">#—</strong>
+                  </div>
+                  <div class="origin-row">
+                    <span class="o-label">Cây trồng gốc:</span>
+                    <strong id="root-product-name" class="o-val">—</strong>
+                  </div>
+                  <div class="origin-row">
+                    <span class="o-label">Sản lượng ban đầu:</span>
+                    <strong id="root-quantity" class="o-val font-mono">—</strong>
+                  </div>
+                  <div class="origin-row">
+                    <span class="o-label">Ngày thu hoạch gốc:</span>
+                    <strong id="root-harvest-date" class="o-val">—</strong>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Thẻ Vùng Trồng Của Lô Gốc -->
+              <div class="origin-card origin-card--farm">
+                <div class="origin-card-badge origin-card-badge--farm">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"/><circle cx="12" cy="10" r="3"/></svg>
+                  <span>VÙNG TRỒNG CỦA LÔ GỐC</span>
+                </div>
+                <div class="origin-card-body">
+                  <div class="origin-row">
+                    <span class="o-label">Tên thửa đất:</span>
+                    <strong id="origin-farm-name" class="o-val text-primary">—</strong>
+                  </div>
+                  <div class="origin-row">
+                    <span class="o-label">Vị trí thửa đất:</span>
+                    <span id="origin-farm-location" class="o-val">—</span>
+                  </div>
+                  <div class="origin-row">
+                    <span class="o-label">Diện tích canh tác:</span>
+                    <strong id="origin-farm-area" class="o-val font-mono">—</strong>
+                  </div>
+                  <div class="origin-row">
+                    <span class="o-label">Chủ thửa đất / HTX:</span>
+                    <strong id="origin-farm-owner" class="o-val">—</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- PHẦN 3: DANH SÁCH THEO TẦNG (PHẢ HỆ TRUY VẾT) -->
+            <div class="lineage-container">
+              <div class="lineage-subhead">
+                <span class="lineage-title">Danh Sách Phả Hệ Theo Từng Tầng (T-49)</span>
+                <span class="lineage-count" id="lineage-tier-count">0 tầng</span>
+              </div>
+              <div id="lineage-tier-list" class="lineage-tier-tree">
+                <!-- Sẽ được render tự động bằng JS -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-close-detail" class="btn-action-ghost" type="button">Đóng cửa sổ</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Toasts -->
   <div id="toast-container" class="toast-stack" aria-live="polite" aria-atomic="true"></div>

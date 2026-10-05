@@ -198,74 +198,152 @@ def seed_sample_agricultural_data() -> None:
                 farms_data[7].id,
             )
 
-            batches_data = [
-                Batch(
-                    farm_id=f1,
-                    product_name="Xoài Cát Chu Loại 1 (VietGAP)",
-                    quantity=1500.0,
-                    harvest_date=date(2026, 9, 25),
-                ),
-                Batch(
-                    farm_id=f1,
-                    product_name="Xoài Cát Chu Xuất Khẩu Sang Nhật",
-                    quantity=2200.0,
-                    harvest_date=date(2026, 9, 28),
-                ),
+            b1 = Batch(
+                farm_id=f1,
+                product_name="Xoài Cát Chu Loại 1 (VietGAP)",
+                quantity=1500.0,
+                harvest_date=date(2026, 9, 25),
+                parent_id=None,
+                is_restricted=False,
+            )
+            db.add(b1)
+            db.commit()
+            db.refresh(b1)
+
+            b2 = Batch(
+                farm_id=f1,
+                product_name="Xoài Cát Chu Xuất Khẩu Sang Nhật",
+                quantity=2200.0,
+                harvest_date=date(2026, 9, 28),
+                parent_id=b1.id,
+                is_restricted=False,
+            )
+            db.add(b2)
+            db.commit()
+            db.refresh(b2)
+
+            b3 = Batch(
+                farm_id=f1,
+                product_name="Xoài Cát Chu Sấy Dẻo Cao Lãnh Đóng Hộp",
+                quantity=500.0,
+                harvest_date=date(2026, 9, 30),
+                parent_id=b2.id,
+                is_restricted=False,
+            )
+            db.add(b3)
+
+            other_batches = [
                 Batch(
                     farm_id=f2,
                     product_name="Sầu Riêng Ri6 Cơm Vàng Hạt Lép",
                     quantity=3400.0,
                     harvest_date=date(2026, 9, 26),
+                    parent_id=None,
+                    is_restricted=False,
                 ),
                 Batch(
                     farm_id=f2,
                     product_name="Sầu Riêng Ri6 Tuyển Chọn Loại Đặc Biệt",
                     quantity=4000.0,
                     harvest_date=date(2026, 9, 29),
+                    parent_id=None,
+                    is_restricted=False,
                 ),
                 Batch(
                     farm_id=f3,
                     product_name="Bưởi Da Xanh Đạt Chuẩn GlobalGAP",
                     quantity=2800.0,
                     harvest_date=date(2026, 9, 27),
+                    parent_id=None,
+                    is_restricted=False,
                 ),
                 Batch(
                     farm_id=f4,
                     product_name="Thanh Long Ruột Đỏ Hàng Chọn Xuất Khẩu",
                     quantity=4100.0,
                     harvest_date=date(2026, 9, 29),
+                    parent_id=None,
+                    is_restricted=False,
                 ),
                 Batch(
                     farm_id=f5,
                     product_name="Nhãn Lồng Hưng Yên Hương Chi Loại 1",
                     quantity=1800.0,
                     harvest_date=date(2026, 9, 27),
+                    parent_id=None,
+                    is_restricted=False,
                 ),
                 Batch(
                     farm_id=f6,
                     product_name="Bơ Booth 7 Đắk Lắk Trái To Đều",
                     quantity=3200.0,
                     harvest_date=date(2026, 9, 28),
+                    parent_id=None,
+                    is_restricted=False,
                 ),
                 Batch(
                     farm_id=f7,
                     product_name="Vải Thiều Lục Ngạn Chuẩn VietGAP Đóng Hộp",
                     quantity=5000.0,
                     harvest_date=date(2026, 9, 26),
+                    parent_id=None,
+                    is_restricted=False,
                 ),
                 Batch(
                     farm_id=f8,
                     product_name="Chè Ô Long Mộc Châu Búp Non Thu Hái Sớm",
                     quantity=850.0,
                     harvest_date=date(2026, 9, 30),
+                    parent_id=None,
+                    is_restricted=False,
+                ),
+                Batch(
+                    farm_id=f1,
+                    product_name="Lô Cây Giống Đầu Dòng F0 (Bảo Mật Nội Bộ)",
+                    quantity=250.0,
+                    harvest_date=date(2026, 9, 24),
+                    parent_id=None,
+                    is_restricted=True,
+                    owner="admin",
                 ),
             ]
-            db.add_all(batches_data)
+            db.add_all(other_batches)
             db.commit()
     except SQLAlchemyError:
         db.rollback()
     finally:
         db.close()
+
+
+def upgrade_db_schema() -> None:
+    """Tự động kiểm tra và thêm các cột còn thiếu vào bảng batches (SQLite)."""
+    from sqlalchemy import text
+
+    from app import models  # noqa: F401
+    Base.metadata.create_all(bind=engine)
+
+    with engine.connect() as conn:
+        try:
+            cursor = conn.execute(text("PRAGMA table_info(batches)"))
+            existing_cols = [row[1] for row in cursor.fetchall()]
+            if existing_cols:
+                if "parent_id" not in existing_cols:
+                    conn.execute(text("ALTER TABLE batches ADD COLUMN parent_id INTEGER REFERENCES batches(id)"))
+                if "is_restricted" not in existing_cols:
+                    conn.execute(text("ALTER TABLE batches ADD COLUMN is_restricted BOOLEAN DEFAULT 0"))
+                if "batch_code" not in existing_cols:
+                    conn.execute(text("ALTER TABLE batches ADD COLUMN batch_code VARCHAR(100)"))
+                if "owner" not in existing_cols:
+                    conn.execute(text("ALTER TABLE batches ADD COLUMN owner VARCHAR(255)"))
+                conn.commit()
+
+                # Nếu các lô đã có nhưng chưa có phả hệ, liên kết mẫu lô 2 và 3 vào lô 1
+                conn.execute(text("UPDATE batches SET parent_id = 1 WHERE id = 2 AND parent_id IS NULL"))
+                # Tạo hoặc cập nhật lô bị giới hạn (is_restricted) để phục vụ kiểm thử T-54 (403 Forbidden)
+                conn.execute(text("UPDATE batches SET is_restricted = 1, owner = 'admin' WHERE id = (SELECT max(id) FROM batches) AND is_restricted = 0"))
+                conn.commit()
+        except SQLAlchemyError:
+            pass
 
 
 def init_db() -> None:
@@ -275,6 +353,7 @@ def init_db() -> None:
 
     - ``Base.metadata.create_all()``: bảng chưa có thì tạo, bảng đã có thì
       giữ nguyên (không làm mất dữ liệu đang lưu).
+    - ``upgrade_db_schema()``: bổ sung cột phả hệ (parent_id) và bảo mật (is_restricted).
     - ``seed_default_users()``: tạo 2 tài khoản mặc định cho chức năng đăng nhập
       + phân quyền (Sprint 4).
     - ``seed_sample_agricultural_data()``: nạp dữ liệu mẫu về thửa đất và lô nông sản.
@@ -282,5 +361,6 @@ def init_db() -> None:
     from app import models  # noqa: F401  (import để đăng ký metadata)
 
     Base.metadata.create_all(bind=engine)
+    upgrade_db_schema()
     seed_default_users()
     seed_sample_agricultural_data()

@@ -259,13 +259,23 @@ class BatchCreate(BaseModel):
         description="Ngày thu hoạch, định dạng yyyy-MM-dd.",
         examples=["2026-01-15"],
     )
+    parent_id: int | None = Field(
+        default=None,
+        description="ID lô cha trong phả hệ (null nếu là lô gốc thu hoạch ban đầu).",
+        examples=[None],
+    )
+    is_restricted: bool = Field(
+        default=False,
+        description="Chế độ bảo mật riêng tư (chỉ admin hoặc chủ sở hữu xem được - T-54).",
+        examples=[False],
+    )
 
 
 class BatchUpdate(BatchCreate):
     """Dữ liệu client gửi lên khi **sửa** lô nông sản (``PUT /batches/{batch_id}``).
 
     Kế thừa ``BatchCreate`` (dùng lại validate: ``farm_id`` > 0, ``quantity`` > 0,
-    ``harvest_date`` đúng định dạng ISO). Client gửi **đầy đủ 4 trường**; router
+    ``harvest_date`` đúng định dạng ISO). Client gửi **đầy đủ các trường**; router
     trả ``404`` nếu lô hoặc ``farm_id`` mới không tồn tại.
 
     Lưu ý: đổi ``farm_id`` = chuyển lô sang vùng trồng khác (vẫn phải tồn tại).
@@ -273,7 +283,7 @@ class BatchUpdate(BatchCreate):
     Ví dụ::
 
         {"farm_id": 1, "product_name": "Xoài cát Chu", "quantity": 150,
-         "harvest_date": "2026-01-16"}
+         "harvest_date": "2026-01-16", "parent_id": null, "is_restricted": false}
     """
 
     model_config = ConfigDict(
@@ -283,6 +293,8 @@ class BatchUpdate(BatchCreate):
                 "product_name": "Xoài cát Chu",
                 "quantity": 150,
                 "harvest_date": "2026-01-16",
+                "parent_id": None,
+                "is_restricted": False,
             }
         },
     )
@@ -304,6 +316,114 @@ class BatchResponse(BaseModel):
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
     quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
     harvest_date: date = Field(..., description="Ngày thu hoạch.")
+    parent_id: int | None = Field(default=None, description="ID lô cha trong phả hệ.")
+    batch_code: str | None = Field(default=None, description="Mã định danh lô sinh theo T-19.")
+    is_restricted: bool = Field(default=False, description="Cờ phân quyền bảo mật T-54.")
+
+
+# ------------------------------------------------------------- Tách Lô (S-17 / T-39) ---
+class BatchSplitRequest(BaseModel):
+    """Yêu cầu tách lô nông sản mẹ thành các lô con (S-17).
+
+    Lưu ý kỹ thuật: Lô con kế thừa loại sản phẩm và nguồn gốc của lô mẹ,
+    không cho phép nhập sai lệch.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "child_quantities": [300.0, 400.0],
+                "note": "Tách 2 lô con phục vụ đóng gói siêu thị",
+            }
+        }
+    )
+
+    child_quantities: list[float] = Field(
+        ...,
+        min_length=1,
+        description="Danh sách khối lượng (kg) các lô con cần tách (mỗi phần tử > 0).",
+        examples=[[300.0, 400.0]],
+    )
+    note: str | None = Field(
+        default=None,
+        description="Ghi chú mục đích tách lô (tùy chọn).",
+    )
+
+
+class BatchSplitResponse(BaseModel):
+    """Kết quả trả về sau khi tách lô nông sản (S-17)."""
+
+    message: str = Field(..., description="Thông báo kết quả giao dịch.")
+    parent_batch: BatchResponse = Field(..., description="Thông tin lô mẹ sau khi bị trừ khối lượng.")
+    child_batches: list[BatchResponse] = Field(..., description="Danh sách các lô con mới được tạo thành công.")
+    total_split_quantity: float = Field(..., description="Tổng khối lượng đã tách (kg).")
+    remaining_quantity: float = Field(..., description="Khối lượng còn lại của lô mẹ (kg).")
+
+
+# -------------------------------------------------------- Phả hệ & Truy vết (T-49) ---
+class OriginFarmInfo(BaseModel):
+    """Thông tin vùng trồng của lô gốc (T-49)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(..., description="Mã định danh vùng trồng gốc.")
+    name: str = Field(..., description="Tên vùng trồng gốc.")
+    location: str = Field(..., description="Địa điểm / vị trí địa lý vùng trồng.")
+    area: float = Field(..., description="Diện tích canh tác (ha).")
+    owner: str = Field(..., description="Chủ sở hữu / Hộ nông dân canh tác.")
+
+
+class RootBatchInfo(BaseModel):
+    """Thông tin lô gốc trong cây phả hệ (T-49)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(..., description="Mã định danh lô gốc.")
+    farm_id: int = Field(..., description="Mã vùng trồng của lô gốc.")
+    product_name: str = Field(..., description="Tên nông sản / cây trồng của lô gốc.")
+    quantity: float = Field(..., description="Sản lượng thu hoạch ban đầu (kg).")
+    harvest_date: date = Field(..., description="Ngày thu hoạch ban đầu.")
+
+
+class BatchLineageTier(BaseModel):
+    """Một tầng trong danh sách phả hệ truy vết nguồn gốc (T-49)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    level: int = Field(..., description="Thứ tự tầng (1 = Tầng gốc).")
+    tier_name: str = Field(..., description="Tên hiển thị tầng (ví dụ: 'Tầng 1 (Lô gốc)').")
+    batch_id: int = Field(..., description="Mã lô nông sản.")
+    product_name: str = Field(..., description="Tên cây trồng / sản phẩm nông sản.")
+    quantity: float = Field(..., description="Khối lượng sản phẩm tại tầng này (kg).")
+    harvest_date: date = Field(..., description="Ngày ghi nhận / thu hoạch.")
+    farm_id: int = Field(..., description="Mã vùng trồng liên kết.")
+    farm_name: str | None = Field(default=None, description="Tên vùng trồng liên kết.")
+    parent_id: int | None = Field(default=None, description="Mã lô cha.")
+    is_root: bool = Field(default=False, description="Có phải là lô gốc không.")
+    is_current: bool = Field(default=False, description="Có phải là lô đang được tra cứu không.")
+
+
+class BatchTraceResponse(BaseModel):
+    """Kết quả truy vết phả hệ nguồn gốc lô nông sản (T-49 kèm T-54).
+
+    Bao gồm thông tin lô gốc, vùng trồng của lô gốc và danh sách theo tầng.
+    Kết quả được cache 60 giây theo mã lô.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    batch_id: int = Field(..., description="Mã lô đang truy vết.")
+    product_name: str = Field(..., description="Tên sản phẩm lô đang truy vết.")
+    quantity: float = Field(..., description="Sản lượng của lô (kg).")
+    harvest_date: date = Field(..., description="Ngày thu hoạch của lô.")
+    farm_id: int = Field(..., description="Mã vùng trồng của lô.")
+    farm_name: str | None = Field(default=None, description="Tên vùng trồng của lô.")
+    root_batch: RootBatchInfo = Field(..., description="Thông tin chi tiết lô gốc.")
+    origin_farm: OriginFarmInfo = Field(..., description="Thông tin vùng trồng của lô gốc.")
+    lineage: list[BatchLineageTier] = Field(..., description="Danh sách phả hệ theo từng tầng.")
+    cached: bool = Field(default=False, description="Được phục vụ từ bộ nhớ đệm (Cache 60s) hay không.")
+    cache_ttl_seconds: int = Field(default=60, description="Thời gian tồn tại của cache (giây).")
+    cache_remaining_seconds: int = Field(default=60, description="Thời gian cache còn lại (giây).")
 
 
 # ----------------------------------------------------------------- Chung ---
@@ -348,3 +468,57 @@ class DeleteResponse(BaseModel):
         ),
         examples=[2],
     )
+
+
+# ----------------------------------------------- Sự kiện chuỗi cung ứng (T-29) ---
+class BatchEventCreate(BaseModel):
+    """Yêu cầu tạo sự kiện mới cho lô nông sản."""
+
+    event_type: str = Field(
+        ...,
+        description="Mã loại sự kiện (ví dụ: HARVEST, PACKAGING, COLD_STORAGE_IN...)",
+        examples=["HARVEST"],
+    )
+    data: str = Field(
+        ...,
+        description="Dữ liệu chi tiết sự kiện (JSON hoặc văn bản)",
+        examples=['{"temp_c": 4.0, "facility": "Kho Mỹ Xương"}'],
+    )
+    timestamp: str | None = Field(
+        default=None,
+        description="Thời điểm ghi nhận ISO-8601 (để trống sẽ lấy thời gian hiện tại)",
+    )
+
+
+class BatchEventResponse(BaseModel):
+    """Thông tin sự kiện với mã băm mật mã SHA-256 chuỗi (T-29)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int
+    sequence: int
+    event_type: str
+    data: str
+    timestamp: str
+    prev_hash: str
+    hash: str
+
+
+class BatchEventVerifyResponse(BaseModel):
+    """Kết quả kiểm tra tính toàn vẹn chuỗi sự kiện của lô nông sản (T-29)."""
+
+    batch_id: int
+    is_valid: bool
+    status: str
+    total_events: int
+    verified_count: int
+    tamper_type: str | None = None
+    tampered_event_id: int | None = None
+    tampered_sequence: int | None = None
+    detail: str
+    recorded_hash: str | None = None
+    expected_hash: str | None = None
+    recorded_prev_hash: str | None = None
+    expected_prev_hash: str | None = None
+

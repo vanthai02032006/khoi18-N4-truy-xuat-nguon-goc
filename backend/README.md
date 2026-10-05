@@ -15,12 +15,36 @@ Backend API cho đề tài **"Truy xuất nguồn gốc và giám sát chuỗi l
   `GET /users` (chỉ admin) và dependency `require_admin` / `require_farmer`.
   *Không dùng JWT*: API cần quyền xác thực bằng **HTTP Basic**
   (Swagger UI có sẵn nút **Authorize**).
-- **Sprint 5 (đang làm):** hoàn thiện **CRUD đầy đủ** — bổ sung `PUT` / `DELETE`
+- **Sprint 5:** hoàn thiện **CRUD đầy đủ** — bổ sung `PUT` / `DELETE`
   cho `/farms` và `/batches` (xoá **chỉ dành cho `admin`**) kèm schema
-  `FarmUpdate`/`BatchUpdate`/`DeleteResponse`; frontend ẩn/hiện theo trạng thái
-  đăng nhập, thêm cột **Thao tác** (Sửa/Xoá) và dashboard thống kê
-  (tổng vùng trồng, tổng lô nông sản, tổng sản lượng).
-  *Chưa có* QR code, blockchain hay nghiệp vụ chuỗi lạnh.
+  `FarmUpdate`/`BatchUpdate`/`DeleteResponse`.
+- **Task T-49 (SCRUM-65) & T-54 (truy vết & phân quyền):**
+  - **T-49:** Endpoint `GET /batches/{batch_id}/trace` (kèm alias `/lineage`, `/origin`) trả về kết quả truy vết nguồn gốc kèm **lô gốc (`root_batch`)**, **thông tin vùng trồng của lô gốc (`origin_farm`)**, và danh sách phả hệ phân theo từng tầng (`lineage`).
+  - **T-54:** Chính sách bảo vệ quyền xem riêng tư cho lô nông sản (`is_restricted`). Lô không có quyền xem bị trả về mã lỗi **`403 Forbidden`**.
+  - **Cache 60 giây:** Kết quả truy vết được lưu đệm in-memory thread-safe trong 60 giây theo mã lô (tự động invalidate khi cập nhật hoặc xoá lô).
+  - **Frontend:** Modal chi tiết & mục 'Nguồn gốc' hiển thị danh sách theo tầng trực quan, đếm ngược cache 60s, và khung cảnh báo đỏ khi nhận 403 Forbidden.
+- **Task T-19 (SCRUM-35) — Màn hình ghi nhận thu hoạch, hiện mã lô cỡ chữ lớn:**
+  - **Màn hình thu hoạch T-15:** Biểu mẫu 4 trường bắt buộc: Thửa đất xuất xứ (`farm_id`), Loại nông sản (`product_name`), Sản lượng thu hoạch kg (`quantity`), Ngày thu hoạch (`harvest_date`). Hỗ trợ chọn lô cha (T-49) và gắn cờ bảo mật (T-54).
+  - **Mã lô sinh tự động:** Định dạng chuẩn T-19 `LOT-{farm_id:02d}-{YYYYMMDD}-{sequence:02d}` (tự động tăng số thứ tự sequence cho các đợt thu hoạch cùng ngày từ cùng một thửa).
+  - **Hiển thị Mã Lô Cỡ Chữ Lớn (Giant Batch Code):** Sau khi lưu, bật modal nổi bật `#harvest-success-modal` hiển thị mã lô cỡ chữ khổng lồ (`clamp(2rem, 6.2vw, 2.9rem)`), font Monospace.
+  - **Tối ưu ngoài trời nắng gắt (Outdoor Sunlight UX):** Bố cục tương phản cực cao (> 14:1 WCAG AAA), nền xanh than chì rêu đậm (`#064e3b` / `#022c22`), chữ hổ phách huỳnh quang rực rỡ (`#fbbf24`), kèm hiệu ứng text-shadow dạ quang, triệt tiêu hiện tượng lóa nắng trên màn hình điện thoại.
+  - **Nút sao chép cỡ lớn 1-click:** Nút `#btn-copy-giant-code` touch target rộng (chiều cao 56px, chữ 1.15rem), phản hồi xúc giác/thị giác lập tức `✓ ĐÃ SAO CHÉP MÃ LÔ!` và toast thông báo.
+  - **Tối ưu thực địa trên điện thoại:** Responsive chuẩn cho màn hình di động ngoài ruộng vườn (touch targets >= 52px, nút bấm full-width, điều hướng "Tiếp tục ghi nhận lô mới" hoặc "Xem phả hệ T-49").
+  - **Kiểm thử tự động:** `backend/tests/test_t19_harvest_batch_code.py` đạt 100%.
+- **Task T-19, T-39 & S-17 (Hàm tách lô nông sản transactional):**
+  - **T-19:** Hàm sinh mã lô nông sản tự động theo quy chuẩn `LOT-{farm_id:02d}-P{parent_id}.{sequence:02d}-{YYYYMMDD}` (lô con) hoặc `LOT-{farm_id:02d}-{YYYYMMDD}-{sequence:02d}` (lô gốc F0).
+  - **T-39 (SCRUM-55):** Ghi nhận quan hệ phân cấp cây phả hệ (`parent_id = parent.id`), trừ chính xác khối lượng khả dụng của lô mẹ.
+  - **Kế thừa nguồn gốc 100%:** Lô con tự động kế thừa loại sản phẩm (`product_name`) và vùng trồng (`farm_id`, `harvest_date`) của lô mẹ, không cho phép nhập sai lệch.
+  - **S-17:** Hàm tách mở transaction nguyên tử, vượt qua cả 3 ca kiểm thử (tách 1 phần, tách toàn bộ, bắt lỗi biên/vượt khối lượng); cơ chế rollback sạch sẽ 100% nếu phát sinh lỗi ở lô con thứ hai.
+  - **API:** Endpoint `POST /batches/{batch_id}/split` hỗ trợ tách lô nhanh chóng kèm phân quyền `farmer`/`admin`.
+- **Task T-29 (SCRUM-45) (Cơ chế chống sửa lén bản ghi bằng Hash Chain):**
+  - **Mô hình Cryptographic Hash Chain:** Loại bỏ blockchain phức tạp, sử dụng chuỗi băm mật mã SHA-256 lưu trực tiếp trong bảng `batch_events`. Mỗi bản ghi băm nội dung kèm `prev_hash` của bản ghi trước.
+  - **Nghiệm thu 3 ca kiểm thử:**
+    1. *Ca 1 (Sửa lén 1 bản ghi bằng SQL):* Phát hiện `DATA_MODIFIED` 100% do hash lưu trữ không khớp với hash nội dung mới.
+    2. *Ca 2 (Xoá 1 bản ghi bằng SQL):* Phát hiện `RECORD_DELETED_OR_CHAIN_BROKEN` 100% do chuỗi hash bị đứt đoạn.
+    3. *Ca 3 (Giữ nguyên vẹn 10 sự kiện):* Khẳng định chuỗi `VERIFIED` toàn vẹn 100%.
+  - **Tương thích CI:** Tích hợp bộ test pytest chạy độc lập, tự dọn dẹp không cần can thiệp thủ công.
+  - **API:** `POST /batches/{id}/events`, `GET /batches/{id}/events`, `GET /batches/{id}/events/verify`.
 
 ---
 
@@ -31,19 +55,26 @@ backend/
 ├── app/
 │   ├── __init__.py          # Đánh dấu package + khai báo __version__
 │   ├── main.py              # Khởi tạo FastAPI, CORS, lifespan, đăng ký router
-│   ├── database.py          # Engine SQLite, SessionLocal, Base, get_db, init_db
-│   ├── models.py            # ORM models: Farm → "farms", Batch → "batches",
-│   │                        #             User → "users"
-│   ├── schemas.py           # Pydantic: Health / Farm / Batch / Auth
-│   │                        #   (Create + Update + Response + DeleteResponse)
-│   ├── security.py          # Băm mật khẩu + xác thực/phân quyền (Sprint 4)
+│   ├── database.py          # Engine SQLite, SessionLocal, Base, get_db, init_db, upgrade_db_schema
+│   ├── cache.py             # TraceCache in-memory thread-safe TTL 60s (T-49)
+│   ├── batch_split.py       # Logic sinh mã T-19 & hàm tách lô nguyên tử split_batch (T-39, S-17)
+│   ├── event_chain.py       # Cơ chế Cryptographic Hash Chain & chống sửa lén bản ghi (T-29 / SCRUM-45)
+│   ├── models.py            # ORM models: Farm, Batch, BatchEvent (T-29), User
+│   ├── schemas.py           # Pydantic: Health, Farm, Batch, BatchEvent, TraceResponse, VerifyResponse...
+│   ├── security.py          # Băm mật khẩu, xác thực Basic, kiểm tra quyền xem T-54 (403 Forbidden)
 │   └── routers/
 │       ├── __init__.py      # Export các router
 │       ├── health.py        # GET /health
 │       ├── auth.py          # POST /auth/login (Sprint 4)
 │       ├── users.py         # GET /users - chỉ admin (Sprint 4)
 │       ├── farms.py         # CRUD /farms: POST, GET, PUT {id}, DELETE {id} (Sprint 5)
-│       └── batches.py       # CRUD /batches: POST, GET, GET {id}, PUT {id}, DELETE {id}
+│       └── batches.py       # CRUD /batches + trace (T-49) + split (S-17) + events & verify (T-29)
+├── tests/
+│   ├── __init__.py
+│   └── test_t29_tamper_proofing.py # Bộ kiểm thử CI (pytest) nghiệm thu 3 ca T-29
+├── test_split_s17.py        # Bộ kiểm thử nghiệm thu 3 ca S-17 & rollback sạch sẽ ở lô thứ 2
+├── test_t29_tamper_proofing.py # Script kiểm thử độc lập 3 ca chống sửa lén T-29
+├── test_t49_t54.py          # Script kiểm thử tự động toàn diện T-49, T-54 và cache 60s
 ├── requirements.txt         # Danh sách thư viện Python
 ├── .gitignore               # Bỏ qua file DB, __pycache__, .venv...
 └── README.md                # Tài liệu này
@@ -163,6 +194,11 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | POST | `/batches` | Tạo lô nông sản (kiểm tra `farm_id` tồn tại) | farmer **hoặc** admin | `201` · `401` · `404` farm không tồn tại · `422` dữ liệu sai |
 | PUT | `/batches/{batch_id}` | Cập nhật (thay thế) lô nông sản - đổi được `farm_id` nếu tồn tại | farmer **hoặc** admin | `200` · `401` · `404` lô/farm không tồn tại · `422` |
 | DELETE | `/batches/{batch_id}` | Xoá một lô nông sản | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy |
+| GET | `/batches/{batch_id}/trace` | Truy vết nguồn gốc phả hệ, lô gốc & vùng trồng gốc (cache 60s) | T-54 (bảo vệ nếu restricted) | `200` · `403` không có quyền · `404` |
+| POST | `/batches/{batch_id}/split` | Tách lô nông sản con transactional (T-19, T-39, S-17) | farmer **hoặc** admin | `201` · `400` vượt khối lượng · `403` · `404` |
+| POST | `/batches/{batch_id}/events` | Ghi nhận sự kiện chuỗi cung ứng mật mã băm SHA-256 (T-29) | farmer **hoặc** admin | `201` · `401` · `403` · `404` |
+| GET | `/batches/{batch_id}/events` | Lấy danh sách sự kiện theo chuỗi băm của lô (T-29) | công khai (hoặc T-54) | `200` · `403` · `404` |
+| GET | `/batches/{batch_id}/events/verify` | Kiểm tra tính toàn vẹn & phát hiện sửa lén / xoá bản ghi (T-29) | công khai (hoặc T-54) | `200` (is_valid: true/false) · `403` · `404` |
 | GET | `/users` | Danh sách tài khoản (không kèm mật khẩu) | **chỉ admin** | `200` · `401` · `403` sai vai trò |
 
 > ✅ **Sprint 5 hoàn thiện CRUD:** cả Farm và Batch đều có đủ `POST` / `GET` /
@@ -172,15 +208,16 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 > ⚠️ **Thay đổi so với Sprint 3/4:** `PUT` / `DELETE` là endpoint **mới**, trong
 > đó nhóm `DELETE` **chỉ admin** gọi được (farmer → `403`, giao diện cũng **ẩn nút
 > Xoá**). `GET /health`, `GET /batches`, `GET /batches/{id}` vẫn **công khai**;
-> `GET /farms`, `POST /farms`, `PUT /farms/{id}`, `POST /batches`, `PUT /batches/{id}`
-> yêu cầu đăng nhập (farmer hoặc admin).
+> `GET /farms`, `POST /farms`, `PUT /farms/{id}`, `POST /batches`, `PUT /batches/{id}`,
+> `POST /batches/{id}/split` yêu cầu đăng nhập (farmer hoặc admin).
 
 ### Phân quyền theo từng thao tác (Sprint 5)
 
 | Thao tác | farmer | admin |
 | --- | --- | --- |
-| Xem dữ liệu (`GET /farms`) | ✅ | ✅ |
+| Xem dữ liệu (`GET /farms`, `GET /batches`) | ✅ | ✅ |
 | Thêm dữ liệu (`POST /farms`, `POST /batches`) | ✅ | ✅ |
+| Tách lô nông sản (`POST /batches/{id}/split`) | ✅ (lô được phép) | ✅ |
 | Sửa dữ liệu (`PUT /farms/{id}`, `PUT /batches/{id}`) | ✅ | ✅ |
 | Xoá dữ liệu (`DELETE /farms/{id}`, `DELETE /batches/{id}`) | ❌ `403 Forbidden` | ✅ |
 | Quản lý tài khoản (`GET /users`) | ❌ `403 Forbidden` | ✅ |
@@ -217,24 +254,275 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 > `Base.metadata.create_all()` mỗi lần server khởi động, nên bảng mới sẽ tự
 > được tạo nếu chưa tồn tại (không làm mất dữ liệu các bảng đã có).
 
-### Cấu trúc bảng `batches` (lô nông sản)
+### Cấu trúc bảng `batches` (lô nông sản - bổ sung T-19, T-39, T-49 & T-54)
 
-| Cột | Kiểu | Ràng buộc |
-| --- | --- | --- |
-| `id` | INTEGER | Khoá chính, tự tăng |
-| `farm_id` | INTEGER | **Khoá ngoại → `farms.id`**, bắt buộc, có index |
-| `product_name` | VARCHAR(255) | Bắt buộc |
-| `quantity` | FLOAT | Bắt buộc, **> 0** (đơn vị kg) |
-| `harvest_date` | DATE | Bắt buộc, định dạng `yyyy-MM-dd` |
+| Cột | Kiểu | Ràng buộc | Mô tả |
+| --- | --- | --- | --- |
+| `id` | INTEGER | Khoá chính, tự tăng | Mã định danh lô hàng |
+| `batch_code` | VARCHAR(100) | Cho phép NULL, có index | Mã lô nghiệp vụ chuẩn T-19 (ví dụ: `LOT-01-P11.01-20260925`) |
+| `farm_id` | INTEGER | **Khoá ngoại → `farms.id`**, bắt buộc, có index | Thửa đất / vùng trồng liên kết |
+| `product_name` | VARCHAR(255) | Bắt buộc | Tên nông sản / cây trồng |
+| `quantity` | FLOAT | Bắt buộc, **> 0** (đơn vị kg) | Sản lượng thu hoạch |
+| `harvest_date` | DATE | Bắt buộc, định dạng `yyyy-MM-dd` | Ngày thu hoạch ghi nhận |
+| `parent_id` | INTEGER | **Khoá ngoại → `batches.id`**, NULL | Lô cha trực tiếp trong phả hệ (T-39, T-49) |
+| `is_restricted` | BOOLEAN | Mặc định `False` | Bảo vệ quyền xem riêng tư theo T-54 |
+| `owner` | VARCHAR(50) | Mặc định `"farmer"` | Chủ sở hữu lô nông sản |
 
-**Quan hệ:** `Farm 1 ---- N Batch`, khai báo 2 chiều trong `app/models.py` bằng
-`relationship(back_populates=...)`:
+**Quan hệ:**
+- `Farm 1 ---- N Batch`: Một vùng trồng sở hữu nhiều lô nông sản thu hoạch.
+- `Batch (parent) 1 ---- N Batch (children)`: Phả hệ tự tham chiếu (Self-referential) phục vụ tách lô T-39 và phân tầng truy vết nguồn gốc T-49.
+- `Batch 1 ---- N BatchEvent`: Một lô nông sản sở hữu chuỗi sự kiện được băm mật mã SHA-256 (T-29 / SCRUM-45).
 
-- `farm.batches` → danh sách lô của vùng trồng (có `cascade="all, delete-orphan"`).
-- `batch.farm` → vùng trồng xuất xứ của lô.
+### Cấu trúc bảng `batch_events` (sự kiện chuỗi cung ứng chống sửa lén - T-29)
 
-Khi tạo lô, backend **kiểm tra `farm_id` có tồn tại trước khi ghi** → nếu không
-tìm thấy vùng trồng, API trả `404 Not Found` thay vì tạo dữ liệu mồ côi.
+| Cột | Kiểu | Ràng buộc | Mô tả |
+| --- | --- | --- | --- |
+| `id` | INTEGER | Khoá chính, tự tăng | Mã định danh bản ghi sự kiện |
+| `batch_id` | INTEGER | **Khoá ngoại → `batches.id`**, bắt buộc, có index | Lô nông sản liên kết |
+| `sequence` | INTEGER | Bắt buộc | Số thứ tự bước trong chuỗi cung ứng (1, 2, 3...) |
+| `event_type` | VARCHAR(100) | Bắt buộc | Loại sự kiện (`HARVEST`, `COLD_STORAGE_IN`, `TRANSPORT_DISPATCH`...) |
+| `data` | VARCHAR(1000) | Bắt buộc | Dữ liệu chi tiết sự kiện (dạng JSON / telemetry chuỗi lạnh) |
+| `timestamp` | VARCHAR(50) | Bắt buộc | Thời điểm ghi nhận sự kiện (ISO-8601) |
+| `prev_hash` | VARCHAR(64) | Bắt buộc | Mã băm SHA-256 của sự kiện liền trước (`0*64` nếu là genesis) |
+| `hash` | VARCHAR(64) | Bắt buộc, có index | Mã băm SHA-256 xác thực toàn vẹn của sự kiện hiện tại |
+
+---
+
+### Chức năng T-49 & T-54: Truy vết nguồn gốc, Lô gốc & Phân quyền bảo mật
+
+#### 1. Endpoint Truy Vết Nguồn Gốc T-49
+`GET /batches/{batch_id}/trace` (hoặc các alias `/lineage`, `/origin`)
+
+- **Xác thực:** HTTP Basic (hoặc công khai nếu lô không bị bảo vệ T-54).
+- **Phân quyền T-54:**
+  - Nếu `is_restricted == True`: Chỉ **Admin** hoặc **Chủ sở hữu (`owner`)** mới được phép xem; người dùng khác bị trả về mã lỗi **`403 Forbidden`**.
+  - Nếu `is_restricted == False`: Cho phép truy vết bình thường.
+- **Cache 60 giây:**
+  - Kết quả truy vết phả hệ được cache in-memory theo `batch_id` trong **60 giây**.
+  - Tự động xoá cache khi lô được cập nhật (`PUT /batches/{id}`) hoặc xoá (`DELETE /batches/{id}`).
+  - Kiểm tra quyền xem T-54 luôn chạy **trước khi đọc cache** để đảm bảo bảo mật.
+- **Dữ liệu trả về (`BatchTraceResponse`):**
+  - `root_batch`: Thông tin lô gốc thu hoạch đầu tiên (F0).
+  - `origin_farm`: Thông tin vùng trồng / thửa đất của lô gốc (tên vùng trồng, vị trí địa lý, diện tích canh tác, chủ sở hữu / hợp tác xã).
+  - `lineage`: Danh sách phân tầng phả hệ từ Tầng 1 (Lô gốc F0) qua các tầng trung gian đến Lô hiện tại.
+  - `cached`: `true` nếu lấy từ cache, `false` nếu tính toán mới.
+  - `cache_remaining_seconds`: Thời gian sống còn lại của cache (0 - 60s).
+
+Ví dụ Response `200 OK`:
+```json
+{
+  "batch_id": 2,
+  "product_name": "Xoài Cát Chu Xuất Khẩu Sang Nhật",
+  "quantity": 2200.0,
+  "harvest_date": "2026-09-28",
+  "farm_id": 1,
+  "farm_name": "Vùng Trồng Xoài Cát Chu Cao Lãnh (Thửa Đất #1)",
+  "root_batch": {
+    "id": 1,
+    "farm_id": 1,
+    "product_name": "Xoài Cát Chu Loại 1 (VietGAP)",
+    "quantity": 1500.0,
+    "harvest_date": "2026-09-25"
+  },
+  "origin_farm": {
+    "id": 1,
+    "name": "Vùng Trồng Xoài Cát Chu Cao Lãnh (Thửa Đất #1)",
+    "location": "Xã Mỹ Xương, Huyện Cao Lãnh, Tỉnh Đồng Tháp",
+    "area": 4.5,
+    "owner": "Hợp tác xã Xoài Mỹ Xương"
+  },
+  "lineage": [
+    {
+      "level": 1,
+      "tier_name": "Tầng 1 (Lô gốc)",
+      "batch_id": 1,
+      "product_name": "Xoài Cát Chu Loại 1 (VietGAP)",
+      "quantity": 1500.0,
+      "harvest_date": "2026-09-25",
+      "farm_id": 1,
+      "farm_name": "Vùng Trồng Xoài Cát Chu Cao Lãnh (Thửa Đất #1)",
+      "parent_id": null,
+      "is_root": true,
+      "is_current": false
+    },
+    {
+      "level": 2,
+      "tier_name": "Tầng 2 (Lô hiện tại)",
+      "batch_id": 2,
+      "product_name": "Xoài Cát Chu Xuất Khẩu Sang Nhật",
+      "quantity": 2200.0,
+      "harvest_date": "2026-09-28",
+      "farm_id": 1,
+      "farm_name": "Vùng Trồng Xoài Cát Chu Cao Lãnh (Thửa Đất #1)",
+      "parent_id": 1,
+      "is_root": false,
+      "is_current": true
+    }
+  ],
+  "cached": true,
+  "cache_ttl_seconds": 60,
+  "cache_remaining_seconds": 52
+}
+```
+
+Ví dụ Response `403 Forbidden` (khi tài khoản `farmer` truy cập lô `#10` có `is_restricted=True`):
+```json
+{
+  "detail": "Tài khoản 'farmer' không có quyền xem lô nông sản #10 theo chính sách T-54 (403 Forbidden)."
+}
+```
+
+---
+
+### Chức năng T-19, T-39 & S-17: Tách Lô Nông Sản Transactional (Batch Splitting)
+
+Hàm tách lô (`split_batch` trong `app/batch_split.py`) cho phép chia tách một lô mẹ thành nhiều lô con theo danh sách khối lượng.
+
+#### 1. Ràng buộc kỹ thuật & Kế thừa nguồn gốc (T-39 / SCRUM-55)
+- **Kế thừa 100% thuộc tính nguồn gốc:** Lô con kế thừa chính xác `product_name`, `farm_id`, `harvest_date` từ lô mẹ; không cho phép client nhập sai lệch.
+- **Quan hệ phả hệ (T-39):** Gán `parent_id = parent.id` để thiết lập cây phả hệ phục vụ truy vết phân tầng T-49.
+- **Cập nhật khối lượng mẹ:** Trừ khối lượng còn lại của lô mẹ chính xác bằng tổng khối lượng các lô con (`parent.quantity -= sum(child_quantities)`). Nếu tách hết, khối lượng mẹ về `0.0`.
+- **Đồng bộ Cache:** Tự động xoá cache truy vết T-49 của lô mẹ để dữ liệu mới nhất được cập nhật tức thì.
+
+#### 2. Quy chuẩn sinh mã lô T-19 (`generate_batch_code`)
+- **Lô con sau khi tách:** `LOT-{farm_id:02d}-P{parent_id}.{sequence:02d}-{YYYYMMDD}`
+  - Ví dụ: `LOT-01-P11.01-20260925`, `LOT-01-P11.02-20260925`
+- **Lô gốc (F0):** `LOT-{farm_id:02d}-{YYYYMMDD}-{sequence:02d}`
+  - Ví dụ: `LOT-01-20260925-01`
+
+#### 3. Cơ chế Atomic Transaction & Rollback sạch sẽ
+Toàn bộ quy trình tách lô được bọc trong một Database Transaction duy nhất:
+```python
+try:
+    # 1. Trừ khối lượng khả dụng của lô mẹ
+    parent.quantity -= total_split_quantity
+    
+    # 2. Tạo từng lô con theo mã T-19 & kế thừa thuộc tính
+    for idx, qty in enumerate(child_quantities, start=1):
+        # nếu phát sinh lỗi tại bất kỳ lô con nào (kể cả lô thứ hai)...
+        child = Batch(...)
+        db.add(child)
+        
+    db.commit()
+except Exception as e:
+    db.rollback()  # Rollback sạch sẽ toàn bộ trạng thái DB!
+    raise e
+```
+Nếu có lỗi phát sinh ở **lô con thứ hai** (hoặc bất kỳ lô nào), toàn bộ giao dịch được **rollback sạch sẽ 100%**: khối lượng của lô mẹ được phục hồi nguyên vẹn ban đầu và **không có bất kỳ lô con mồ côi nào** tồn tại trong cơ sở dữ liệu.
+
+#### 4. Tiêu chí nghiệm thu S-17 (DoD / AC)
+Bộ kiểm thử tự động tại `backend/test_split_s17.py` đã nghiệm thu toàn bộ:
+1. **Ca 1 (Tách một phần):** Lô mẹ 1000 kg tách `[300, 400]` kg ➔ Lô mẹ còn 300 kg, 2 lô con tạo thành công mang mã T-19 kế thừa 100% nguồn gốc.
+2. **Ca 2 (Tách toàn bộ):** Lô mẹ 500 kg tách `[200, 300]` kg ➔ Lô mẹ còn 0 kg.
+3. **Ca 3 (Kiểm tra biên & validation):** Chặn tách vượt khối lượng mẹ (550 kg > 500 kg), chặn số cân âm/bằng 0, chặn mảng rỗng.
+4. **Test Rollback:** Giả lập ném lỗi tại lô con thứ hai (`error_at_child_index=2`) ➔ Lô mẹ giữ nguyên 1000 kg, 0 lô con được ghi vào DB.
+
+#### 5. API Endpoint `POST /batches/{batch_id}/split`
+- **Quyền:** `farmer` hoặc `admin` (kiểm tra quyền sở hữu T-54).
+- **Request Body (`BatchSplitRequest`):**
+```json
+{
+  "child_quantities": [300.0, 400.0]
+}
+```
+- **Response `201 Created` (`BatchSplitResponse`):**
+```json
+{
+  "message": "Đã tách thành công 2 lô con từ lô mẹ #11.",
+  "parent_batch": {
+    "id": 11,
+    "batch_code": "LOT-01-20260925-01",
+    "farm_id": 1,
+    "product_name": "Xoài Cát Chu VietGAP Thượng Hạng",
+    "quantity": 300.0,
+    "harvest_date": "2026-09-25",
+    "parent_id": null
+  },
+  "child_batches": [
+    {
+      "id": 12,
+      "batch_code": "LOT-01-P11.01-20260925",
+      "farm_id": 1,
+      "product_name": "Xoài Cát Chu VietGAP Thượng Hạng",
+      "quantity": 300.0,
+      "harvest_date": "2026-09-25",
+      "parent_id": 11
+    },
+    {
+      "id": 13,
+      "batch_code": "LOT-01-P11.02-20260925",
+      "farm_id": 1,
+      "product_name": "Xoài Cát Chu VietGAP Thượng Hạng",
+      "quantity": 400.0,
+      "harvest_date": "2026-09-25",
+      "parent_id": 11
+    }
+  ],
+  "total_split_quantity": 700.0,
+  "remaining_parent_quantity": 300.0
+}
+```
+
+---
+
+### Chức năng T-29 (SCRUM-45): Cơ chế Chống Sửa Lén Bản Ghi Chuỗi Sự Kiện (Cryptographic Hash Chain)
+
+Theo định hướng từ nghiên cứu **SCRUM-9 (K-01)**, hệ thống không dùng Blockchain phức tạp và tốn kém tài nguyên, mà áp dụng giải pháp **Cryptographic Hash Chain (Chuỗi băm mật mã SHA-256)** gọn nhẹ, lưu trữ trực tiếp trong bảng cơ sở dữ liệu `batch_events`.
+
+#### 1. Nguyên lý hoạt động
+Mỗi sự kiện trong chuỗi cung ứng nông sản (thu hoạch, kiểm định, rửa/sơ chế, đóng gói, lưu kho lạnh, vận chuyển...) được lưu thành một bản ghi có hai trường mã băm:
+- **`prev_hash`**: Mã băm SHA-256 của sự kiện liền kề trước đó. Bản ghi đầu tiên có `prev_hash = "0" * 64` (Genesis Hash).
+- **`hash`**: Mã băm SHA-256 tính từ toàn bộ nội dung của bản ghi hiện tại và `prev_hash`:
+  ```python
+  payload = f"{batch_id}|{sequence}|{event_type}|{data}|{timestamp}|{prev_hash}"
+  hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+  ```
+
+#### 2. Cơ chế kiểm tra tính toàn vẹn 2 lớp (`verify_batch_events_integrity`)
+Khi quét chuỗi sự kiện của một lô nông sản, hàm thực hiện kiểm tra 2 lớp:
+1. **Lớp 1 — Toàn vẹn nội dung bản ghi (Content Integrity):**
+   Hệ thống tính toán lại hash kỳ vọng từ các trường dữ liệu và so sánh với `event.hash` lưu trữ trong database. Nếu không khớp:
+   ➔ Báo cờ **`DATA_MODIFIED`**: bản ghi đã bị can thiệp, sửa lén nội dung trực tiếp qua câu lệnh SQL (bypass ứng dụng).
+2. **Lớp 2 — Liên kết chuỗi mật mã (Chain Continuity):**
+   Đối chiếu `event.prev_hash` với `previous_event.hash` và kiểm tra `sequence` liên tục. Nếu không khớp:
+   ➔ Báo cờ **`RECORD_DELETED_OR_CHAIN_BROKEN`**: phát hiện có bản ghi ở giữa bị xoá thủ tiêu dấu vết hoặc thứ tự bị xáo trộn.
+
+#### 3. Bằng chứng nghiệm thu 3 ca kiểm thử (DoD / AC)
+Kịch bản dựng một lô có đúng 10 sự kiện liên tiếp của chuỗi cung ứng lạnh và lần lượt kiểm tra:
+
+| Ca kiểm thử | Hành động giả lập | Kết quả phát hiện | Khẳng định nghiệm thu |
+| :--- | :--- | :--- | :--- |
+| **Ca 1 (Sửa lén bằng SQL)** | Chạy lệnh SQL `UPDATE batch_events SET data = '{"temp_c": 15.0}' WHERE id = 6` (sửa nhiệt độ từ 3.8°C thành 15°C) | `is_valid: False`<br>`tamper_type: DATA_MODIFIED`<br>`tampered_event_id: 6`<br>`recorded_hash != expected_hash` | **PASS 100%** — Bắt đúng bản ghi #6 bị sửa lén dữ liệu qua SQL trực tiếp |
+| **Ca 2 (Xoá bằng SQL)** | Chạy lệnh SQL `DELETE FROM batch_events WHERE id = 5` (xoá bản ghi lưu kho lạnh) | `is_valid: False`<br>`tamper_type: RECORD_DELETED_OR_CHAIN_BROKEN`<br>`tampered_event_id: 6`<br>`recorded_prev_hash != expected_prev_hash` | **PASS 100%** — Bắt đúng vị trí đứt gãy tại bản ghi #6 khi bản ghi #5 bị xoá |
+| **Ca 3 (Giữ nguyên vẹn)** | Giữ nguyên 10 sự kiện chuẩn không chỉnh sửa, không xoá | `is_valid: True`<br>`status: VERIFIED`<br>`tamper_type: None`<br>`verified_count: 10/10` | **PASS 100%** — Khẳng định 10/10 mắt xích toàn vẹn từ Genesis đến đích |
+
+#### 4. Khả năng chạy lại tự động (Idempotency & CI Ready)
+- Kịch bản tự động dọn dẹp sạch sẽ dữ liệu thử nghiệm sau mỗi ca kiểm thử, bảo đảm có thể chạy lại vô số lần mà **không cần dọn dẹp thủ công**.
+- Hỗ trợ cả 2 phương thức chạy:
+  - **Script độc lập:** `python backend/test_t29_tamper_proofing.py`
+  - **Pytest trong CI:** `python -m pytest backend/tests/test_t29_tamper_proofing.py -v`
+
+#### 5. API Endpoints
+- **Ghi nhận sự kiện:** `POST /batches/{batch_id}/events`
+- **Xem danh sách sự kiện:** `GET /batches/{batch_id}/events`
+- **Kiểm tra toàn vẹn & chống sửa lén:** `GET /batches/{batch_id}/events/verify`
+
+Ví dụ Response `GET /batches/1/events/verify`:
+```json
+{
+  "batch_id": 1,
+  "is_valid": true,
+  "status": "VERIFIED",
+  "total_events": 10,
+  "verified_count": 10,
+  "tamper_type": null,
+  "tampered_event_id": null,
+  "tampered_sequence": null,
+  "detail": "Toàn bộ 10/10 sự kiện hoàn toàn toàn vẹn, chuỗi băm hợp lệ 100%."
+}
+```
+
+---
 
 ### Cấu trúc bảng `users` (Sprint 4)
 
@@ -556,4 +844,8 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 3 | Module **Batch** (quản lý lô nông sản): model `Batch` → bảng `batches` (FK `farm_id` → `farms.id`, quan hệ `Farm 1 ---- N Batch`), schemas `BatchCreate`/`BatchResponse`, router `app/routers/batches.py` với `POST /batches` (**201**, trả **404** nếu `farm_id` không tồn tại), `GET /batches` (**200**) và `GET /batches/{batch_id}` (**200**/**404**). `GET /health`, `POST /farms`, `GET /farms` giữ nguyên. |
 | Sprint 4 | **Đăng nhập + phân quyền cơ bản (không JWT):** model `User` → bảng `users` (`username` unique, mật khẩu băm SHA-256, `role`), `seed_default_users()` tạo sẵn `admin`/`farmer` (mật khẩu `123456`); module `app/security.py` với `hash_password`/`verify_password`/`authenticate_user` và dependency `get_current_user` (**401**), `require_admin` (**403**), `require_farmer`; router `POST /auth/login` (**200**/**401**) và `GET /users` (**200**, chỉ admin); áp `require_farmer` cho `GET /farms`, `POST /farms`, `POST /batches`. Cơ chế xác thực là **HTTP Basic** (Swagger có nút **Authorize**), không token/refresh token. |
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
+| Task T-49 & T-54 | **Truy vết nguồn gốc & Phân quyền riêng tư:** Endpoint `GET /batches/{id}/trace` trả về kết quả truy vết nguồn gốc đa tầng (`lineage`), thông tin lô gốc (`root_batch`) và thông tin vùng trồng của lô gốc (`origin_farm`). Kiểm tra quyền xem riêng tư theo T-54 (trả `403 Forbidden` nếu không có quyền). In-memory cache 60 giây thread-safe kèm cơ chế tự động xoá cache khi cập nhật dữ liệu. |
+| Task T-19, T-39 & S-17 | **Hàm tách lô nông sản Transactional:** Hàm `split_batch` và API `POST /batches/{id}/split`. Sinh mã lô tự động theo chuẩn T-19 (`LOT-{farm_id:02d}-P{parent_id}.{sequence:02d}-{YYYYMMDD}`). Ghi quan hệ phả hệ T-39 (`parent_id`), trừ khối lượng khả dụng của lô mẹ. Lô con kế thừa 100% thuộc tính nguồn gốc (`product_name`, `farm_id`, `harvest_date`). Vượt qua 3 ca kiểm thử của S-17 và bảo đảm rollback sạch sẽ nếu có lỗi ở lô con thứ hai. |
+| Task T-29 (SCRUM-45) | **Cơ chế Chống Sửa Lén Bản Ghi (Cryptographic Hash Chain):** Module `app/event_chain.py` và model `BatchEvent`. Mỗi sự kiện lưu `prev_hash` và `hash` SHA-256. Kiểm tra toàn vẹn 2 tầng: bắt 100% hành vi sửa lén nội dung qua SQL (`DATA_MODIFIED`) và xoá bản ghi làm đứt chuỗi (`RECORD_DELETED_OR_CHAIN_BROKEN`). Vượt qua trọn vẹn cả 3 ca kiểm thử trong CI (`backend/tests/test_t29_tamper_proofing.py`), tự động dọn dẹp sạch sẽ không cần can thiệp thủ công. |
+
 

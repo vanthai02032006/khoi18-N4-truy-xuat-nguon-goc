@@ -166,13 +166,89 @@ def require_farmer(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+def get_current_user_optional(
+    credentials: HTTPBasicCredentials | None = Depends(basic_scheme),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """Dependency: lấy tài khoản nếu có header Authorization, hoặc None nếu không gửi.
+
+    Nếu client gửi credentials nhưng sai mật khẩu -> 401 Unauthorized.
+    Nếu client không gửi credentials -> None.
+    """
+    if credentials is None:
+        return None
+
+    user = authenticate_user(db, credentials.username, credentials.password)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Thông tin đăng nhập không hợp lệ.",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return user
+
+
+def check_batch_view_permission(batch: Any, current_user: User | None) -> None:
+    """Kiểm tra quyền xem lô nông sản theo T-54.
+
+    Tiêu chí nghiệm thu:
+        Lô không có quyền xem bị trả về mã lỗi 403 Forbidden.
+
+    Quy tắc phân quyền T-54:
+        1. Tài khoản vai trò `admin`: có toàn quyền xem mọi lô nông sản.
+        2. Nếu lô có cờ bảo mật `is_restricted = True`:
+           - Phải đăng nhập và là `admin` hoặc là chủ sở hữu (owner).
+           - Nếu chưa đăng nhập hoặc không đủ quyền xem -> ném lỗi 403 Forbidden.
+        3. Nếu người dùng đăng nhập có vai trò không hợp lệ -> ném lỗi 403 Forbidden.
+    """
+    # 1. Admin luôn có quyền xem
+    if current_user is not None and current_user.role == ROLE_ADMIN:
+        return
+
+    is_restricted = getattr(batch, "is_restricted", False)
+    owner = getattr(batch, "owner", None)
+    farm = getattr(batch, "farm", None)
+    farm_owner = farm.owner if farm else None
+
+    # 2. Nếu lô bị giới hạn quyền xem (is_restricted)
+    if is_restricted:
+        if current_user is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Lô nông sản #{batch.id} thuộc chế độ bảo mật riêng. Bạn không có quyền xem (403 Forbidden).",
+            )
+
+        # Kiểm tra xem user có phải chủ sở hữu của lô hoặc vùng trồng không
+        is_owner = False
+        if owner and current_user.username.lower() == owner.lower():
+            is_owner = True
+        elif farm_owner and current_user.username.lower() in farm_owner.lower():
+            is_owner = True
+
+        if not is_owner:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Tài khoản '{current_user.username}' không có quyền xem lô nông sản #{batch.id} theo chính sách T-54 (403 Forbidden).",
+            )
+
+    # 3. Nếu người dùng đăng nhập nhưng có vai trò lạ (không phải admin/farmer)
+    if current_user is not None and current_user.role not in (ROLE_ADMIN, ROLE_FARMER):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vai trò của bạn không được phép xem lô nông sản này.",
+        )
+
+
 __all__ = [
     "authenticate_user",
     "basic_scheme",
+    "check_batch_view_permission",
     "get_current_user",
+    "get_current_user_optional",
     "hash_password",
     "require_admin",
     "require_farmer",
     "verify_password",
 ]
+
 
