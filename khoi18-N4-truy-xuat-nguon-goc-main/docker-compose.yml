@@ -1,0 +1,104 @@
+version: "3.8"
+
+# =============================================================================
+# AGRI-TRACE · HỆ THỐNG TRUY XUẤT NGUỒN GỐC & CHUỖI LẠNH NÔNG SẢN
+# Cấu hình phân quyền CSDL App Runtime (Append-Only) & Migration (T-25 / SCRUM-41)
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. Cơ sở dữ liệu PostgreSQL 16
+  # Tài khoản khởi tạo ban đầu là Admin (Toàn quyền quản trị & Migration)
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: agritrace_postgres
+    restart: unless-stopped
+    environment:
+      # Tài khoản Superadmin / Migration Runner:
+      POSTGRES_USER: agri_admin
+      POSTGRES_PASSWORD: AdminMigrationSecurePass2026!
+      POSTGRES_DB: agritrace_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Script tự động khởi tạo Schema, User agri_app_user và Trigger Append-Only
+      - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agri_admin -d agritrace_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agritrace_net
+
+  # ---------------------------------------------------------------------------
+  # 2. Dịch vụ Migration (Chạy bằng tài khoản Admin/Migration)
+  # Giữ toàn quyền DDL (tạo/sửa bảng, phân quyền role, nâng cấp schema)
+  # ---------------------------------------------------------------------------
+  migration:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agritrace_migration
+    environment:
+      # Kết nối bằng tài khoản Admin để có quyền DDL thay đổi cấu trúc bảng
+      DATABASE_URL: postgresql://agri_admin:AdminMigrationSecurePass2026!@db:5432/agritrace_db
+    command: ["python", "migrations/001_create_products_table.py", "up"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - agritrace_net
+
+  # ---------------------------------------------------------------------------
+  # 3. Ứng dụng Backend API (FastAPI)
+  # KẾT NỐI BẰNG TÀI KHOẢN APP RUNTIME (agri_app_user)
+  # -> Bị thu hồi quyền UPDATE & DELETE trên bảng batch_events (Append-Only)
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agritrace_backend
+    restart: unless-stopped
+    environment:
+      # 🎯 CHỈ ĐỊNH TÀI KHOẢN APP RUNTIME (T-25 / SCRUM-41):
+      # CSDL từ chối ngay lập tức nếu backend gọi UPDATE hoặc DELETE bảng batch_events!
+      DATABASE_URL: postgresql://agri_app_user:AppRuntimePass2026!@db:5432/agritrace_db
+      APP_ENV: production
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    networks:
+      - agritrace_net
+
+  # ---------------------------------------------------------------------------
+  # 4. Giao diện Frontend (Nginx static web server)
+  # ---------------------------------------------------------------------------
+  frontend:
+    image: nginx:alpine
+    container_name: agritrace_frontend
+    restart: unless-stopped
+    ports:
+      - "5500:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    networks:
+      - agritrace_net
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  agritrace_net:
+    driver: bridge

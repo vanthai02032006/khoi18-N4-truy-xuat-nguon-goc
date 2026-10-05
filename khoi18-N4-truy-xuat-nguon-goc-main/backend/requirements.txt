@@ -1,0 +1,12 @@
+# TTCS K18C4 - Backend dependencies (Sprint 1)
+# Cài đặt: pip install -r requirements.txt
+
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# ORM + driver SQLite (sqlite3 có sẵn trong Python standard library)
+SQLAlchemy==2.0.36
+
+# Validation / serialization (FastAPI dùng ở tầng schema)
+pydantic==2.10.4
