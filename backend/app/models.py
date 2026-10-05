@@ -17,8 +17,9 @@ Mọi model đều kế thừa ``Base`` và bảng sẽ được ``init_db()`` t
 """
 
 from datetime import date
+from typing import Any
 
-from sqlalchemy import Date, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Date, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -84,12 +85,52 @@ class Batch(Base):
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
     harvest_date: Mapped[date] = mapped_column(Date, nullable=False)
 
+    # Phả hệ lô nông sản (T-49 / SCRUM-65):
+    # `parent_id` trỏ tới lô cha (lô mà lô này được phân tách/sơ chế/chế biến từ đó).
+    # Nếu `parent_id is None`, đây là LÔ GỐC (Root batch) thu hoạch trực tiếp từ `farm_id`.
+    parent_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id"),
+        nullable=True,
+        index=True,
+        default=None,
+    )
+
+    # Phân quyền xem theo T-54:
+    # `is_restricted`: nếu True thì chỉ admin hoặc chủ sở hữu (owner) được xem;
+    # các tài khoản không có quyền xem sẽ bị trả về mã lỗi 403 Forbidden.
+    is_restricted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+    # Mã định danh lô theo T-19:
+    batch_code: Mapped[str] = mapped_column(
+        String(100),
+        nullable=True,
+        index=True,
+        default=None,
+    )
+
+    owner: Mapped[str] = mapped_column(
+        String(255),
+        nullable=True,
+        default=None,
+    )
+
     # Quan hệ N-1: nhiều lô có thể thuộc về một vùng trồng.
     farm: Mapped["Farm"] = relationship(back_populates="batches")
 
+    # Quan hệ tự tham chiếu (self-referential) cho phả hệ:
+    parent: Mapped[Any] = relationship(
+        "Batch",
+        remote_side="Batch.id",
+        foreign_keys=[parent_id],
+        backref="children",
+    )
+
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return (
-            f"<Batch id={self.id} farm_id={self.farm_id} "
+            f"<Batch id={self.id} farm_id={self.farm_id} parent_id={self.parent_id} "
             f"product_name={self.product_name!r}>"
         )
 
@@ -138,12 +179,60 @@ class User(Base):
         return f"<User id={self.id} username={self.username!r} role={self.role}>"
 
 
+class BatchEvent(Base):
+    """Sự kiện trong chuỗi cung ứng của lô nông sản (T-29 / SCRUM-45).
+
+    Cơ chế Cryptographic Hash Chain (chống sửa lén / tamper-evident log)
+    mà không cần blockchain phức tạp:
+    - Mỗi sự kiện lưu `prev_hash` trỏ tới hash của sự kiện liền trước.
+    - Hash của sự kiện hiện tại được tính bằng SHA-256 trên nội dung bản ghi + prev_hash.
+    - Bất kỳ hành vi sửa lén nội dung qua SQL hoặc xoá bản ghi đều làm đứt gãy chuỗi
+      và bị phát hiện 100% trong quá trình kiểm tra tính toàn vẹn.
+
+    Attributes:
+        id: Khoá chính, tự tăng.
+        batch_id: Khoá ngoại trỏ tới lô nông sản (`batches.id`).
+        sequence: Thứ tự sự kiện trong lô (1, 2, 3...).
+        event_type: Mã loại sự kiện (HARVEST, PACKAGING, COLD_STORAGE...).
+        data: Dữ liệu chi tiết sự kiện (dạng chuỗi / JSON).
+        timestamp: Thời gian ghi nhận sự kiện (ISO-8601).
+        prev_hash: Mã băm SHA-256 của sự kiện liền trước (hoặc chuỗi 64 ký tự '0' nếu là genesis).
+        hash: Mã băm SHA-256 của sự kiện này (xác thực toàn vẹn).
+    """
+
+    __tablename__ = "batch_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id"),
+        nullable=False,
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    data: Mapped[str] = mapped_column(String(1000), nullable=False)
+    timestamp: Mapped[str] = mapped_column(String(50), nullable=False)
+    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+    # Quan hệ ngược về Batch
+    batch: Mapped["Batch"] = relationship("Batch", backref="events")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<BatchEvent id={self.id} batch_id={self.batch_id} seq={self.sequence} "
+            f"type={self.event_type!r} hash={self.hash[:8]}...>"
+        )
+
+
 __all__ = [
     "Base",
     "Batch",
+    "BatchEvent",
     "Farm",
     "ROLE_ADMIN",
     "ROLE_FARMER",
     "ROLES",
     "User",
 ]
+
