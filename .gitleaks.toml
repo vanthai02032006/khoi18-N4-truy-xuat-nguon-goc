@@ -1,0 +1,14 @@
+title = "Gitleaks Config for AgriTrace"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Cho phep cac token gia lap trong test"
+regexes = [
+  '''test_token_.*''',
+  '''dummy_secret_.*'''
+]
+paths = [
+  '''backend/tests/.*''',
+]
