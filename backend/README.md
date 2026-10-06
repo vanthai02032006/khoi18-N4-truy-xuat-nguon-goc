@@ -15,11 +15,17 @@ Backend API cho đề tài **"Truy xuất nguồn gốc và giám sát chuỗi l
   `GET /users` (chỉ admin) và dependency `require_admin` / `require_farmer`.
   *Không dùng JWT*: API cần quyền xác thực bằng **HTTP Basic**
   (Swagger UI có sẵn nút **Authorize**).
-- **Sprint 5 (đang làm):** hoàn thiện **CRUD đầy đủ** — bổ sung `PUT` / `DELETE`
+- **Sprint 5:** hoàn thiện **CRUD đầy đủ** — bổ sung `PUT` / `DELETE`
   cho `/farms` và `/batches` (xoá **chỉ dành cho `admin`**) kèm schema
   `FarmUpdate`/`BatchUpdate`/`DeleteResponse`; frontend ẩn/hiện theo trạng thái
   đăng nhập, thêm cột **Thao tác** (Sửa/Xoá) và dashboard thống kê
   (tổng vùng trồng, tổng lô nông sản, tổng sản lượng).
+- **Sprint 6:** **danh mục sản phẩm dùng chung cho mọi tổ chức** — bảng `products`
+  (không có `organization_id`, `name` UNIQUE, `unit` theo ENUM chuẩn), router
+  `app/routers/products.py` với `GET /products` (farmer **và** admin đọc được),
+  `POST /products` + `PUT /products/{product_id}` (**chỉ `admin`** — farmer nhận
+  `403 Forbidden`); màn hình "Danh mục sản phẩm" trên giao diện (farmer chỉ thấy
+  danh sách, form thêm/sửa bị ẩn).
   *Chưa có* QR code, blockchain hay nghiệp vụ chuỗi lạnh.
 
 ---
@@ -33,8 +39,8 @@ backend/
 │   ├── main.py              # Khởi tạo FastAPI, CORS, lifespan, đăng ký router
 │   ├── database.py          # Engine SQLite, SessionLocal, Base, get_db, init_db
 │   ├── models.py            # ORM models: Farm → "farms", Batch → "batches",
-│   │                        #             User → "users"
-│   ├── schemas.py           # Pydantic: Health / Farm / Batch / Auth
+│   │                        #   Product → "products", User → "users"
+│   ├── schemas.py           # Pydantic: Health / Farm / Batch / Product / Auth
 │   │                        #   (Create + Update + Response + DeleteResponse)
 │   ├── security.py          # Băm mật khẩu + xác thực/phân quyền (Sprint 4)
 │   └── routers/
@@ -43,7 +49,8 @@ backend/
 │       ├── auth.py          # POST /auth/login (Sprint 4)
 │       ├── users.py         # GET /users - chỉ admin (Sprint 4)
 │       ├── farms.py         # CRUD /farms: POST, GET, PUT {id}, DELETE {id} (Sprint 5)
-│       └── batches.py       # CRUD /batches: POST, GET, GET {id}, PUT {id}, DELETE {id}
+│       ├── batches.py       # CRUD /batches: POST, GET, GET {id}, PUT {id}, DELETE {id}
+│       └── products.py      # Danh mục sản phẩm dùng chung: GET, POST, PUT {id} (Sprint 6)
 ├── requirements.txt         # Danh sách thư viện Python
 ├── .gitignore               # Bỏ qua file DB, __pycache__, .venv...
 └── README.md                # Tài liệu này
@@ -163,7 +170,16 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | POST | `/batches` | Tạo lô nông sản (kiểm tra `farm_id` tồn tại) | farmer **hoặc** admin | `201` · `401` · `404` farm không tồn tại · `422` dữ liệu sai |
 | PUT | `/batches/{batch_id}` | Cập nhật (thay thế) lô nông sản - đổi được `farm_id` nếu tồn tại | farmer **hoặc** admin | `200` · `401` · `404` lô/farm không tồn tại · `422` |
 | DELETE | `/batches/{batch_id}` | Xoá một lô nông sản | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy |
+| GET | `/products` | Danh mục sản phẩm **dùng chung mọi tổ chức** (sắp xếp theo `name`) | farmer **hoặc** admin | `200` · `401` · `403` sai vai trò |
+| POST | `/products` | Thêm sản phẩm vào danh mục dùng chung (`name` phải duy nhất) | **chỉ admin** | `201` · `401` · `403` sai vai trò · `409` trùng tên · `422` dữ liệu sai |
+| PUT | `/products/{product_id}` | Cập nhật (thay thế) sản phẩm trong danh mục | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy · `409` trùng tên · `422` |
 | GET | `/users` | Danh sách tài khoản (không kèm mật khẩu) | **chỉ admin** | `200` · `401` · `403` sai vai trò |
+
+> 🆕 **Sprint 6 - danh mục sản phẩm dùng chung:** `products` là **dữ liệu chuẩn
+> toàn hệ thống**, **không** có `organization_id` và **không** áp bộ lọc theo tổ
+> chức — mọi tổ chức đọc chung một danh mục. Quyền **ghi** (`POST`/`PUT`) do máy
+> chủ kiểm soát bằng `require_admin`: farmer gọi sẽ nhận **`403 Forbidden`**; ẩn
+> nút thêm/sửa trên giao diện chỉ là tiện ích, không phải lớp bảo vệ.
 
 > ✅ **Sprint 5 hoàn thiện CRUD:** cả Farm và Batch đều có đủ `POST` / `GET` /
 > `GET {id}` (Batch) / `PUT` / `DELETE`. `PUT` là cập nhật **thay thế**: client
@@ -175,7 +191,7 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 > `GET /farms`, `POST /farms`, `PUT /farms/{id}`, `POST /batches`, `PUT /batches/{id}`
 > yêu cầu đăng nhập (farmer hoặc admin).
 
-### Phân quyền theo từng thao tác (Sprint 5)
+### Phân quyền theo từng thao tác (Sprint 5/6)
 
 | Thao tác | farmer | admin |
 | --- | --- | --- |
@@ -183,6 +199,8 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | Thêm dữ liệu (`POST /farms`, `POST /batches`) | ✅ | ✅ |
 | Sửa dữ liệu (`PUT /farms/{id}`, `PUT /batches/{id}`) | ✅ | ✅ |
 | Xoá dữ liệu (`DELETE /farms/{id}`, `DELETE /batches/{id}`) | ❌ `403 Forbidden` | ✅ |
+| Ghi danh mục sản phẩm (`POST /products`, `PUT /products/{id}`) | ❌ `403 Forbidden` | ✅ |
+| Xem danh mục sản phẩm (`GET /products`) | ✅ | ✅ |
 | Quản lý tài khoản (`GET /users`) | ❌ `403 Forbidden` | ✅ |
 
 ### Xoá dữ liệu — cơ chế xoá dây chuyền (Sprint 5)
@@ -250,8 +268,31 @@ chạy đầu tiên và **không ghi đè** nếu tài khoản đã tồn tại:
 
 | Tài khoản | Mật khẩu | Vai trò (`role`) | Quyền |
 | --- | --- | --- | --- |
-| `admin` | `123456` | `admin` | Toàn bộ chức năng, xem được `GET /users` |
-| `farmer` | `123456` | `farmer` | Quản lý vùng trồng + lô nông sản (`/farms`, `POST /batches`) |
+| `admin` | `123456` | `admin` | Toàn bộ chức năng, xem được `GET /users`, **ghi được danh mục sản phẩm** |
+| `farmer` | `123456` | `farmer` | Quản lý vùng trồng + lô nông sản (`/farms`, `POST /batches`), **chỉ đọc** danh mục sản phẩm |
+
+### Cấu trúc bảng `products` (danh mục dùng chung - Sprint 6)
+
+| Cột | Kiểu | Ràng buộc |
+| --- | --- | --- |
+| `id` | INTEGER | Khoá chính, tự tăng |
+| `name` | VARCHAR(255) | Bắt buộc, **UNIQUE + index** (chống trùng trong danh mục dùng chung) |
+| `unit` | VARCHAR(20) | Bắt buộc, mặc định `kg`, **CHECK** thuộc ENUM chuẩn |
+| `description` | VARCHAR(500) | Không bắt buộc (có thể `NULL`) |
+
+**ENUM đơn vị tính chuẩn** (`ProductUnit` trong `app/models.py`):
+`kg`, `g`, `ton`, `liter`, `box`, `bottle`, `piece`, `bundle`.
+
+Đặc điểm thiết kế:
+
+- **Không có `organization_id`** và endpoint **không lọc theo tổ chức**: danh mục
+  là dữ liệu chuẩn **dùng chung cho mọi tổ chức**.
+- `name` **UNIQUE** ở database; router còn kiểm tra trước khi ghi để trả về thông
+  báo tiếng Việt dễ hiểu (**409 Conflict**) thay vì lỗi `IntegrityError`.
+- Pydantic chuẩn hoá dữ liệu trước khi ghi: bỏ khoảng trắng thừa ở `name`
+  (chặn tên rỗng), mô tả rỗng/toàn khoảng trắng được lưu thành `NULL`.
+- `seed_default_products()` nạp sẵn 8 sản phẩm mẫu **chỉ khi bảng còn trống**
+  (không ghi đè dữ liệu admin đã thêm/sửa).
 
 ### Cơ chế đăng nhập & phân quyền (Sprint 4 - không dùng JWT)
 
@@ -487,15 +528,16 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | --- | --- |
 | `app/main.py` | Entrypoint: tạo `FastAPI(...)`, cấu hình CORS, dùng `lifespan` để gọi `init_db()` khi server start, và `include_router` để gom các endpoint. Khi mở rộng, chỉ cần thêm 1 dòng `app.include_router(...)`. |
 | `app/database.py` | Tầng hạ tầng dữ liệu: tạo `engine` kết nối SQLite (`check_same_thread=False` vì FastAPI có thể xử lý request trên thread khác — tham số này chỉ dành riêng cho SQLite), `SessionLocal` để mở session mỗi request, `Base` (DeclarativeBase) cho mọi model, `get_db()` (dependency đóng session tự động), `init_db()` (tạo bảng từ metadata) và `seed_default_users()` (tạo 2 tài khoản demo `admin`/`farmer` nếu chưa có). |
-| `app/models.py` | Nơi khai báo bảng ORM (SQLAlchemy 2.0 style: `Mapped` + `mapped_column`). Hiện có: `Farm` → bảng `farms` (`id`, `name`, `location`, `area`, `owner`) và `Batch` → bảng `batches` (`id`, `farm_id` FK → `farms.id`, `product_name`, `quantity`, `harvest_date`) với quan hệ 2 chiều `Farm 1-N Batch` (`farm.batches` ↔ `batch.farm`), cùng `User` → bảng `users` (`id`, `username` unique, `password` = hash SHA-256, `role`) kèm hằng số `ROLE_ADMIN`/`ROLE_FARMER`. Thêm bảng mới ở đây thì `init_db()` sẽ tự tạo. |
-| `app/schemas.py` | Pydantic models mô tả dữ liệu request/response: `HealthResponse`, `FarmCreate`/`FarmResponse`, `BatchCreate`/`BatchResponse` (`farm_id > 0`, chuỗi không rỗng, `quantity > 0`, `harvest_date` kiểu `date`). `*Response` dùng `from_attributes=True` để trả thẳng ORM object kèm `id`; Sprint 4 bổ sung `LoginRequest` (`username`, `password`), `LoginResponse` (`username`, `role`) và `UserResponse` (**không** có trường `password`); Sprint 5 bổ sung `FarmUpdate`/`BatchUpdate` (kế thừa `*Create` để dùng lại validate, phục vụ `PUT`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`). Tách khỏi `models.py` để không lộ cấu trúc bảng ra API. |
+| `app/models.py` | Nơi khai báo bảng ORM (SQLAlchemy 2.0 style: `Mapped` + `mapped_column`). Hiện có: `Farm` → bảng `farms` (`id`, `name`, `location`, `area`, `owner`) và `Batch` → bảng `batches` (`id`, `farm_id` FK → `farms.id`, `product_name`, `quantity`, `harvest_date`) với quan hệ 2 chiều `Farm 1-N Batch` (`farm.batches` ↔ `batch.farm`), `Product` → bảng `products` (danh mục dùng chung: `name` **UNIQUE**, `unit` ENUM + CHECK, `description`) kèm enum `ProductUnit`/hằng số `PRODUCT_UNITS`/`DEFAULT_PRODUCT_UNIT`, cùng `User` → bảng `users` (`id`, `username` unique, `password` = hash SHA-256, `role`) kèm hằng số `ROLE_ADMIN`/`ROLE_FARMER`. Thêm bảng mới ở đây thì `init_db()` sẽ tự tạo. |
+| `app/schemas.py` | Pydantic models mô tả dữ liệu request/response: `HealthResponse`, `FarmCreate`/`FarmResponse`, `BatchCreate`/`BatchResponse` (`farm_id > 0`, chuỗi không rỗng, `quantity > 0`, `harvest_date` kiểu `date`). `*Response` dùng `from_attributes=True` để trả thẳng ORM object kèm `id`; Sprint 4 bổ sung `LoginRequest` (`username`, `password`), `LoginResponse` (`username`, `role`) và `UserResponse` (**không** có trường `password`); Sprint 5 bổ sung `FarmUpdate`/`BatchUpdate` (kế thừa `*Create` để dùng lại validate, phục vụ `PUT`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); Sprint 6 bổ sung `ProductCreate`/`ProductUpdate`/`ProductResponse` (`unit` là `ProductUnit`, `use_enum_values=True` để lưu chuỗi `"kg"`, và `field_validator` chuẩn hoá `name`/`description`). Tách khỏi `models.py` để không lộ cấu trúc bảng ra API. |
 | `app/security.py` | **Sprint 4** — xác thực & phân quyền *không JWT*: `hash_password()` / `verify_password()` (SHA-256 + `hmac.compare_digest`, chỉ dùng thư viện chuẩn), `authenticate_user()` (tra bảng `users`), `basic_scheme = HTTPBasic(auto_error=False)` và 3 dependency: `get_current_user()` (**401** nếu thiếu/sai thông tin đăng nhập), `require_admin()` (**403** nếu không phải admin), `require_farmer()` (cho cả farmer và admin). Router chỉ cần thêm `user = Depends(require_admin)` là đã có phân quyền. |
 | `app/routers/auth.py` | **Sprint 4** — router `Auth`: `POST /auth/login` kiểm tra `username`/`password` với bảng `users`, trả `{username, role}` (**200**); sai thì **401**. **Không sinh token** — client dùng lại thông tin đăng nhập qua header HTTP Basic cho các request sau (mục đích chính của endpoint này là để frontend biết vai trò). |
 | `app/routers/users.py` | **Sprint 4** — router `Users`: `GET /users` trả danh sách tài khoản sắp theo `id` và **không kèm mật khẩu**. Dùng `Depends(require_admin)` nên: admin → **200**, farmer → **403**, chưa đăng nhập → **401**. |
 | `app/routers/health.py` | Router chứa endpoint `GET /health`, khai báo `response_model=HealthResponse`, trả về `{"status": "running"}`. |
 | `app/routers/farms.py` | Router module Farm - **CRUD đầy đủ**: `POST /farms` (thêm bản ghi, `commit` + `refresh`, rollback nếu lỗi DB), `GET /farms` (truy vấn bằng `select()` của SQLAlchemy 2.0), `PUT /farms/{farm_id}` (Sprint 5 - ghi đè từng trường bằng `setattr`, **404** nếu không thấy) và `DELETE /farms/{farm_id}` (Sprint 5 - **chỉ admin**, xoá kèm các lô nhờ cascade, trả `DeleteResponse`). |
 | `app/routers/batches.py` | Router module Batch - **CRUD đầy đủ**: `POST /batches` (**404** nếu `farm_id` không tồn tại — kiểm tra bằng `db.get(Farm, ...)` trước khi ghi), `GET /batches` (danh sách, sắp theo `id`), `GET /batches/{batch_id}` (**404** nếu không thấy), `PUT /batches/{batch_id}` (Sprint 5 - kiểm tra lại `farm_id` mới trước khi ghi) và `DELETE /batches/{batch_id}` (Sprint 5 - **chỉ admin**). |
-| `app/routers/__init__.py` | Gom và export các router con để `main.py` import ngắn gọn (`from app.routers import auth, batches, farms, health, users`). |
+| `app/routers/products.py` | **Sprint 6** - router danh mục sản phẩm **dùng chung**: `GET /products` (`require_farmer` - farmer và admin đọc được, sắp theo `name`), `POST /products` và `PUT /products/{product_id}` (`require_admin` - farmer nhận **403**); helper `_ensure_name_available()` chặn trùng tên (**409**), `IntegrityError` cũng được bắt và đổi thành **409**. |
+| `app/routers/__init__.py` | Gom và export các router con để `main.py` import ngắn gọn (`from app.routers import auth, batches, farms, health, products, users`). |
 | `app/__init__.py` | Đánh dấu `app` là package Python; khai báo `__version__ = "0.2.0"` dùng cho metadata Swagger. |
 | `requirements.txt` | Ghim phiên bản thư viện: `fastapi`, `uvicorn[standard]`, `SQLAlchemy`, `pydantic` — đảm bảo cả nhóm cài ra môi trường giống nhau. **Sprint 4 không thêm thư viện nào**: băm mật khẩu dùng `hashlib`/`hmac` có sẵn, xác thực dùng `fastapi.security.HTTPBasic` của FastAPI. |
 | `.gitignore` | Bỏ qua `.venv/`, `__pycache__/`, `*.db`... để không commit rác và dữ liệu local. |
@@ -556,4 +598,5 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 3 | Module **Batch** (quản lý lô nông sản): model `Batch` → bảng `batches` (FK `farm_id` → `farms.id`, quan hệ `Farm 1 ---- N Batch`), schemas `BatchCreate`/`BatchResponse`, router `app/routers/batches.py` với `POST /batches` (**201**, trả **404** nếu `farm_id` không tồn tại), `GET /batches` (**200**) và `GET /batches/{batch_id}` (**200**/**404**). `GET /health`, `POST /farms`, `GET /farms` giữ nguyên. |
 | Sprint 4 | **Đăng nhập + phân quyền cơ bản (không JWT):** model `User` → bảng `users` (`username` unique, mật khẩu băm SHA-256, `role`), `seed_default_users()` tạo sẵn `admin`/`farmer` (mật khẩu `123456`); module `app/security.py` với `hash_password`/`verify_password`/`authenticate_user` và dependency `get_current_user` (**401**), `require_admin` (**403**), `require_farmer`; router `POST /auth/login` (**200**/**401**) và `GET /users` (**200**, chỉ admin); áp `require_farmer` cho `GET /farms`, `POST /farms`, `POST /batches`. Cơ chế xác thực là **HTTP Basic** (Swagger có nút **Authorize**), không token/refresh token. |
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
+| Sprint 6 | **Danh mục sản phẩm dùng chung cho mọi tổ chức:** model `Product` → bảng `products` (`name` UNIQUE + index, `unit` ENUM chuẩn + CHECK, `description` NULL-able, **không** có `organization_id`), enum `ProductUnit` cùng `seed_default_products()` (8 sản phẩm mẫu, chỉ seed khi bảng trống); schemas `ProductCreate`/`ProductUpdate`/`ProductResponse`; router `app/routers/products.py` với `GET /products` (**200**, farmer + admin), `POST /products` (**201**, **chỉ admin**, **409** nếu trùng tên), `PUT /products/{product_id}` (**200**, **chỉ admin**, **404**/**409**). Frontend: thêm mục **"3. Danh mục sản phẩm dùng chung"** (form thêm/sửa + bảng danh mục); `applySessionToUi()` ẩn form và cột "Thao tác" với `farmer` — người dùng vùng trồng chỉ thấy danh sách để chọn sản phẩm, còn quyền ghi do backend chặn bằng **403 Forbidden**. |
 

@@ -88,3 +88,21 @@ $env:PYTHONPATH='backend'
 python -m pytest tests/ -v
 ```
 Toàn bộ test suite kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
+
+### Danh mục sản phẩm dùng chung (Sprint 6)
+
+Mục **"3. Danh mục sản phẩm dùng chung"** trên dashboard là danh mục sản phẩm
+chuẩn **dùng chung cho mọi tổ chức** (backend không lọc theo tổ chức), gồm bảng
+danh sách và form thêm/sửa sản phẩm (tên sản phẩm, đơn vị tính chuẩn, mô tả).
+
+| Tài khoản | Xem danh mục | Thêm / Sửa sản phẩm |
+| --- | --- | --- |
+| `admin` | ✅ | ✅ (form + cột **Thao tác** hiện đầy đủ) |
+| `farmer` | ✅ (chỉ để chọn sản phẩm) | ❌ **form và nút thêm/sửa bị ẩn** — cố gọi API → `403` |
+
+- Tên sản phẩm **không được trùng**: thêm/sửa trùng tên → API trả `409`, giao
+  diện hiển thị thông báo lỗi ngay trên toast.
+- Đơn vị tính chuẩn: `kg`, `g`, `ton`, `liter`, `box`, `bottle`, `piece`, `bundle`.
+- **Quyền ghi được kiểm soát ở máy chủ** (`require_admin`): việc ẩn nút trên giao
+  diện chỉ là tiện ích. Endpoint: `GET` / `POST` / `PUT /products/{id}`
+  (chi tiết: `backend/README.md`, mục 3).

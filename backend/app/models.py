@@ -4,11 +4,14 @@ Sprint 1: khung dự án + endpoint ``GET /health`` (chưa có bảng nghiệp v
 Sprint 2: module **Farm** (quản lý vùng trồng - bảng ``farms``)
 và module **Batch** (quản lý lô nông sản - bảng ``batches``).
 Sprint 4: module **Auth** (đăng nhập + phân quyền - bảng ``users``).
+Sprint 6: module **Product** (danh mục sản phẩm dùng chung - bảng ``products``).
 
 Quan hệ giữa các bảng::
 
     Farm 1 ---- N Batch   (một vùng trồng có nhiều lô nông sản)
     User                  (bảng độc lập, dùng cho đăng nhập/phân quyền)
+    Product               (danh mục chuẩn dùng chung mọi tổ chức, không có
+                           organization_id và không lọc theo tổ chức)
 
 File này là điểm duy nhất (single source of truth) khai báo bảng dữ liệu.
 Mọi model đều kế thừa ``Base`` và bảng sẽ được ``init_db()`` trong
@@ -17,8 +20,9 @@ Mọi model đều kế thừa ``Base`` và bảng sẽ được ``init_db()`` t
 """
 
 from datetime import date
+from enum import Enum
 
-from sqlalchemy import Date, Float, ForeignKey, Integer, String
+from sqlalchemy import CheckConstraint, Date, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -131,6 +135,77 @@ class BatchEvent(Base):
         return f"<BatchEvent id={self.id} batch_id={self.batch_id} type={self.event_type!r} hash={self.hash[:8]}>"
 
 
+# --------------------------------------------------------------- Product ---
+class ProductUnit(str, Enum):
+    """Đơn vị tính chuẩn của danh mục sản phẩm.
+
+    Kế thừa ``str`` để giá trị dùng được trực tiếp như chuỗi (``"kg"``,
+    ``"ton"``...) khi validate ở Pydantic và khi ghi xuống database, đồng thời
+    Swagger UI hiển thị đúng danh sách lựa chọn.
+    """
+
+    KG = "kg"
+    G = "g"
+    TON = "ton"
+    LITER = "liter"
+    BOX = "box"
+    BOTTLE = "bottle"
+    PIECE = "piece"
+    BUNDLE = "bundle"
+
+
+#: Các đơn vị tính hợp lệ - dùng để sinh ràng buộc CHECK ở bảng ``products``.
+PRODUCT_UNITS: tuple[str, ...] = tuple(unit.value for unit in ProductUnit)
+
+#: Đơn vị tính mặc định của sản phẩm mới khi client không gửi lên.
+DEFAULT_PRODUCT_UNIT: str = ProductUnit.KG.value
+
+
+class Product(Base):
+    """Sản phẩm trong **danh mục dùng chung** cho mọi tổ chức - bảng ``products``.
+
+    Khác với ``Farm``/``Batch`` (dữ liệu thuộc từng tổ chức), danh mục sản phẩm
+    là dữ liệu **chuẩn dùng chung toàn hệ thống**: bảng không có cột
+    ``organization_id`` và ``GET /products`` không lọc theo tổ chức của người gọi.
+
+    Quyền ghi (thêm/sửa) chỉ dành cho role ``admin``; ``farmer`` chỉ đọc danh
+    mục để chọn - xem ``app/routers/products.py``.
+
+    Attributes:
+        id: Khoá chính, tự tăng.
+        name: Tên sản phẩm, **duy nhất** trên toàn hệ thống (UNIQUE + index).
+        unit: Đơn vị tính chuẩn, thuộc ``ProductUnit`` (mặc định ``"kg"``).
+        description: Mô tả ngắn, không bắt buộc.
+    """
+
+    __tablename__ = "products"
+    # Ràng buộc CHECK ở tầng database: chỉ nhận các đơn vị tính chuẩn. Pydantic
+    # đã chặn ở tầng API, ràng buộc này bảo vệ dữ liệu khi ghi bằng đường khác.
+    __table_args__ = (
+        CheckConstraint(
+            "unit IN (" + ", ".join(f"'{unit}'" for unit in PRODUCT_UNITS) + ")",
+            name="chk_products_unit",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    unit: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=DEFAULT_PRODUCT_UNIT,
+    )
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
+        return f"<Product id={self.id} name={self.name!r} unit={self.unit}>"
+
+
 # ------------------------------------------------------------- Vai trò ---
 # Khai báo thành hằng số để không phải gõ chuỗi "admin"/"farmer" rải rác
 # trong code (tránh lỗi gõ sai, chỉ cần đổi giá trị ở một chỗ nếu sau này
@@ -179,7 +254,11 @@ __all__ = [
     "Base",
     "Batch",
     "BatchEvent",
+    "DEFAULT_PRODUCT_UNIT",
     "Farm",
+    "PRODUCT_UNITS",
+    "Product",
+    "ProductUnit",
     "ROLE_ADMIN",
     "ROLE_FARMER",
     "ROLES",

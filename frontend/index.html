@@ -431,7 +431,102 @@
         </div>
       </section>
 
-      <!-- Section 3: Quản trị Tài Khoản (Admin Only) -->
+      <!-- Section 3: Danh mục sản phẩm dùng chung (chỉ admin được ghi) -->
+      <section id="products-card" class="content-card">
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar module-avatar--product">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">3. Danh mục sản phẩm dùng chung</h3>
+              <p class="card-subtitle">
+                Danh mục sản phẩm chuẩn dùng chung cho mọi tổ chức. Chỉ <strong>admin</strong> được thêm/sửa;
+                người dùng vùng trồng chỉ xem danh sách để chọn sản phẩm.
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <!-- Form thêm/sửa: `applySessionToUi()` chỉ mở (bỏ `hidden`) khi role = admin. -->
+        <form id="product-form" class="form-wrapper" hidden>
+          <div id="product-form-mode" class="mode-alert" hidden></div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="product-name" class="input-label">
+                Tên sản phẩm <span class="required">*</span>
+              </label>
+              <input id="product-name" type="text" maxlength="255" required
+                     placeholder="Ví dụ: Xoài Cát Chu (tên không được trùng sản phẩm đã có)" />
+            </div>
+
+            <div class="form-group">
+              <label for="product-unit" class="input-label">
+                Đơn vị tính chuẩn <span class="required">*</span>
+              </label>
+              <select id="product-unit" required>
+                <option value="kg">kg — Kilôgam</option>
+                <option value="g">g — Gam</option>
+                <option value="ton">ton — Tấn</option>
+                <option value="liter">liter — Lít</option>
+                <option value="box">box — Thùng / Hộp</option>
+                <option value="bottle">bottle — Chai</option>
+                <option value="piece">piece — Cái / Trái</option>
+                <option value="bundle">bundle — Bó</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="product-description" class="input-label">
+                Mô tả sản phẩm
+              </label>
+              <input id="product-description" type="text" maxlength="500"
+                     placeholder="Không bắt buộc — ví dụ: Xoài cát chu loại 1, đóng thùng 10kg" />
+            </div>
+          </div>
+
+          <div class="form-buttons">
+            <button id="product-submit" class="btn-action-primary" type="submit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+              <span>Lưu sản phẩm</span>
+            </button>
+            <button id="product-cancel" class="btn-action-ghost" type="button" hidden>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <span>Huỷ sửa</span>
+            </button>
+          </div>
+        </form>
+
+        <div class="table-container">
+          <div class="table-subhead">
+            <span class="table-heading">Danh sách sản phẩm trong danh mục chuẩn</span>
+            <span class="table-tag">Dùng chung mọi tổ chức</span>
+          </div>
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 80px;">MÃ</th>
+                  <th>TÊN SẢN PHẨM</th>
+                  <th style="width: 150px;">ĐƠN VỊ TÍNH</th>
+                  <th>MÔ TẢ</th>
+                  <th id="product-actions-th" class="is-center" style="width: 140px;" hidden>THAO TÁC</th>
+                </tr>
+              </thead>
+              <tbody id="product-table-body"></tbody>
+            </table>
+          </div>
+          <div id="product-empty" class="empty-placeholder" hidden>
+            <div class="empty-icon-wrap">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            </div>
+            <h4>Danh mục sản phẩm đang trống</h4>
+            <p>Quản trị viên hãy dùng biểu mẫu phía trên để thêm sản phẩm chuẩn đầu tiên.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 4: Quản trị Tài Khoản (Admin Only) -->
       <section id="users-card" class="content-card" hidden>
         <header class="card-header">
           <div class="header-left">
@@ -439,7 +534,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </div>
             <div>
-              <h3 class="card-title">3. Quản trị thành viên hệ thống</h3>
+              <h3 class="card-title">4. Quản trị thành viên hệ thống</h3>
               <p class="card-subtitle">
                 Danh sách tài khoản và phân quyền truy cập hệ thống canh tác.
               </p>

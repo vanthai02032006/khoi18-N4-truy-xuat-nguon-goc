@@ -8,7 +8,9 @@ Tách riêng schemas (Pydantic) khỏi models (SQLAlchemy) giúp:
 from datetime import date
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.models import ProductUnit
 
 
 class HealthResponse(BaseModel):
@@ -305,6 +307,126 @@ class BatchResponse(BaseModel):
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
     quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
     harvest_date: date = Field(..., description="Ngày thu hoạch.")
+
+
+# --------------------------------------------------------------- Product ---
+# Danh mục sản phẩm dùng chung cho mọi tổ chức (không có organization_id):
+# chỉ `admin` được thêm/sửa, các vai trò khác chỉ đọc để chọn sản phẩm.
+_PRODUCT_EXAMPLE: dict = {
+    "id": 1,
+    "name": "Xoài Cát Chu",
+    "unit": "kg",
+    "description": "Xoài cát chu loại 1 thu hoạch tại Cao Lãnh, Đồng Tháp.",
+}
+
+
+class ProductCreate(BaseModel):
+    """Dữ liệu client gửi lên khi **thêm** sản phẩm (``POST /products``) - chỉ admin.
+
+    Vì danh mục dùng chung cho mọi tổ chức nên ``name`` phải **duy nhất** trên
+    toàn hệ thống; gửi trùng tên, backend trả ``409 Conflict``.
+    """
+
+    model_config = ConfigDict(
+        # Trả `unit` về chuỗi ("kg", "ton"...) thay vì Enum để `model_dump()`
+        # map thẳng vào ORM model `Product` giống các schema Farm/Batch.
+        use_enum_values=True,
+        json_schema_extra={
+            "example": {
+                "name": "Xoài Cát Chu",
+                "unit": "kg",
+                "description": "Xoài cát chu loại 1 thu hoạch tại Cao Lãnh, Đồng Tháp.",
+            }
+        },
+    )
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Tên sản phẩm - duy nhất trên toàn hệ thống.",
+        examples=["Xoài Cát Chu"],
+    )
+    unit: ProductUnit = Field(
+        ...,
+        description=(
+            "Đơn vị tính chuẩn: `kg`, `g`, `ton`, `liter`, `box`, `bottle`, "
+            "`piece`, `bundle`."
+        ),
+        examples=["kg"],
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Mô tả ngắn về sản phẩm (không bắt buộc).",
+        examples=["Xoài cát chu loại 1 thu hoạch tại Cao Lãnh, Đồng Tháp."],
+    )
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str) -> str:
+        """Chuẩn hoá tên sản phẩm trước khi kiểm tra trùng lặp/ghi database.
+
+        Bỏ khoảng trắng thừa ở hai đầu và chặn tên chỉ gồm khoảng trắng - nếu
+        không, danh mục dùng chung sẽ chứa những tên vô nghĩa gây khó tra cứu.
+        """
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Tên sản phẩm không được để trống.")
+        return cleaned
+
+    @field_validator("description")
+    @classmethod
+    def _normalize_description(cls, value: str | None) -> str | None:
+        """Chuẩn hoá mô tả: chuỗi rỗng/toàn khoảng trắng được lưu thành ``None``."""
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class ProductUpdate(ProductCreate):
+    """Dữ liệu client gửi lên khi **sửa** sản phẩm (``PUT /products/{product_id}``) - chỉ admin.
+
+    Kế thừa ``ProductCreate`` để dùng lại đúng bộ quy tắc validate. ``PUT`` là
+    cập nhật *thay thế* nên client gửi **đầy đủ** các trường như khi thêm mới;
+    backend ghi đè giá trị cũ. Đổi tên sang tên đã có ở sản phẩm khác → ``409``.
+    """
+
+    model_config = ConfigDict(
+        use_enum_values=True,
+        json_schema_extra={
+            "example": {
+                "name": "Xoài Cát Chu",
+                "unit": "kg",
+                "description": "Cập nhật: xoài cát chu loại 1, đóng thùng 10kg.",
+            }
+        },
+    )
+
+
+class ProductResponse(BaseModel):
+    """Dữ liệu API trả về cho một sản phẩm trong danh mục (kèm ``id``).
+
+    ``from_attributes=True`` cho phép khởi tạo trực tiếp từ ORM object ``Product``.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"example": _PRODUCT_EXAMPLE},
+    )
+
+    id: int = Field(..., description="Mã định danh sản phẩm.", examples=[1])
+    name: str = Field(..., description="Tên sản phẩm (duy nhất toàn hệ thống).")
+    unit: ProductUnit = Field(
+        ...,
+        description="Đơn vị tính chuẩn của sản phẩm.",
+        examples=["kg"],
+    )
+    description: str | None = Field(
+        default=None,
+        description="Mô tả ngắn về sản phẩm (có thể là `null`).",
+    )
 
 
 # ----------------------------------------------------------------- Chung ---

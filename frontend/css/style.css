@@ -836,6 +836,11 @@ body {
   color: #7c3aed;
 }
 
+.module-avatar--product {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 .card-title {
   font-size: 1.15rem;
   font-weight: 800;

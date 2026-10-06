@@ -133,6 +133,7 @@ function describeError(data, status) {
 // Dữ liệu đang hiển thị trên giao diện.
 let farms = [];
 let batches = [];
+let products = [];
 let users = [];
 
 // ID bản ghi đang được SỬA trên form (null = form đang ở chế độ "thêm mới").
@@ -140,6 +141,7 @@ let users = [];
 // gọi PUT thay vì POST.
 let editingFarmId = null;
 let editingBatchId = null;
+let editingProductId = null;
 
 // Phiên đăng nhập hiện tại: { username, role, password } hoặc null (chưa đăng nhập).
 // Sprint 4 không dùng JWT: client giữ lại thông tin đăng nhập để gửi kèm header
@@ -235,6 +237,12 @@ function applySessionToUi() {
   }
 
   $("users-card").hidden = !isAdmin;
+
+  // Danh mục sản phẩm dùng chung: farmer **vẫn xem được danh sách** để chọn sản
+  // phẩm, nhưng form thêm/sửa và cột "Thao tác" chỉ hiện với admin. Quyền ghi do
+  // backend quyết định (`require_admin`) - farmer gọi POST/PUT sẽ nhận 403.
+  $("product-form").hidden = !isAdmin;
+  $("product-actions-th").hidden = !isAdmin;
 }
 
 /**
@@ -243,6 +251,17 @@ function applySessionToUi() {
  * trả `403 Forbidden` (`require_admin`) - đây chỉ là lớp bảo vệ ở UI.
  */
 function canDelete() {
+  return session !== null && session.role === ROLE_ADMIN;
+}
+
+/**
+ * Quyền **ghi danh mục sản phẩm** ở giao diện: **chỉ admin** (Sprint 6).
+ *
+ * Người dùng vùng trồng (farmer) chỉ thấy danh sách sản phẩm để chọn; nút
+ * thêm/sửa bị ẩn. Nếu cố gọi API ghi (`POST`/`PUT /products`) thì backend trả
+ * `403 Forbidden` (`require_admin`) - đây chỉ là lớp tiện ích ở UI.
+ */
+function canWriteProducts() {
   return session !== null && session.role === ROLE_ADMIN;
 }
 
@@ -282,12 +301,15 @@ function handleLogout() {
 
   farms = [];
   batches = [];
+  products = [];
   users = [];
   resetFarmForm(); // bỏ chế độ sửa (nếu đang sửa) trước khi vẽ lại bảng rỗng
   resetBatchForm();
+  resetProductForm();
   renderFarms();
   renderFarmOptions();
   renderBatches();
+  renderProducts();
   renderUsers();
 
   applySessionToUi();
@@ -688,7 +710,143 @@ function renderStats() {
   $("stat-yield").textContent = formatNumber(Math.round(totalYield * 100) / 100);
 }
 
-/* ------------------------------------------ 10. Tài khoản (chỉ admin) --- */
+/* -------------------------------------- 10. Danh mục sản phẩm dùng chung --- */
+// Danh mục sản phẩm dùng chung cho **mọi tổ chức** (backend không lọc theo tổ
+// chức). Cả farmer và admin đều đọc được; **chỉ admin** được thêm/sửa.
+/** GET /products -> cập nhật bảng danh mục sản phẩm. */
+async function loadProducts() {
+  try {
+    const data = await apiRequest("/products");
+    products = Array.isArray(data) ? data : [];
+    renderProducts();
+  } catch (error) {
+    toast(`Không tải được danh mục sản phẩm: ${error.message}`, "error");
+  }
+}
+
+/**
+ * Vẽ bảng danh mục sản phẩm.
+ *
+ * Cột "Thao tác" (nút Sửa) chỉ render với admin: người dùng vùng trồng chỉ thấy
+ * danh sách để chọn sản phẩm.
+ */
+function renderProducts() {
+  const canWrite = canWriteProducts();
+
+  $("product-table-body").innerHTML = products
+    .map(
+      (product) => `
+      <tr class="${product.id === editingProductId ? "is-editing" : ""}">
+        <td class="id-cell">${escapeHtml(product.id)}</td>
+        <td>${escapeHtml(product.name)}</td>
+        <td><code>${escapeHtml(product.unit)}</code></td>
+        <td>${escapeHtml(product.description || "—")}</td>
+        ${
+          canWrite
+            ? `<td>
+          <div class="table__actions">
+            <button class="btn btn--primary btn--sm" type="button"
+                    data-action="edit" data-entity="product"
+                    data-id="${escapeHtml(product.id)}">Sửa</button>
+          </div>
+        </td>`
+            : ""
+        }
+      </tr>`
+    )
+    .join("");
+
+  $("product-empty").hidden = products.length > 0;
+}
+
+/** Nhãn nút submit form sản phẩm theo chế độ hiện tại (thêm mới / sửa). */
+function productSubmitLabel() {
+  return editingProductId === null ? "Thêm sản phẩm" : "Cập nhật sản phẩm";
+}
+
+/**
+ * Xử lý submit form sản phẩm (form chỉ hiện với admin):
+ * - chế độ thêm mới (`editingProductId === null`) -> POST /products;
+ * - chế độ sửa (đã bấm nút "Sửa" ở bảng)         -> PUT /products/{id}.
+ */
+async function handleProductSubmit(event) {
+  event.preventDefault();
+
+  const form = event.currentTarget;
+  if (!form.reportValidity()) {
+    return;
+  }
+
+  const description = $("product-description").value.trim();
+  const payload = {
+    name: $("product-name").value.trim(),
+    unit: $("product-unit").value,
+    // Mô tả bỏ trống -> gửi null để backend lưu NULL thay vì chuỗi rỗng.
+    description: description === "" ? null : description,
+  };
+
+  const isEditing = editingProductId !== null;
+  const button = $("product-submit");
+  setButtonLoading(button, true, "Đang lưu…", productSubmitLabel());
+
+  try {
+    if (isEditing) {
+      const updated = await apiRequest(`/products/${editingProductId}`, {
+        method: "PUT",
+        body: payload,
+      });
+      toast(`Đã cập nhật sản phẩm #${updated.id}: ${updated.name}`, "success");
+    } else {
+      const created = await apiRequest("/products", { method: "POST", body: payload });
+      toast(`Thêm thành công sản phẩm #${created.id}: ${created.name}`, "success");
+    }
+    resetProductForm(); // về lại chế độ "thêm mới"
+    await loadProducts();
+    $("product-name").focus();
+  } catch (error) {
+    toast(`${isEditing ? "Cập nhật" : "Thêm"} sản phẩm thất bại: ${error.message}`, "error");
+  } finally {
+    setButtonLoading(button, false, "Đang lưu…", productSubmitLabel());
+  }
+}
+
+/** Đưa form sản phẩm về chế độ "thêm mới" (bỏ dữ liệu đang sửa). */
+function resetProductForm() {
+  editingProductId = null;
+  $("product-form").reset();
+  $("product-form-mode").hidden = true;
+  $("product-cancel").hidden = true;
+  $("product-submit").textContent = productSubmitLabel();
+}
+
+/**
+ * Bấm nút "Sửa" ở bảng sản phẩm -> đổ dữ liệu lên form và chuyển sang chế độ sửa
+ * (nút submit sẽ gọi ``PUT /products/{id}``).
+ */
+function startEditProduct(productId) {
+  const product = products.find((item) => item.id === productId);
+  if (!product) {
+    toast(`Không tìm thấy sản phẩm #${productId} trong danh mục đang hiển thị.`, "error");
+    return;
+  }
+
+  editingProductId = product.id;
+  $("product-name").value = product.name;
+  $("product-unit").value = product.unit;
+  $("product-description").value = product.description || "";
+
+  const mode = $("product-form-mode");
+  mode.textContent = `Đang sửa sản phẩm #${product.id} — ${product.name}. Bấm "Cập nhật sản phẩm" để lưu.`;
+  mode.hidden = false;
+  $("product-cancel").hidden = false;
+  $("product-submit").textContent = productSubmitLabel();
+
+  renderProducts(); // tô nền dòng đang sửa trong bảng
+  $("product-form").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("product-name").focus();
+}
+
+/* ------------------------------------------ 11. Tài khoản (chỉ admin) --- */
 /** GET /users (chỉ admin) -> cập nhật bảng tài khoản; farmer gọi sẽ nhận 403. */
 async function loadUsers() {
   try {
@@ -718,17 +876,19 @@ function renderUsers() {
   $("user-empty").hidden = users.length > 0;
 }
 
-/* --------------------------------------------------------- 11. Sự kiện --- */
+/* --------------------------------------------------------- 12. Sự kiện --- */
 function bindEvents() {
   $("login-form").addEventListener("submit", handleLoginSubmit);
   $("btn-logout").addEventListener("click", handleLogout);
   $("farm-form").addEventListener("submit", handleFarmSubmit);
   $("batch-form").addEventListener("submit", handleBatchSubmit);
+  $("product-form").addEventListener("submit", handleProductSubmit);
   $("farm-cancel").addEventListener("click", () => cancelEdit("farm"));
   $("batch-cancel").addEventListener("click", () => cancelEdit("batch"));
+  $("product-cancel").addEventListener("click", () => cancelEdit("product"));
   $("btn-reload").addEventListener("click", () => reloadAll());
 
-  // Cột "Thao tác" của 2 bảng dùng event delegation: nội dung bảng được vẽ lại
+  // Cột "Thao tác" của các bảng dùng event delegation: nội dung bảng được vẽ lại
   // liên tục nên chỉ gắn 1 listener cho mỗi <tbody> thay vì gắn cho từng nút.
   $("farm-table-body").addEventListener("click", handleTableAction);
   $("batch-table-body").addEventListener("click", handleTableAction);
@@ -744,14 +904,22 @@ function bindEvents() {
       }, 300);
     });
   }
+  $("product-table-body").addEventListener("click", handleTableAction);
 }
 
-/** Huỷ chế độ sửa của form vùng trồng / lô nông sản (nút "Huỷ sửa"). */
+/** Huỷ chế độ sửa của form vùng trồng / lô nông sản / sản phẩm (nút "Huỷ sửa"). */
 function cancelEdit(entity) {
   if (entity === "farm") {
     resetFarmForm();
     renderFarms(); // bỏ tô nền dòng đang sửa
     toast("Đã huỷ chế độ sửa vùng trồng.", "info");
+    return;
+  }
+
+  if (entity === "product") {
+    resetProductForm();
+    renderProducts();
+    toast("Đã huỷ chế độ sửa sản phẩm.", "info");
     return;
   }
 
@@ -761,10 +929,10 @@ function cancelEdit(entity) {
 }
 
 /**
- * Xử lý click ở cột "Thao tác" của cả 2 bảng (nút Sửa / Xoá).
+ * Xử lý click ở cột "Thao tác" của các bảng (nút Sửa / Xoá).
  *
  * Đọc dữ liệu từ chính nút được bấm: `data-action` (edit|delete),
- * `data-entity` (farm|batch) và `data-id`.
+ * `data-entity` (farm|batch|product) và `data-id`.
  */
 function handleTableAction(event) {
   const button = event.target.closest("button[data-action]");
@@ -779,8 +947,10 @@ function handleTableAction(event) {
   if (action === "edit") {
     if (entity === "farm") {
       startEditFarm(id);
-    } else {
+    } else if (entity === "batch") {
       startEditBatch(id);
+    } else {
+      startEditProduct(id);
     }
     return;
   }
@@ -804,6 +974,7 @@ async function loadAllData() {
   await checkHealth();
   await loadFarms(); // phải chạy trước để bảng lô hiển thị được tên vùng trồng
   await loadBatches();
+  await loadProducts(); // danh mục dùng chung: cả farmer và admin đều đọc được
   if (session !== null && session.role === ROLE_ADMIN) {
     await loadUsers(); // chỉ admin gọi được GET /users
   }
@@ -818,11 +989,15 @@ async function reloadAll({ silent = false } = {}) {
 
   setButtonLoading(button, false, "Đang tải…", "Tải lại dữ liệu");
   if (!silent) {
-    toast(`Đã tải lại: ${farms.length} vùng trồng, ${batches.length} lô nông sản.`, "info");
+    toast(
+      `Đã tải lại: ${farms.length} vùng trồng, ${batches.length} lô nông sản, ` +
+        `${products.length} sản phẩm.`,
+      "info"
+    );
   }
 }
 
-/* -------------------------------------------------------- 12. Khởi động --- */
+/* -------------------------------------------------------- 13. Khởi động --- */
 /**
  * Khởi động ứng dụng:
  * 1. gắn sự kiện + kiểm tra backend đang chạy;
@@ -835,8 +1010,9 @@ async function init() {
     $("stat-api").textContent = API_BASE_URL;
   }
   bindEvents();
-  resetFarmForm(); // 2 form luôn khởi động ở chế độ "thêm mới / tạo mới"
+  resetFarmForm(); // 3 form luôn khởi động ở chế độ "thêm mới / tạo mới"
   resetBatchForm();
+  resetProductForm();
   await checkHealth(); // báo ngay nếu uvicorn chưa chạy
 
   const saved = restoreSession();

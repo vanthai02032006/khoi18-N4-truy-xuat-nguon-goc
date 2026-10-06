@@ -14,6 +14,8 @@ Các sprint:
   dependency ``require_admin``/``require_farmer``) - **không dùng JWT**.
 - Sprint 5: hoàn thiện CRUD - thêm ``PUT``/``DELETE`` cho ``/farms`` và
   ``/batches`` (xoá chỉ dành cho ``admin``).
+- Sprint 6: danh mục **sản phẩm dùng chung** cho mọi tổ chức (``/products``) -
+  thêm/sửa chỉ dành cho ``admin``, ``farmer`` chỉ xem danh mục.
 """
 
 from collections.abc import AsyncIterator
@@ -24,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.database import init_db
-from app.routers import auth, batches, events, farms, health, users
+from app.routers import auth, batches, events, farms, health, products, users
 
 # ------------------------------------------------------------------ Lifespan ---
 @asynccontextmanager
@@ -56,7 +58,11 @@ app = FastAPI(
         "`farmer` / `123456`) để test.\n"
         "- **Sprint 5**: hoàn thiện CRUD (`PUT`/`DELETE` cho `/farms` và "
         "`/batches`) + dashboard thống kê trên giao diện. Nhóm `DELETE` yêu cầu "
-        "role `admin` (farmer nhận `403`), các API còn lại cho cả `farmer`."
+        "role `admin` (farmer nhận `403`), các API còn lại cho cả `farmer`.\n"
+        "- **Sprint 6**: danh mục **sản phẩm dùng chung** cho mọi tổ chức "
+        "(`GET /products`, `POST /products`, `PUT /products/{product_id}`). "
+        "Mọi vai trò đọc được danh mục; **chỉ `admin`** được thêm/sửa - farmer "
+        "gọi `POST`/`PUT` nhận `403 Forbidden`."
     ),
     version=__version__,
     docs_url="/docs",
@@ -82,4 +88,5 @@ app.include_router(auth.router)
 app.include_router(farms.router)
 app.include_router(batches.router)
 app.include_router(events.router)
+app.include_router(products.router)
 app.include_router(users.router)

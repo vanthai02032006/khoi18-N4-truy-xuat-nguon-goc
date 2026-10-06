@@ -268,6 +268,76 @@ def seed_sample_agricultural_data() -> None:
         db.close()
 
 
+def seed_default_products() -> None:
+    """Nạp **danh mục sản phẩm chuẩn dùng chung** nếu bảng ``products`` còn trống.
+
+    Danh mục sản phẩm là dữ liệu dùng chung cho mọi tổ chức nên chỉ seed khi
+    bảng rỗng: nếu admin đã thêm/sửa sản phẩm trên giao diện thì giữ nguyên,
+    không ghi đè. Giúp màn hình "Danh mục sản phẩm" có sẵn dữ liệu để demo ngay
+    sau khi khởi động.
+    """
+    from sqlalchemy import func
+
+    from app.models import Product
+
+    db: Session = SessionLocal()
+    try:
+        product_count = db.scalar(select(func.count()).select_from(Product)) or 0
+        if product_count > 0:
+            return  # đã có dữ liệu -> không thêm gì
+
+        db.add_all(
+            [
+                Product(
+                    name="Xoài Cát Chu",
+                    unit="kg",
+                    description="Xoài cát chu loại 1 thu hoạch tại Cao Lãnh, Đồng Tháp.",
+                ),
+                Product(
+                    name="Sầu Riêng Ri6",
+                    unit="kg",
+                    description="Sầu riêng Ri6 cơm vàng hạt lép, vùng Chợ Lách - Bến Tre.",
+                ),
+                Product(
+                    name="Bưởi Da Xanh",
+                    unit="piece",
+                    description="Bưởi da xanh đạt chuẩn GlobalGAP, bán theo trái.",
+                ),
+                Product(
+                    name="Thanh Long Ruột Đỏ",
+                    unit="kg",
+                    description="Thanh long ruột đỏ hàng chọn xuất khẩu, Bình Thuận.",
+                ),
+                Product(
+                    name="Nhãn Lồng Hưng Yên",
+                    unit="kg",
+                    description="Nhãn lồng Hương Chi loại 1, tỉnh Hưng Yên.",
+                ),
+                Product(
+                    name="Bơ Booth 7",
+                    unit="kg",
+                    description="Bơ Booth 7 trái to đều, vùng Đắk Lắk.",
+                ),
+                Product(
+                    name="Vải Thiều Lục Ngạn",
+                    unit="box",
+                    description="Vải thiều Lục Ngạn chuẩn VietGAP, đóng hộp 5kg.",
+                ),
+                Product(
+                    name="Chè Ô Long Mộc Châu",
+                    unit="bundle",
+                    description="Chè ô long búp non thu hái sớm, đóng bó 1kg.",
+                ),
+            ]
+        )
+        db.commit()
+    except SQLAlchemyError:
+        # Không để server chết vì lỗi seed dữ liệu mẫu.
+        db.rollback()
+    finally:
+        db.close()
+
+
 def init_db() -> None:
     """Tạo toàn bộ bảng trong database dựa trên metadata của các models.
 
@@ -278,9 +348,11 @@ def init_db() -> None:
     - ``seed_default_users()``: tạo 2 tài khoản mặc định cho chức năng đăng nhập
       + phân quyền (Sprint 4).
     - ``seed_sample_agricultural_data()``: nạp dữ liệu mẫu về thửa đất và lô nông sản.
+    - ``seed_default_products()``: nạp danh mục sản phẩm chuẩn dùng chung.
     """
     from app import models  # noqa: F401  (import để đăng ký metadata)
 
     Base.metadata.create_all(bind=engine)
     seed_default_users()
     seed_sample_agricultural_data()
+    seed_default_products()

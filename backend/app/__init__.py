@@ -5,7 +5,8 @@
 Package `app` chứa toàn bộ mã nguồn backend FastAPI:
 - ``main``      : khởi tạo ứng dụng FastAPI và đăng ký routers.
 - ``database``  : cấu hình kết nối SQLite + SQLAlchemy, `get_db`, `init_db`.
-- ``models``    : khai báo ORM models (`Farm`, `Batch`, `User`) + hằng số vai trò.
+- ``models``    : khai báo ORM models (`Farm`, `Batch`, `Product`, `User`)
+  + hằng số vai trò.
 - ``schemas``   : khai báo Pydantic schemas cho request/response.
 - ``security``  : băm/kiểm tra mật khẩu + dependency phân quyền
   (`get_current_user`, `require_admin`, `require_farmer`).
