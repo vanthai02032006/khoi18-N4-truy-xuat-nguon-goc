@@ -10,3 +10,4 @@ SQLAlchemy==2.0.36
 
 # Validation / serialization (FastAPI dùng ở tầng schema)
 pydantic==2.10.4
+eval_type_backport>=0.2.0

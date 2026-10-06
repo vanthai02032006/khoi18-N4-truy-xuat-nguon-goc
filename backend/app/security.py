@@ -23,6 +23,7 @@ production** (Basic gửi mật khẩu ở mọi request nên bắt buộc phả
 SHA-256 không salt nên không chống được brute-force - production nên dùng
 ``bcrypt``/``argon2`` qua ``passlib`` và chuyển sang JWT/OAuth2).
 """
+from __future__ import annotations
 
 import hashlib
 from hmac import compare_digest

@@ -23,9 +23,31 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Batch, Farm, User
-from app.schemas import BatchCreate, BatchResponse, BatchUpdate, DeleteResponse
+from app.models import Batch, BatchEvent, Farm, User
+from app.schemas import (
+    BatchCreate,
+    BatchResponse,
+    BatchUpdate,
+    DeleteResponse,
+    BatchEventCreate,
+    BatchEventResponse,
+    BatchEventVerifyResponse,
+    BatchSplitRequest,
+    BatchSplitResponse,
+    BatchMergeRequest,
+    BatchMergeResponse,
+)
 from app.security import require_admin, require_farmer
+from app.batch_split import split_batch
+from app.batch_merge import merge_batches_transaction
+from app.event_chain import (
+    record_batch_event,
+    verify_batch_events_integrity,
+    verify_batch_chain,
+    build_10_events_for_batch,
+    simulate_tamper_event,
+    reset_batch_events,
+)
 
 router = APIRouter(
     prefix="/batches",
@@ -87,7 +109,28 @@ def create_batch(
         )
 
     # Bước 2: lưu lô nông sản.
-    batch = Batch(**payload.model_dump())
+    batch_dict = payload.model_dump()
+    if not batch_dict.get("batch_code"):
+        from sqlalchemy import func
+        from app.batch_split import generate_batch_code
+        existing_count = (
+            db.scalar(
+                select(func.count())
+                .select_from(Batch)
+                .where(Batch.farm_id == payload.farm_id)
+            )
+            or 0
+        )
+        batch_dict["batch_code"] = generate_batch_code(
+            farm_id=payload.farm_id,
+            harvest_date=payload.harvest_date,
+            parent_id=payload.parent_id,
+            sequence=existing_count + 1,
+        )
+    if not batch_dict.get("owner"):
+        batch_dict["owner"] = current_user.username
+
+    batch = Batch(**batch_dict)
     db.add(batch)
 
     try:
@@ -297,3 +340,322 @@ def delete_batch(
         # Xoá lô không kéo theo bản ghi nào khác -> null.
         deleted_batches=None,
     )
+
+
+# ==============================================================================
+# SỰ KIỆN CHUỖI CUNG ỨNG & KIỂM TRA TÍNH TOÀN VẸN (T-28 / T-31 / SCRUM-47)
+# ==============================================================================
+
+
+@router.get(
+    "/{batch_id}/events",
+    response_model=list[BatchEventResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Lấy danh sách sự kiện dòng thời gian của lô (T-31)",
+    description=(
+        "Trả về danh sách sự kiện trong chuỗi cung ứng của lô theo thứ tự sequence tăng dần. "
+        "Mỗi mốc sự kiện gồm: loại sự kiện, thời điểm, tổ chức thực hiện, dữ liệu và mã băm SHA-256."
+    ),
+)
+def get_batch_events(
+    batch_id: int = Path(..., ge=1, description="ID của lô nông sản"),
+    db: Session = Depends(get_db),
+) -> list[BatchEvent]:
+    batch = db.get(Batch, batch_id)
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+
+    events = (
+        db.query(BatchEvent)
+        .filter(BatchEvent.batch_id == batch_id)
+        .order_by(BatchEvent.sequence.asc(), BatchEvent.id.asc())
+        .all()
+    )
+    return events
+
+
+@router.post(
+    "/{batch_id}/events",
+    response_model=BatchEventResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Ghi nhận sự kiện chuỗi cung ứng mới (T-31)",
+    description=(
+        "Ghi nhận thêm một mốc sự kiện vào dòng thời gian của lô nông sản. "
+        "Hệ thống tự động liên kết prev_hash và tính mã băm SHA-256 bảo đảm tính toàn vẹn."
+    ),
+)
+def add_batch_event(
+    batch_id: int = Path(..., ge=1, description="ID của lô nông sản"),
+    payload: BatchEventCreate = ...,
+    current_user: User = Depends(require_farmer),
+    db: Session = Depends(get_db),
+) -> BatchEvent:
+    _ = current_user
+    batch = db.get(Batch, batch_id)
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+
+    event = record_batch_event(
+        db=db,
+        batch_id=batch_id,
+        event_type=payload.event_type,
+        data=payload.data,
+        organization=payload.organization,
+        timestamp=payload.timestamp,
+    )
+    return event
+
+
+@router.get(
+    "/{batch_id}/events/verify",
+    response_model=BatchEventVerifyResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Kiểm tra tính toàn vẹn chuỗi sự kiện (Hàm T-28)",
+    description=(
+        "Quét toàn bộ chuỗi sự kiện của lô: đối chiếu prev_hash liên kết và "
+        "tính toán lại hash nội dung từng bản ghi. Phát hiện 100% nếu có sửa lén (SQL UPDATE) "
+        "hoặc xoá bản ghi (SQL DELETE)."
+    ),
+)
+def verify_batch_events_endpoint(
+    batch_id: int = Path(..., ge=1, description="ID của lô nông sản"),
+    db: Session = Depends(get_db),
+) -> BatchEventVerifyResponse:
+    batch = db.get(Batch, batch_id)
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+
+    report = verify_batch_events_integrity(db=db, batch_id=batch_id)
+    return BatchEventVerifyResponse(**report.model_dump())
+
+
+@router.get(
+    "/{batch_id}/verify-chain",
+    response_model=BatchEventVerifyResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Bí danh kiểm tra tính toàn vẹn chuỗi sự kiện (Hàm T-28)",
+    description="Route ngắn gọn cho hàm kiểm tra toàn vẹn T-28.",
+)
+def verify_batch_chain_endpoint(
+    batch_id: int = Path(..., ge=1, description="ID của lô nông sản"),
+    db: Session = Depends(get_db),
+) -> BatchEventVerifyResponse:
+    return verify_batch_events_endpoint(batch_id, db)
+
+
+@router.post(
+    "/{batch_id}/seed-events",
+    response_model=list[BatchEventResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Tạo 10 sự kiện chuẩn chuỗi lạnh cho lô (Phục vụ demo & nghiệm thu)",
+    description="Dựng một chuỗi đầy đủ 10 sự kiện chuẩn nối băm mật mã SHA-256 từ thu hoạch đến bán lẻ.",
+)
+def seed_batch_events_endpoint(
+    batch_id: int = Path(..., ge=1, description="ID của lô nông sản"),
+    current_user: User = Depends(require_farmer),
+    db: Session = Depends(get_db),
+) -> list[BatchEvent]:
+    _ = current_user
+    batch = db.get(Batch, batch_id)
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+
+    events = build_10_events_for_batch(db, batch_id)
+    return events
+
+
+@router.post(
+    "/{batch_id}/simulate-tamper",
+    response_model=BatchEventVerifyResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Giả lập sửa lén dữ liệu qua SQL trực tiếp (Kiểm thử cảnh báo T-31)",
+    description=(
+        "Mô phỏng hành vi hacker hoặc kẻ xấu can thiệp trái phép cơ sở dữ liệu "
+        "bằng SQL UPDATE để kiểm tra xem hệ thống có bật banner cảnh báo đỏ ở đầu hay không."
+    ),
+)
+def simulate_tamper_endpoint(
+    batch_id: int = Path(..., ge=1, description="ID của lô nông sản"),
+    current_user: User = Depends(require_farmer),
+    db: Session = Depends(get_db),
+) -> BatchEventVerifyResponse:
+    _ = current_user
+    batch = db.get(Batch, batch_id)
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+
+    simulate_tamper_event(db, batch_id)
+    report = verify_batch_events_integrity(db=db, batch_id=batch_id)
+    return BatchEventVerifyResponse(**report.model_dump())
+
+
+@router.post(
+    "/{batch_id}/reset-events",
+    response_model=BatchEventVerifyResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Khôi phục chuỗi sự kiện nguyên vẹn 100% (Phục vụ demo)",
+    description="Dựng lại chuỗi sự kiện nguyên vẹn hoàn toàn để trả về trạng thái hợp lệ.",
+)
+def reset_batch_events_endpoint(
+    batch_id: int = Path(..., ge=1, description="ID của lô nông sản"),
+    current_user: User = Depends(require_farmer),
+    db: Session = Depends(get_db),
+) -> BatchEventVerifyResponse:
+    _ = current_user
+    batch = db.get(Batch, batch_id)
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+
+    reset_batch_events(db, batch_id)
+    report = verify_batch_events_integrity(db=db, batch_id=batch_id)
+    return BatchEventVerifyResponse(**report.model_dump())
+
+
+# ----------------------------------------------- Tách lô nông sản (T-40 / T-41 / SCRUM-57) ---
+@router.post(
+    "/{batch_id}/split",
+    response_model=BatchSplitResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Tách lô nông sản có khoá dòng lô mẹ (T-40 / T-41 / SCRUM-57)",
+    description=(
+        "Tách lô nông sản mẹ thành danh sách các lô con.\n\n"
+        "- Sử dụng **khóa dòng bi quan (`SELECT ... FOR UPDATE`)** để giao dịch thứ hai phải chờ "
+        "và đọc được số dư đã trừ, chống 100% race condition và xuất khống.\n"
+        "- Khối lượng dùng kiểu **số thập phân cố định (Decimal/Numeric)**, tuyệt đối không dùng float.\n"
+        "- Thao tác tách vượt khối lượng còn lại bị từ chối ngay lập tức (`400 Bad Request`)."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Dữ liệu không hợp lệ hoặc tổng khối lượng tách vượt quá khối lượng khả dụng.",
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Chưa đăng nhập.",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Không có quyền thực hiện (chỉ farmer hoặc admin).",
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Không tìm thấy lô mẹ.",
+        },
+    },
+)
+def split_batch_endpoint(
+    payload: BatchSplitRequest,
+    batch_id: int = Path(..., ge=1, description="ID của lô nông sản mẹ cần tách"),
+    current_user: User = Depends(require_farmer),
+    db: Session = Depends(get_db),
+) -> BatchSplitResponse:
+    """Endpoint tách lô nông sản có khóa dòng lô mẹ."""
+    # Kiểm tra lô tồn tại trước
+    existing_batch = db.get(Batch, batch_id)
+    if existing_batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản mẹ #{batch_id}.",
+        )
+
+    initial_qty = existing_batch.quantity
+    parent_code = existing_batch.batch_code
+
+    try:
+        updated_parent, created_children = split_batch(
+            db=db,
+            parent_batch_id=batch_id,
+            child_quantities=payload.child_quantities,
+            operator_user=current_user,
+        )
+    except ValueError as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(err),
+        ) from err
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Lỗi hệ thống trong giao dịch tách lô: {err}",
+        ) from err
+
+    total_split_qty = sum(payload.child_quantities)
+    return BatchSplitResponse(
+        parent_batch_id=updated_parent.id,
+        parent_batch_code=updated_parent.batch_code or parent_code,
+        initial_quantity=initial_qty,
+        remaining_quantity=updated_parent.quantity,
+        total_split_quantity=total_split_qty,
+        child_batches=[BatchResponse.model_validate(c) for c in created_children],
+        message=(
+            f"Tách thành công {len(created_children)} lô con từ lô mẹ #{batch_id}. "
+            f"Khối lượng còn lại của lô mẹ: {updated_parent.quantity} kg."
+        ),
+    )
+
+
+@router.post(
+    "/merge",
+    response_model=BatchMergeResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Gộp nhiều lô nông sản (Batch Merge)",
+    description=(
+        "Thực hiện gộp tối thiểu 2 lô mẹ thành một lô mới với khóa dòng chống deadlock "
+        "(sắp xếp ID tăng dần) và bảo toàn khối lượng bằng số học Decimal (T-44 / T-46 / SCRUM-60 / SCRUM-62)."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Dữ liệu không hợp lệ (trùng lô mẹ, vượt tồn kho, thiếu lô mẹ...).",
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Chưa đăng nhập.",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Không có quyền thực hiện (chỉ farmer hoặc admin).",
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Không tìm thấy lô mẹ hoặc vùng trồng.",
+        },
+    },
+)
+def merge_batches_endpoint(
+    payload: BatchMergeRequest,
+    current_user: User = Depends(require_farmer),
+    db: Session = Depends(get_db),
+) -> BatchMergeResponse:
+    """Endpoint gộp nhiều lô nông sản có khóa dòng chống deadlock."""
+    try:
+        return merge_batches_transaction(
+            db=db,
+            payload=payload,
+            current_user=current_user,
+        )
+    except ValueError as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(err),
+        ) from err
+    except HTTPException:
+        raise
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Lỗi hệ thống trong giao dịch gộp lô: {err}",
+        ) from err
+
+
+

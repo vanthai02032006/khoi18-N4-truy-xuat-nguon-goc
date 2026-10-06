@@ -556,4 +556,94 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 3 | Module **Batch** (quản lý lô nông sản): model `Batch` → bảng `batches` (FK `farm_id` → `farms.id`, quan hệ `Farm 1 ---- N Batch`), schemas `BatchCreate`/`BatchResponse`, router `app/routers/batches.py` với `POST /batches` (**201**, trả **404** nếu `farm_id` không tồn tại), `GET /batches` (**200**) và `GET /batches/{batch_id}` (**200**/**404**). `GET /health`, `POST /farms`, `GET /farms` giữ nguyên. |
 | Sprint 4 | **Đăng nhập + phân quyền cơ bản (không JWT):** model `User` → bảng `users` (`username` unique, mật khẩu băm SHA-256, `role`), `seed_default_users()` tạo sẵn `admin`/`farmer` (mật khẩu `123456`); module `app/security.py` với `hash_password`/`verify_password`/`authenticate_user` và dependency `get_current_user` (**401**), `require_admin` (**403**), `require_farmer`; router `POST /auth/login` (**200**/**401**) và `GET /users` (**200**, chỉ admin); áp `require_farmer` cho `GET /farms`, `POST /farms`, `POST /batches`. Cơ chế xác thực là **HTTP Basic** (Swagger có nút **Authorize**), không token/refresh token. |
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
+| Task T-46 (SCRUM-62) | **Dựng đồ thị mẫu phả hệ nông sản 4 tầng (Lineage Graph DAG):** Dùng chính hàm `split_batch` và `merge_batches` của ứng dụng. Kiểm tra an toàn môi trường (`APP_ENV`), chống deadlock qua thứ tự khoá tăng dần, bảo toàn khối lượng Decimal (Numeric 12,4), idempotent khi chạy lặp lại. |
+
+---
+
+## 8. Đồ thị mẫu phả hệ nông sản 4 tầng (T-46 / SCRUM-62)
+
+### Sơ đồ luồng tách & gộp (Mermaid DAG)
+
+```mermaid
+graph TD
+    subgraph T1["TẦNG 1: 3 LÔ THU HOẠCH GỐC (F0)"]
+        F01["LOT-GRAPH-F0-01<br/>1,200.0 kg<br/>Vườn A"]
+        F02["LOT-GRAPH-F0-02<br/>1,200.0 kg<br/>Vườn B"]
+        F03["LOT-GRAPH-F0-03<br/>1,200.0 kg<br/>Vườn C"]
+    end
+
+    subgraph T2["TẦNG 2: 6 LÔ SƠ CHẾ TÁCH TỪ F0 (split_batch)"]
+        S101["LOT-GRAPH-S1.01<br/>500.0 kg (Nhánh A1)"]
+        S102["LOT-GRAPH-S1.02<br/>500.0 kg (Nhánh A2)"]
+        S201["LOT-GRAPH-S2.01<br/>500.0 kg (Nhánh B1)"]
+        S202["LOT-GRAPH-S2.02<br/>500.0 kg (Nhánh B2)"]
+        S301["LOT-GRAPH-S3.01<br/>500.0 kg (Nhánh C1)"]
+        S302["LOT-GRAPH-S3.02<br/>500.0 kg (Nhánh C2)"]
+    end
+
+    subgraph T3["TẦNG 3: 3 LÔ GỘP CHÉO PHỐI TRỘN (merge_batches)"]
+        M01["LOT-GRAPH-M01<br/>500.0 kg<br/>(Gộp S1.01 + S2.01)"]
+        M02["LOT-GRAPH-M02<br/>500.0 kg<br/>(Gộp S2.02 + S3.01)"]
+        M03["LOT-GRAPH-M03<br/>500.0 kg<br/>(Gộp S3.02 + S1.02)"]
+    end
+
+    subgraph T4["TẦNG 4: 6 LÔ THÀNH PHẨM XUẤT KHẨU / PHÂN PHỐI (split_batch)"]
+        FIN101["LOT-GRAPH-FIN1.01<br/>200.0 kg (Xuất khẩu EU)"]
+        FIN102["LOT-GRAPH-FIN1.02<br/>200.0 kg (Siêu thị)"]
+        FIN201["LOT-GRAPH-FIN2.01<br/>200.0 kg (Xuất khẩu Nhật)"]
+        FIN202["LOT-GRAPH-FIN2.02<br/>200.0 kg (Chế biến)"]
+        FIN301["LOT-GRAPH-FIN3.01<br/>200.0 kg (Xuất khẩu Mỹ)"]
+        FIN302["LOT-GRAPH-FIN3.02<br/>200.0 kg (Nội địa)"]
+    end
+
+    %% Tầng 1 -> Tầng 2 (split_batch)
+    F01 -->|"tách 500 kg"| S101
+    F01 -->|"tách 500 kg (còn 200 kg)"| S102
+    F02 -->|"tách 500 kg"| S201
+    F02 -->|"tách 500 kg (còn 200 kg)"| S202
+    F03 -->|"tách 500 kg"| S301
+    F03 -->|"tách 500 kg (còn 200 kg)"| S302
+
+    %% Tầng 2 -> Tầng 3 (merge_batches chéo)
+    S101 -->|"gộp 250 kg (còn 250 kg)"| M01
+    S201 -->|"gộp 250 kg (còn 250 kg)"| M01
+
+    S202 -->|"gộp 250 kg (còn 250 kg)"| M02
+    S301 -->|"gộp 250 kg (còn 250 kg)"| M02
+
+    S302 -->|"gộp 250 kg (còn 250 kg)"| M03
+    S102 -->|"gộp 250 kg (còn 250 kg)"| M03
+
+    %% Tầng 3 -> Tầng 4 (split_batch)
+    M01 -->|"tách 200 kg"| FIN101
+    M01 -->|"tách 200 kg (còn 100 kg)"| FIN102
+    M02 -->|"tách 200 kg"| FIN201
+    M02 -->|"tách 200 kg (còn 100 kg)"| FIN202
+    M03 -->|"tách 200 kg"| FIN301
+    M03 -->|"tách 200 kg (còn 100 kg)"| FIN302
+```
+
+### Bảng dữ liệu 18 lô nông sản mẫu
+
+| Tầng | Mã Lô (`batch_code`) | Tên sản phẩm | Khối lượng ban đầu | Tồn kho còn lại | Nguồn gốc / Thao tác |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Tầng 1 (F0)** | `LOT-GRAPH-F0-01` | Xoài Cát Chu Thu Hoạch Vườn A | 1,200.0000 kg | 200.0000 kg | Lô thu hoạch gốc từ Thửa đất #1 |
+| **Tầng 1 (F0)** | `LOT-GRAPH-F0-02` | Xoài Cát Chu Thu Hoạch Vườn B | 1,200.0000 kg | 200.0000 kg | Lô thu hoạch gốc từ Thửa đất #1 |
+| **Tầng 1 (F0)** | `LOT-GRAPH-F0-03` | Xoài Cát Chu Thu Hoạch Vườn C | 1,200.0000 kg | 200.0000 kg | Lô thu hoạch gốc từ Thửa đất #1 |
+| **Tầng 2 (F1)** | `LOT-GRAPH-S1.01` | Xoài Phân Loại Size 1 (Nhánh A1) | 500.0000 kg | 250.0000 kg | Tách từ F0-01 (`split_batch`) |
+| **Tầng 2 (F1)** | `LOT-GRAPH-S1.02` | Xoài Phân Loại Size 2 (Nhánh A2) | 500.0000 kg | 250.0000 kg | Tách từ F0-01 (`split_batch`) |
+| **Tầng 2 (F1)** | `LOT-GRAPH-S2.01` | Xoài Phân Loại Size 1 (Nhánh B1) | 500.0000 kg | 250.0000 kg | Tách từ F0-02 (`split_batch`) |
+| **Tầng 2 (F1)** | `LOT-GRAPH-S2.02` | Xoài Phân Loại Size 2 (Nhánh B2) | 500.0000 kg | 250.0000 kg | Tách từ F0-02 (`split_batch`) |
+| **Tầng 2 (F1)** | `LOT-GRAPH-S3.01` | Xoài Phân Loại Size 1 (Nhánh C1) | 500.0000 kg | 250.0000 kg | Tách từ F0-03 (`split_batch`) |
+| **Tầng 2 (F1)** | `LOT-GRAPH-S3.02` | Xoài Phân Loại Size 2 (Nhánh C2) | 500.0000 kg | 250.0000 kg | Tách từ F0-03 (`split_batch`) |
+| **Tầng 3 (F2)** | `LOT-GRAPH-M01` | Xoài Phối Trộn Đóng Thùng Lô M1 | 500.0000 kg | 100.0000 kg | Gộp chéo S1.01 (250 kg) + S2.01 (250 kg) (`merge_batches`) |
+| **Tầng 3 (F2)** | `LOT-GRAPH-M02` | Xoài Phối Trộn Đóng Thùng Lô M2 | 500.0000 kg | 100.0000 kg | Gộp chéo S2.02 (250 kg) + S3.01 (250 kg) (`merge_batches`) |
+| **Tầng 3 (F2)** | `LOT-GRAPH-M03` | Xoài Phối Trộn Đóng Thùng Lô M3 | 500.0000 kg | 100.0000 kg | Gộp chéo S3.02 (250 kg) + S1.02 (250 kg) (`merge_batches`) |
+| **Tầng 4 (F3)** | `LOT-GRAPH-FIN1.01` | Xoài Thành Phẩm Chuẩn Xuất Khẩu EU (M1.01) | 200.0000 kg | 200.0000 kg | Tách từ M01 (`split_batch`) |
+| **Tầng 4 (F3)** | `LOT-GRAPH-FIN1.02` | Xoài Thành Phẩm Chuẩn Siêu Thị (M1.02) | 200.0000 kg | 200.0000 kg | Tách từ M01 (`split_batch`) |
+| **Tầng 4 (F3)** | `LOT-GRAPH-FIN2.01` | Xoài Thành Phẩm Chuẩn Xuất Khẩu Nhật (M2.01) | 200.0000 kg | 200.0000 kg | Tách từ M02 (`split_batch`) |
+| **Tầng 4 (F3)** | `LOT-GRAPH-FIN2.02` | Xoài Thành Phẩm Chuẩn Chế Biến (M2.02) | 200.0000 kg | 200.0000 kg | Tách từ M02 (`split_batch`) |
+| **Tầng 4 (F3)** | `LOT-GRAPH-FIN3.01` | Xoài Thành Phẩm Chuẩn Xuất Khẩu Mỹ (M3.01) | 200.0000 kg | 200.0000 kg | Tách từ M03 (`split_batch`) |
+| **Tầng 4 (F3)** | `LOT-GRAPH-FIN3.02` | Xoài Thành Phẩm Chuẩn Nội Địa (M3.02) | 200.0000 kg | 200.0000 kg | Tách từ M03 (`split_batch`) |
+
 

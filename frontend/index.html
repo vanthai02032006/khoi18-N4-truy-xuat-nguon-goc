@@ -142,7 +142,7 @@
                 Tên đăng nhập <span class="required">*</span>
               </label>
               <div class="input-wrapper">
-                <input id="login-username" type="text" maxlength="50" required
+                <input id="login-username" name="username" type="text" maxlength="50" required
                        autocomplete="username" placeholder="Nhập admin hoặc farmer" />
               </div>
             </div>
@@ -153,7 +153,7 @@
                 Mật khẩu <span class="required">*</span>
               </label>
               <div class="input-wrapper">
-                <input id="login-password" type="password" maxlength="128" required
+                <input id="login-password" name="password" type="password" maxlength="128" required
                        autocomplete="current-password" placeholder="Nhập mật khẩu (mặc định 123456)" />
               </div>
             </div>
@@ -255,14 +255,14 @@
           </div>
         </header>
 
-        <form id="farm-form" class="form-wrapper">
+        <form id="farm-form" class="form-wrapper" novalidate>
           <div id="farm-form-mode" class="mode-alert" hidden></div>
           <div class="form-grid">
             <div class="form-group">
               <label for="farm-name" class="input-label">
                 Tên thửa đất / Vùng trồng <span class="required">*</span>
               </label>
-              <input id="farm-name" type="text" maxlength="255" required
+              <input id="farm-name" name="name" type="text" maxlength="255" required
                      placeholder="Ví dụ: Vườn Xoài Cát Chu Cao Lãnh (Thửa Đất #1)" />
             </div>
 
@@ -270,7 +270,7 @@
               <label for="farm-location" class="input-label">
                 Địa điểm / Vị trí thửa đất <span class="required">*</span>
               </label>
-              <input id="farm-location" type="text" maxlength="255" required
+              <input id="farm-location" name="location" type="text" maxlength="255" required
                      placeholder="Ví dụ: Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp" />
             </div>
 
@@ -278,7 +278,7 @@
               <label for="farm-area" class="input-label">
                 Diện tích thửa đất (ha) <span class="required">*</span>
               </label>
-              <input id="farm-area" type="number" min="0.1" step="0.1" required
+              <input id="farm-area" name="area" type="number" min="0.1" step="0.1" required
                      placeholder="Ví dụ: 4.5 (chặn diện tích <= 0 theo AC)" />
             </div>
 
@@ -286,7 +286,7 @@
               <label for="farm-owner" class="input-label">
                 Chủ thửa đất / Hộ nông dân <span class="required">*</span>
               </label>
-              <input id="farm-owner" type="text" maxlength="255" required
+              <input id="farm-owner" name="owner" type="text" maxlength="255" required
                      placeholder="Ví dụ: Hợp tác xã Xoài Mỹ Xương / Nông dân" />
             </div>
           </div>
@@ -349,21 +349,21 @@
           </div>
         </header>
 
-        <form id="batch-form" class="form-wrapper">
+        <form id="batch-form" class="form-wrapper" novalidate>
           <div id="batch-form-mode" class="mode-alert" hidden></div>
           <div class="form-grid">
             <div class="form-group">
               <label for="batch-farm-id" class="input-label">
                 Thuộc thửa đất xuất xứ <span class="required">*</span>
               </label>
-              <select id="batch-farm-id" required></select>
+              <select id="batch-farm-id" name="farm_id" required></select>
             </div>
 
             <div class="form-group">
               <label for="batch-product-name" class="input-label">
                 Loại cây trồng / Nông sản <span class="required">*</span>
               </label>
-              <input id="batch-product-name" type="text" maxlength="255" required
+              <input id="batch-product-name" name="product_name" type="text" maxlength="255" required
                      placeholder="Ví dụ: Xoài Cát Chu Loại 1 (VietGAP) / Sầu Riêng Ri6" />
             </div>
 
@@ -371,7 +371,7 @@
               <label for="batch-quantity" class="input-label">
                 Sản lượng thu hoạch (kg) <span class="required">*</span>
               </label>
-              <input id="batch-quantity" type="number" min="0.1" step="0.1" required
+              <input id="batch-quantity" name="quantity" type="number" min="0.1" step="0.1" required
                      placeholder="Ví dụ: 1500" />
             </div>
 
@@ -379,7 +379,7 @@
               <label for="batch-harvest-date" class="input-label">
                 Ngày thu hoạch <span class="required">*</span>
               </label>
-              <input id="batch-harvest-date" type="date" required />
+              <input id="batch-harvest-date" name="harvest_date" type="date" required />
             </div>
           </div>
 
@@ -421,6 +421,133 @@
             </div>
             <h4>Chưa có lô thu hoạch nào</h4>
             <p>Vui lòng ghi nhận lô thu hoạch mới bằng biểu mẫu phía trên.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================== SECTION 2.5: DÒNG THỜI GIAN SỰ KIỆN & KIỂM TRA TOÀN VẸN T-28 (T-31 / SCRUM-47) ======================== -->
+      <section id="timeline-card" class="content-card timeline-container" hidden>
+        <header class="card-header timeline-header">
+          <div class="header-left">
+            <div class="module-avatar module-avatar--timeline">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+            </div>
+            <div>
+              <div class="timeline-title-row">
+                <h3 class="card-title">Dòng thời gian sự kiện chuỗi cung ứng</h3>
+                <span id="timeline-batch-badge" class="badge-pill badge-pill--info">Lô #1</span>
+              </div>
+              <p id="timeline-batch-desc" class="card-subtitle">
+                Hành trình giám sát chuỗi lạnh và truy xuất nguồn gốc theo bố cục 1 cột tối ưu cho thiết bị di động tại kho/bãi.
+              </p>
+            </div>
+          </div>
+          <div class="timeline-header-actions">
+            <button id="btn-timeline-close" type="button" class="btn-action-ghost" title="Đóng dòng thời gian">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <span>Đóng</span>
+            </button>
+          </div>
+        </header>
+
+        <!-- BANNER CẢNH BÁO TÍNH TOÀN VẸN (HÀM KIỂM ĐỊNH T-28) Ở ĐẦU TRANG -->
+        <div id="integrity-banner-container" class="integrity-banner-wrapper">
+          <!-- Render động: Banner đỏ nếu TAMPERED, Banner xanh nếu VERIFIED -->
+        </div>
+
+        <!-- Thanh công cụ kiểm định & thao tác tại kho/bãi -->
+        <div class="timeline-toolbar">
+          <div class="timeline-toolbar-group">
+            <button id="btn-verify-chain" type="button" class="btn-tool btn-tool--verify">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <path d="M9 12l2 2 4-4"/>
+              </svg>
+              <span>Kiểm tra toàn vẹn chuỗi (T-28)</span>
+            </button>
+            <button id="btn-simulate-tamper" type="button" class="btn-tool btn-tool--danger" title="Giả lập hành vi sửa lén SQL để kiểm tra cảnh báo">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              <span>Giả lập sửa lén SQL</span>
+            </button>
+            <button id="btn-reset-chain" type="button" class="btn-tool btn-tool--restore" title="Khôi phục chuỗi 10 sự kiện chuẩn">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M2.5 2v6h6"/>
+                <path d="M2.66 15.57a10 10 0 1 0 .57-8.38l-5.67-5.67"/>
+              </svg>
+              <span>Khôi phục chuỗi chuẩn</span>
+            </button>
+          </div>
+          <div class="timeline-toolbar-group">
+            <button id="btn-toggle-add-event" type="button" class="btn-tool btn-tool--primary">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="8" x2="12" y2="16"/>
+                <line x1="8" y1="12" x2="16" y2="12"/>
+              </svg>
+              <span>Thêm sự kiện mới</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Form nhanh thêm sự kiện mới -->
+        <form id="add-event-form" class="event-form-box" novalidate hidden>
+          <div class="event-form-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span>Ghi nhận sự kiện chuỗi cung ứng mới cho lô này</span>
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="event-type-input" class="input-label">Loại sự kiện <span class="required">*</span></label>
+              <select id="event-type-input" name="event_type" required>
+                <option value="HARVEST">Thu hoạch (HARVEST)</option>
+                <option value="QUALITY_INSPECTION">Kiểm định chất lượng (QUALITY_INSPECTION)</option>
+                <option value="WASH_AND_SORT">Sơ chế & phân loại (WASH_AND_SORT)</option>
+                <option value="PACKAGING">Đóng gói & dán nhãn (PACKAGING)</option>
+                <option value="COLD_STORAGE_IN">Nhập kho lạnh (COLD_STORAGE_IN)</option>
+                <option value="TEMPERATURE_LOG">Giám sát chuỗi lạnh IoT (TEMPERATURE_LOG)</option>
+                <option value="TRANSPORT_DISPATCH">Xuất kho vận chuyển (TRANSPORT_DISPATCH)</option>
+                <option value="TRANSIT_TELEMETRY">Hành trình xe lạnh (TRANSIT_TELEMETRY)</option>
+                <option value="DISTRIBUTION_CENTER">Nhập trung tâm phân phối (DISTRIBUTION_CENTER)</option>
+                <option value="RETAIL_HANDOVER">Bàn giao siêu thị (RETAIL_HANDOVER)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="event-org-input" class="input-label">Tổ chức thực hiện <span class="required">*</span></label>
+              <input id="event-org-input" name="organization" type="text" maxlength="255" required value="Hợp tác xã Nông nghiệp Cao Lãnh" />
+            </div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label for="event-data-input" class="input-label">Dữ liệu chi tiết / Ghi chú <span class="required">*</span></label>
+              <input id="event-data-input" name="data" type="text" maxlength="1000" required placeholder='Ví dụ: {"temp_c": 4.0, "status": "OPTIMAL", "notes": "Đạt chuẩn VietGAP"}' />
+            </div>
+          </div>
+          <div class="form-buttons">
+            <button id="btn-submit-event" class="btn-action-primary" type="submit">
+              <span>Lưu sự kiện vào chuỗi</span>
+            </button>
+            <button id="btn-cancel-add-event" class="btn-action-ghost" type="button">
+              <span>Huỷ</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- CONTAINER DÒNG THỜI GIAN DỌC 1 CỘT (SINGLE-COLUMN VERTICAL TIMELINE) -->
+        <div class="timeline-viewport">
+          <div id="vertical-timeline" class="vertical-timeline-flow">
+            <!-- Render danh sách mốc sự kiện động -->
+          </div>
+          <div id="timeline-empty" class="empty-placeholder" hidden>
+            <div class="empty-icon-wrap">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <h4>Chưa có sự kiện nào trong chuỗi của lô này</h4>
+            <p>Bấm nút <strong>"Khôi phục chuỗi chuẩn"</strong> phía trên để nạp 10 sự kiện mẫu hoặc bấm <strong>"Thêm sự kiện mới"</strong>.</p>
           </div>
         </div>
       </section>
@@ -484,6 +611,76 @@
       </div>
     </div>
   </footer>
+
+  <!-- Modal Tách Lô Nông Sản (T-40 / T-41 / SCRUM-57) -->
+  <div id="modal-split" class="modal-backdrop" hidden>
+    <div class="modal-dialog">
+      <header class="modal-header">
+        <div class="modal-title-group">
+          <div class="module-avatar module-avatar--batch">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+          </div>
+          <div>
+            <h3 class="modal-title">Tách Lô Nông Sản</h3>
+            <span class="badge-pill badge-pill--info">T-41 / Khóa Dòng Lô Mẹ</span>
+          </div>
+        </div>
+        <button id="modal-split-close" class="modal-close-btn" type="button" aria-label="Đóng">&times;</button>
+      </header>
+      <div class="modal-body">
+        <div class="split-parent-card">
+          <div class="split-parent-row">
+            <span class="split-label">Lô mẹ nguồn gốc:</span>
+            <strong id="split-parent-code" class="split-value">LOT-01-20260925-01</strong>
+          </div>
+          <div class="split-parent-row">
+            <span class="split-label">Nông sản / Cây trồng:</span>
+            <span id="split-parent-product" class="split-value">Xoài Cát Chu</span>
+          </div>
+          <div class="split-parent-row">
+            <span class="split-label">Khối lượng khả dụng:</span>
+            <span id="split-parent-qty" class="split-value split-value--highlight">1000.0000 kg</span>
+          </div>
+        </div>
+
+        <form id="split-form" class="form-wrapper" novalidate style="padding: 0; box-shadow: none; border: none; background: transparent;">
+          <div class="form-group" style="margin-bottom: 1rem;">
+            <label for="split-child-quantities" class="input-label">
+              Khối lượng các lô con cần tách (kg) <span class="required">*</span>
+            </label>
+            <input id="split-child-quantities" name="child_quantities" type="text" required
+                   placeholder="Ví dụ: 250.0, 350.0 (ngăn cách bởi dấu phẩy)" />
+            <small class="input-hint">Nhập danh sách khối lượng ngăn cách bằng dấu phẩy. Dùng số thập phân Decimal chuẩn.</small>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 1rem;">
+            <label for="split-note" class="input-label">Ghi chú đợt tách</label>
+            <input id="split-note" name="note" type="text" maxlength="255"
+                   placeholder="Ví dụ: Tách đóng thùng xuất khẩu VietGAP đợt 1" />
+          </div>
+
+          <div id="split-calc-summary" class="split-calc-box" hidden>
+            <div class="split-calc-row">
+              <span>Tổng khối lượng tách:</span>
+              <strong id="split-calc-total">0.0000 kg</strong>
+            </div>
+            <div class="split-calc-row">
+              <span>Khối lượng còn lại dự kiến:</span>
+              <strong id="split-calc-remaining">0.0000 kg</strong>
+            </div>
+          </div>
+
+          <div class="form-buttons" style="margin-top: 1.5rem;">
+            <button id="split-submit" class="btn-action-primary" type="submit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+              <span>Xác nhận tách lô</span>
+            </button>
+            <button id="split-cancel" class="btn-action-ghost" type="button">Huỷ bỏ</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
 
   <!-- Toasts -->
   <div id="toast-container" class="toast-stack" aria-live="polite" aria-atomic="true"></div>

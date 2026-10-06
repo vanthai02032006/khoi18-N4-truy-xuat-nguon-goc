@@ -127,6 +127,7 @@ def seed_sample_agricultural_data() -> None:
     sản lượng và ngày thu hoạch để phục vụ nghiệm thu và demo ngay khi khởi động.
     """
     from datetime import date
+    from decimal import Decimal
     from sqlalchemy import func
     from app.models import Farm, Batch
 
@@ -202,62 +203,82 @@ def seed_sample_agricultural_data() -> None:
                 Batch(
                     farm_id=f1,
                     product_name="Xoài Cát Chu Loại 1 (VietGAP)",
-                    quantity=1500.0,
+                    quantity=Decimal("1500.0000"),
                     harvest_date=date(2026, 9, 25),
+                    batch_code=f"LOT-{f1:02d}-20260925-01",
+                    owner="farmer",
                 ),
                 Batch(
                     farm_id=f1,
                     product_name="Xoài Cát Chu Xuất Khẩu Sang Nhật",
-                    quantity=2200.0,
+                    quantity=Decimal("2200.0000"),
                     harvest_date=date(2026, 9, 28),
+                    batch_code=f"LOT-{f1:02d}-20260928-02",
+                    owner="farmer",
                 ),
                 Batch(
                     farm_id=f2,
                     product_name="Sầu Riêng Ri6 Cơm Vàng Hạt Lép",
-                    quantity=3400.0,
+                    quantity=Decimal("3400.0000"),
                     harvest_date=date(2026, 9, 26),
+                    batch_code=f"LOT-{f2:02d}-20260926-01",
+                    owner="farmer",
                 ),
                 Batch(
                     farm_id=f2,
                     product_name="Sầu Riêng Ri6 Tuyển Chọn Loại Đặc Biệt",
-                    quantity=4000.0,
+                    quantity=Decimal("4000.0000"),
                     harvest_date=date(2026, 9, 29),
+                    batch_code=f"LOT-{f2:02d}-20260929-02",
+                    owner="farmer",
                 ),
                 Batch(
                     farm_id=f3,
                     product_name="Bưởi Da Xanh Đạt Chuẩn GlobalGAP",
-                    quantity=2800.0,
+                    quantity=Decimal("2800.0000"),
                     harvest_date=date(2026, 9, 27),
+                    batch_code=f"LOT-{f3:02d}-20260927-01",
+                    owner="farmer",
                 ),
                 Batch(
                     farm_id=f4,
                     product_name="Thanh Long Ruột Đỏ Hàng Chọn Xuất Khẩu",
-                    quantity=4100.0,
+                    quantity=Decimal("4100.0000"),
                     harvest_date=date(2026, 9, 29),
+                    batch_code=f"LOT-{f4:02d}-20260929-01",
+                    owner="farmer",
                 ),
                 Batch(
                     farm_id=f5,
                     product_name="Nhãn Lồng Hưng Yên Hương Chi Loại 1",
-                    quantity=1800.0,
+                    quantity=Decimal("1800.0000"),
                     harvest_date=date(2026, 9, 27),
+                    batch_code=f"LOT-{f5:02d}-20260927-01",
+                    owner="farmer",
                 ),
                 Batch(
                     farm_id=f6,
                     product_name="Bơ Booth 7 Đắk Lắk Trái To Đều",
-                    quantity=3200.0,
+                    quantity=Decimal("3200.0000"),
                     harvest_date=date(2026, 9, 28),
+                    batch_code=f"LOT-{f6:02d}-20260928-01",
+                    owner="farmer",
                 ),
                 Batch(
                     farm_id=f7,
                     product_name="Vải Thiều Lục Ngạn Chuẩn VietGAP Đóng Hộp",
-                    quantity=5000.0,
+                    quantity=Decimal("5000.0000"),
                     harvest_date=date(2026, 9, 26),
+                    batch_code=f"LOT-{f7:02d}-20260926-01",
+                    owner="farmer",
                 ),
                 Batch(
                     farm_id=f8,
                     product_name="Chè Ô Long Mộc Châu Búp Non Thu Hái Sớm",
-                    quantity=850.0,
+                    quantity=Decimal("850.0000"),
                     harvest_date=date(2026, 9, 30),
+                    batch_code=f"LOT-{f8:02d}-20260930-01",
+                    owner="farmer",
                 ),
             ]
             db.add_all(batches_data)
@@ -268,6 +289,65 @@ def seed_sample_agricultural_data() -> None:
         db.close()
 
 
+def seed_sample_batch_events() -> None:
+    """Tạo chuỗi 10 sự kiện chuẩn nối băm mật mã SHA-256 cho Lô nông sản #1 nếu chưa có."""
+    from app.models import Batch, BatchEvent
+    from app.event_chain import build_10_events_for_batch
+    from sqlalchemy import func
+
+    db: Session = SessionLocal()
+    try:
+        event_count = db.scalar(select(func.count()).select_from(BatchEvent)) or 0
+        if event_count == 0:
+            first_batch = db.query(Batch).order_by(Batch.id.asc()).first()
+            if first_batch:
+                build_10_events_for_batch(db, first_batch.id)
+    except SQLAlchemyError:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def migrate_batches_table() -> None:
+    """Tự động bổ sung các cột còn thiếu cho bảng batches (parent_id, is_restricted, batch_code, owner)."""
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        cols_result = conn.execute(text("PRAGMA table_info(batches)")).fetchall()
+        cols = [row[1] for row in cols_result]
+        if cols:
+            if "parent_id" not in cols:
+                conn.execute(text("ALTER TABLE batches ADD COLUMN parent_id INTEGER REFERENCES batches(id)"))
+            if "is_restricted" not in cols:
+                conn.execute(text("ALTER TABLE batches ADD COLUMN is_restricted BOOLEAN NOT NULL DEFAULT 0"))
+            if "batch_code" not in cols:
+                conn.execute(text("ALTER TABLE batches ADD COLUMN batch_code VARCHAR(100)"))
+            if "owner" not in cols:
+                conn.execute(text("ALTER TABLE batches ADD COLUMN owner VARCHAR(255)"))
+
+            # Gán mã lô mặc định cho các lô cũ nếu đang NULL
+            rows = conn.execute(text("SELECT id, farm_id, harvest_date FROM batches WHERE batch_code IS NULL")).fetchall()
+            for r in rows:
+                date_clean = str(r[2]).replace("-", "")
+                code = f"LOT-{r[1]:02d}-{date_clean}-{r[0]:02d}"
+                conn.execute(
+                    text("UPDATE batches SET batch_code = :code, owner = 'farmer' WHERE id = :id"),
+                    {"code": code, "id": r[0]},
+                )
+
+        # Đảm bảo bảng quan hệ phả hệ batch_relations (T-44 / T-46) tồn tại
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS batch_relations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+                child_batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+                used_quantity NUMERIC(12, 4) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_parent_child_batch UNIQUE (parent_batch_id, child_batch_id)
+            )
+        """))
+
+
 def init_db() -> None:
     """Tạo toàn bộ bảng trong database dựa trên metadata của các models.
 
@@ -275,12 +355,18 @@ def init_db() -> None:
 
     - ``Base.metadata.create_all()``: bảng chưa có thì tạo, bảng đã có thì
       giữ nguyên (không làm mất dữ liệu đang lưu).
+    - ``migrate_batches_table()``: tự động nâng cấp cấu trúc bảng batches nếu thiếu cột.
     - ``seed_default_users()``: tạo 2 tài khoản mặc định cho chức năng đăng nhập
       + phân quyền (Sprint 4).
     - ``seed_sample_agricultural_data()``: nạp dữ liệu mẫu về thửa đất và lô nông sản.
+    - ``seed_sample_batch_events()``: nạp 10 sự kiện chuẩn chuỗi lạnh cho lô đầu tiên.
     """
     from app import models  # noqa: F401  (import để đăng ký metadata)
 
     Base.metadata.create_all(bind=engine)
+    migrate_batches_table()
     seed_default_users()
     seed_sample_agricultural_data()
+    seed_sample_batch_events()
+
+
