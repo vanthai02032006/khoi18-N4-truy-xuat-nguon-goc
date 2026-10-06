@@ -83,6 +83,11 @@ class LoginResponse(BaseModel):
         description="Vai trò của tài khoản: `admin` (toàn quyền) hoặc `farmer` (nông dân).",
         examples=["admin", "farmer"],
     )
+    organization_id: str | None = Field(
+        default=None,
+        description="Tổ chức / đơn vị của tài khoản.",
+        examples=["ORG_ADMIN", "ORG_MY_XUONG"],
+    )
 
 
 class UserResponse(BaseModel):
@@ -94,12 +99,17 @@ class UserResponse(BaseModel):
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"example": {"id": 1, "username": "admin", "role": "admin"}},
+        json_schema_extra={"example": {"id": 1, "username": "admin", "role": "admin", "organization_id": "ORG_ADMIN"}},
     )
 
     id: int = Field(..., description="Mã định danh tài khoản.", examples=[1])
     username: str = Field(..., description="Tên đăng nhập.", examples=["admin"])
     role: str = Field(..., description="Vai trò: `admin` hoặc `farmer`.", examples=["admin"])
+    organization_id: str | None = Field(
+        default=None,
+        description="Tổ chức / đơn vị của tài khoản.",
+        examples=["ORG_ADMIN"],
+    )
 
 
 # ------------------------------------------------------------------ Farm ---
@@ -259,21 +269,20 @@ class BatchCreate(BaseModel):
         description="Ngày thu hoạch, định dạng yyyy-MM-dd.",
         examples=["2026-01-15"],
     )
+    organization_id: str | None = Field(
+        default=None,
+        max_length=50,
+        description="Tổ chức nắm giữ lô (tuỳ chọn, mặc định lấy theo tài khoản tạo).",
+        examples=["ORG_MY_XUONG"],
+    )
 
 
 class BatchUpdate(BatchCreate):
     """Dữ liệu client gửi lên khi **sửa** lô nông sản (``PUT /batches/{batch_id}``).
 
     Kế thừa ``BatchCreate`` (dùng lại validate: ``farm_id`` > 0, ``quantity`` > 0,
-    ``harvest_date`` đúng định dạng ISO). Client gửi **đầy đủ 4 trường**; router
+    ``harvest_date`` đúng định dạng ISO). Client gửi **đầy đủ các trường**; router
     trả ``404`` nếu lô hoặc ``farm_id`` mới không tồn tại.
-
-    Lưu ý: đổi ``farm_id`` = chuyển lô sang vùng trồng khác (vẫn phải tồn tại).
-
-    Ví dụ::
-
-        {"farm_id": 1, "product_name": "Xoài cát Chu", "quantity": 150,
-         "harvest_date": "2026-01-16"}
     """
 
     model_config = ConfigDict(
@@ -302,8 +311,126 @@ class BatchResponse(BaseModel):
     id: int = Field(..., description="Mã định danh lô nông sản.", examples=[1])
     farm_id: int = Field(..., description="ID vùng trồng xuất xứ.", examples=[1])
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
-    quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
+    quantity: float = Field(..., description="Số lượng / khối lượng ban đầu (kg).")
+    remaining_quantity: float = Field(
+        default=0.0,
+        description="Số lượng tồn còn lại sau khi xuất/gộp (kg).",
+    )
     harvest_date: date = Field(..., description="Ngày thu hoạch.")
+    organization_id: str | None = Field(
+        default=None,
+        description="Tổ chức hiện đang nắm giữ lô nông sản.",
+    )
+
+
+# -------------------------------------------------------- Batch Merge & Genealogy ---
+class ParentBatchItem(BaseModel):
+    """Một lô mẹ được trích số lượng để gộp vào lô con (SCRUM-60)."""
+
+    parent_batch_id: int = Field(
+        ...,
+        gt=0,
+        description="ID lô mẹ cần lấy số lượng.",
+        examples=[1],
+    )
+    used_quantity: float = Field(
+        ...,
+        gt=0,
+        description="Số lượng lấy từ lô mẹ (kg). Phải lớn hơn 0 và không vượt quá tồn.",
+        examples=[50.0],
+    )
+
+
+class BatchMergeRequest(BaseModel):
+    """Dữ liệu yêu cầu thực hiện giao dịch gộp lô (SCRUM-60)."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "parents": [
+                    {"parent_batch_id": 1, "used_quantity": 50.0},
+                    {"parent_batch_id": 2, "used_quantity": 80.0},
+                ],
+                "product_name": "Lô Xoài Cát Chu Chọn Lọc (Gộp Đợt 1)",
+                "farm_id": 1,
+                "harvest_date": "2026-09-30",
+            }
+        }
+    )
+
+    parents: list[ParentBatchItem] = Field(
+        ...,
+        min_length=2,
+        description="Danh sách các lô mẹ (tối thiểu 2 lô mẹ để gộp).",
+    )
+    product_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Tên sản phẩm cho lô mới hình thành.",
+        examples=["Lô Xoài Cát Chu Chọn Lọc (Gộp Đợt 1)"],
+    )
+    farm_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="ID vùng trồng cho lô mới (nếu không cung cấp sẽ kế thừa từ lô mẹ đầu tiên).",
+    )
+    harvest_date: date = Field(
+        ...,
+        description="Ngày gộp / tạo lô mới, định dạng yyyy-MM-dd.",
+        examples=["2026-09-30"],
+    )
+    organization_id: str | None = Field(
+        default=None,
+        max_length=50,
+        description="Tổ chức nắm giữ lô mới (mặc định lấy theo tài khoản đăng nhập).",
+    )
+
+
+class BatchRelationResponse(BaseModel):
+    """Thông tin quan hệ cha-con phả hệ giữa các lô."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(..., description="Mã quan hệ.")
+    parent_batch_id: int = Field(..., description="ID lô mẹ.")
+    child_batch_id: int = Field(..., description="ID lô con.")
+    used_quantity: float = Field(..., description="Khối lượng đã lấy từ lô mẹ (kg).")
+
+
+class ParentRemainingResponse(BaseModel):
+    """Khối lượng còn lại của từng lô mẹ sau khi hoàn tất giao dịch gộp."""
+
+    parent_batch_id: int = Field(..., description="ID lô mẹ.")
+    remaining_quantity: float = Field(..., description="Khối lượng còn lại sau khi trừ (kg).")
+
+
+class BatchMergeResponse(BaseModel):
+    """Kết quả trả về sau khi giao dịch gộp lô thành công trong database transaction."""
+
+    new_batch: BatchResponse = Field(..., description="Thông tin lô con mới được tạo.")
+    relations: list[BatchRelationResponse] = Field(
+        ...,
+        description="Danh sách các quan hệ phả hệ parent-child đã lưu vết.",
+    )
+    parent_remainings: list[ParentRemainingResponse] = Field(
+        ...,
+        description="Khối lượng tồn còn lại của từng lô mẹ.",
+    )
+
+
+class BatchDetailResponse(BatchResponse):
+    """Chi tiết đầy đủ của một lô nông sản, kèm cây phả hệ cha và con (SCRUM-50 / SCRUM-70)."""
+
+    parent_relations: list[BatchRelationResponse] = Field(
+        default_factory=list,
+        description="Danh sách các lô mẹ mà lô này kế thừa từ đó.",
+    )
+    child_relations: list[BatchRelationResponse] = Field(
+        default_factory=list,
+        description="Danh sách các lô con được tách hoặc gộp từ lô này.",
+    )
+
 
 
 # ----------------------------------------------------------------- Chung ---

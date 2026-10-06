@@ -397,30 +397,86 @@
 
         <div class="table-container">
           <div class="table-subhead">
-            <span class="table-heading">Danh sách các lô cây trồng & nông sản thu hoạch</span>
-            <span class="table-tag">Gắn nhãn truy xuất</span>
+            <div>
+              <span class="table-heading">Danh sách các lô cây trồng & nông sản thu hoạch</span>
+              <p class="table-instruction">Nhấp vào bất kỳ dòng nào hoặc nút <strong>Xem</strong> để mở chi tiết phả hệ và kiểm định nguồn gốc.</p>
+            </div>
+            <span class="table-tag">Gắn nhãn truy xuất & Phân quyền</span>
           </div>
+
+          <!-- Thanh tìm kiếm và bộ lọc sản phẩm (SCRUM-50) -->
+          <div class="table-toolbar">
+            <div class="search-box">
+              <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input id="batch-search-input" type="search" class="search-input"
+                     placeholder="Tìm theo mã lô (VD: 1, 2) hoặc tên cây trồng / sản phẩm..."
+                     autocomplete="off" />
+              <button id="batch-search-clear" type="button" class="btn-clear-search" title="Xoá ô tìm kiếm" hidden>&times;</button>
+            </div>
+
+            <div class="filter-box">
+              <label for="batch-filter-product" class="filter-label">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                <span>Bộ lọc sản phẩm:</span>
+              </label>
+              <select id="batch-filter-product" class="filter-select">
+                <option value="">— Tất cả sản phẩm nông sản —</option>
+              </select>
+            </div>
+
+            <button id="btn-reset-filters" type="button" class="btn-reset-filter" title="Đặt lại bộ lọc" hidden>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              <span>Đặt lại</span>
+            </button>
+          </div>
+
+          <!-- Loading State (SCRUM-50) -->
+          <div id="batch-loading" class="table-state-box table-state-loading" hidden>
+            <div class="spinner-ring" aria-hidden="true"></div>
+            <span>Đang tải danh sách lô nông sản từ máy chủ...</span>
+          </div>
+
+          <!-- Error State (SCRUM-50) -->
+          <div id="batch-error" class="table-state-box table-state-error" hidden>
+            <div class="error-icon-wrap" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <div class="error-content">
+              <strong id="batch-error-title">Không thể tải danh sách lô</strong>
+              <p id="batch-error-desc">Vui lòng kiểm tra kết nối mạng hoặc thử lại.</p>
+            </div>
+            <button id="batch-btn-retry" type="button" class="btn-retry">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              <span>Thử lại</span>
+            </button>
+          </div>
+
+          <!-- Results Table -->
           <div class="responsive-table">
-            <table class="data-table">
+            <table class="data-table data-table--clickable">
               <thead>
                 <tr>
-                  <th style="width: 80px;">MÃ LÔ</th>
+                  <th style="width: 70px;">MÃ LÔ</th>
                   <th>THỬA ĐẤT XUẤT XỨ</th>
                   <th>CÂY TRỒNG / NÔNG SẢN</th>
-                  <th class="is-right" style="width: 160px;">SẢN LƯỢNG (KG)</th>
-                  <th style="width: 140px;">NGÀY THU HOẠCH</th>
-                  <th class="is-center" style="width: 160px;">THAO TÁC</th>
+                  <th class="is-right" style="width: 140px;">SẢN LƯỢNG (KG)</th>
+                  <th class="is-right" style="width: 140px;">CÒN LẠI (KG)</th>
+                  <th style="width: 130px;">TỔ CHỨC GIỮ</th>
+                  <th style="width: 120px;">NGÀY THU HOẠCH</th>
+                  <th class="is-center" style="width: 170px;">THAO TÁC</th>
                 </tr>
               </thead>
               <tbody id="batch-table-body"></tbody>
             </table>
           </div>
+
+          <!-- Empty State (SCRUM-50) -->
           <div id="batch-empty" class="empty-placeholder" hidden>
             <div class="empty-icon-wrap">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
             </div>
-            <h4>Chưa có lô thu hoạch nào</h4>
-            <p>Vui lòng ghi nhận lô thu hoạch mới bằng biểu mẫu phía trên.</p>
+            <h4 id="batch-empty-title">Không tìm thấy lô nông sản nào</h4>
+            <p id="batch-empty-desc">Không có kết quả nào phù hợp với từ khoá tìm kiếm hoặc bộ lọc hiện tại.</p>
           </div>
         </div>
       </section>
@@ -449,7 +505,7 @@
                   <th style="width: 80px;">ID</th>
                   <th>TÊN TÀI KHOẢN</th>
                   <th>VAI TRÒ (ROLE)</th>
-                  <th>TRẠNG THÁI BẢO MẬT</th>
+                  <th>TỔ CHỨC TRỰC THUỘC</th>
                 </tr>
               </thead>
               <tbody id="user-table-body"></tbody>
@@ -461,6 +517,102 @@
         </div>
       </section>
     </div>
+
+    <!-- ==================== MODAL CHI TIẾT LÔ (SCRUM-50) ==================== -->
+    <div id="batch-modal" class="modal-overlay" hidden aria-hidden="true" role="dialog" aria-modal="true">
+      <div class="modal-dialog">
+        <header class="modal-header">
+          <div class="modal-header__info">
+            <span class="tag-section">Chi tiết lô & Phả hệ truy xuất (SCRUM-50 / SCRUM-70)</span>
+            <h3 id="modal-batch-title" class="modal-title">Thông tin lô nông sản #...</h3>
+          </div>
+          <button id="modal-batch-close" class="modal-close" type="button" title="Đóng modal">&times;</button>
+        </header>
+
+        <div class="modal-body">
+          <div id="modal-batch-loading" class="table-state-box table-state-loading" hidden>
+            <div class="spinner-ring"></div>
+            <span>Đang tải thông tin chi tiết lô...</span>
+          </div>
+
+          <div id="modal-batch-content">
+            <!-- Grid thông tin thuộc tính -->
+            <div class="detail-grid">
+              <div class="detail-item">
+                <span class="detail-label">Mã định danh lô:</span>
+                <strong id="modal-batch-id" class="detail-value font-mono">—</strong>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Cây trồng / Nông sản:</span>
+                <strong id="modal-batch-product" class="detail-value">—</strong>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Thửa đất xuất xứ:</span>
+                <span id="modal-batch-farm" class="detail-value">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Tổ chức nắm giữ:</span>
+                <span id="modal-batch-org" class="detail-value badge-pill">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Sản lượng ban đầu:</span>
+                <span id="modal-batch-qty" class="detail-value">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Số lượng tồn còn lại:</span>
+                <strong id="modal-batch-rem" class="detail-value text-safe">—</strong>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Ngày thu hoạch / Gộp:</span>
+                <span id="modal-batch-date" class="detail-value">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Tiêu chuẩn canh tác:</span>
+                <span class="detail-value badge-pill badge-pill--safe">VietGAP Chứng Nhận</span>
+              </div>
+            </div>
+
+            <!-- Phả hệ nguồn gốc (Genealogy) -->
+            <div class="genealogy-section">
+              <h4 class="genealogy-heading">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                <span>Cây phả hệ nguồn gốc (Genealogy Tree)</span>
+              </h4>
+
+              <div class="genealogy-content">
+                <div class="genealogy-block">
+                  <span class="g-label">Lô mẹ kế thừa (Parent Batches):</span>
+                  <div id="modal-parent-relations" class="g-list">
+                    <span class="text-muted">Lô gốc thu hoạch trực tiếp từ thửa đất (Root Batch)</span>
+                  </div>
+                </div>
+
+                <div class="genealogy-block">
+                  <span class="g-label">Lô con sinh ra từ lô này (Child Batches):</span>
+                  <div id="modal-child-relations" class="g-list">
+                    <span class="text-muted">Chưa có lô con phái sinh</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Mã băm kiểm định SHA-256 (SCRUM-40) -->
+            <div class="hash-section">
+              <div class="hash-header">
+                <span class="g-label">Mã băm kiểm định tính bất biến (SHA-256 Canonical Hash):</span>
+                <span class="badge-pill badge-pill--mono">SCRUM-40</span>
+              </div>
+              <code id="modal-batch-hash" class="hash-display">—</code>
+            </div>
+          </div>
+        </div>
+
+        <footer class="modal-footer">
+          <button id="modal-batch-btn-close" type="button" class="btn-action-ghost">Đóng</button>
+        </footer>
+      </div>
+    </div>
+
   </main>
 
   <!-- Page Footer -->

@@ -94,15 +94,17 @@ def seed_default_users() -> None:
     from app.security import hash_password
 
     default_users: tuple[dict[str, str], ...] = (
-        {"username": "admin", "password": "123456", "role": ROLE_ADMIN},
-        {"username": "farmer", "password": "123456", "role": ROLE_FARMER},
+        {"username": "admin", "password": "123456", "role": ROLE_ADMIN, "organization_id": "ORG_ADMIN"},
+        {"username": "farmer", "password": "123456", "role": ROLE_FARMER, "organization_id": "ORG_MY_XUONG"},
     )
 
     db: Session = SessionLocal()
     try:
         for item in default_users:
-            exists = db.scalar(select(User).where(User.username == item["username"]))
-            if exists is not None:
+            user = db.scalar(select(User).where(User.username == item["username"]))
+            if user is not None:
+                if user.organization_id is None:
+                    user.organization_id = item["organization_id"]
                 continue  # tài khoản đã có -> giữ nguyên, không ghi đè
 
             db.add(
@@ -110,6 +112,7 @@ def seed_default_users() -> None:
                     username=item["username"],
                     password=hash_password(item["password"]),
                     role=item["role"],
+                    organization_id=item["organization_id"],
                 )
             )
         db.commit()
@@ -260,12 +263,57 @@ def seed_sample_agricultural_data() -> None:
                     harvest_date=date(2026, 9, 30),
                 ),
             ]
+            for b in batches_data:
+                b.remaining_quantity = b.quantity
+                b.organization_id = "ORG_MY_XUONG"
+
             db.add_all(batches_data)
+            db.commit()
+
+            # Nạp lịch sử nắm giữ ban đầu cho các batch mẫu
+            from app.models import BatchCustodyHistory
+            custody_records = [
+                BatchCustodyHistory(batch_id=b.id, organization_id=b.organization_id or "ORG_MY_XUONG")
+                for b in batches_data
+            ]
+            db.add_all(custody_records)
             db.commit()
     except SQLAlchemyError:
         db.rollback()
     finally:
         db.close()
+
+
+def run_schema_migrations() -> None:
+    """Tự động di chuyển (migration) cấu trúc CSDL cho các cột mới nếu đã có file SQLite cũ.
+
+    Không xóa dữ liệu hiện có:
+    - Bảng batches: bổ sung `remaining_quantity` và `organization_id` nếu chưa có.
+    - Bảng users: bổ sung `organization_id` nếu chưa có.
+    """
+    from sqlalchemy import inspect, text
+
+    with engine.connect() as conn:
+        inspector = inspect(conn)
+        existing_tables = inspector.get_table_names()
+
+        if "batches" in existing_tables:
+            batch_cols = [c["name"] for c in inspector.get_columns("batches")]
+            if "remaining_quantity" not in batch_cols:
+                conn.execute(text("ALTER TABLE batches ADD COLUMN remaining_quantity FLOAT DEFAULT 0.0"))
+                conn.execute(text("UPDATE batches SET remaining_quantity = quantity WHERE remaining_quantity IS NULL OR remaining_quantity = 0"))
+            if "organization_id" not in batch_cols:
+                conn.execute(text("ALTER TABLE batches ADD COLUMN organization_id VARCHAR(50)"))
+                conn.execute(text("UPDATE batches SET organization_id = 'ORG_MY_XUONG' WHERE organization_id IS NULL"))
+
+        if "users" in existing_tables:
+            user_cols = [c["name"] for c in inspector.get_columns("users")]
+            if "organization_id" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN organization_id VARCHAR(50)"))
+                conn.execute(text("UPDATE users SET organization_id = 'ORG_ADMIN' WHERE username = 'admin'"))
+                conn.execute(text("UPDATE users SET organization_id = 'ORG_MY_XUONG' WHERE username = 'farmer'"))
+
+        conn.commit()
 
 
 def init_db() -> None:
@@ -275,6 +323,7 @@ def init_db() -> None:
 
     - ``Base.metadata.create_all()``: bảng chưa có thì tạo, bảng đã có thì
       giữ nguyên (không làm mất dữ liệu đang lưu).
+    - ``run_schema_migrations()``: cập nhật cột mới cho database hiện có.
     - ``seed_default_users()``: tạo 2 tài khoản mặc định cho chức năng đăng nhập
       + phân quyền (Sprint 4).
     - ``seed_sample_agricultural_data()``: nạp dữ liệu mẫu về thửa đất và lô nông sản.
@@ -282,5 +331,6 @@ def init_db() -> None:
     from app import models  # noqa: F401  (import để đăng ký metadata)
 
     Base.metadata.create_all(bind=engine)
+    run_schema_migrations()
     seed_default_users()
     seed_sample_agricultural_data()
