@@ -88,9 +88,4 @@ jobs:
       # 5. Unit test & Test Coverage (DoD: Unit test cho nhánh logic mới; độ phủ không giảm)
       - name: Run Unit Tests & Check Coverage (pytest)
         run: |
-          if [ -d backend/tests ] && [ $(find backend/tests -name "test_*.py" | wc -l) -gt 0 ]; then
-            PYTHONPATH=. pytest backend/tests -v --cov=backend/app --cov-report=term-missing
-          else
-            echo "Chưa có file test trong backend/tests, kiểm tra import và cấu trúc backend/app..."
-            PYTHONPATH=. python -c "import backend.app.main; print('Build & Import backend app OK')"
-          fi
+          PYTHONPATH=backend pytest backend/tests -v
