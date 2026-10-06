@@ -16,9 +16,9 @@ Mọi model đều kế thừa ``Base`` và bảng sẽ được ``init_db()`` t
 ở ``app/main.py``) - không cần chạy script SQL thủ công.
 """
 
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import Date, Float, ForeignKey, Integer, String
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -58,7 +58,7 @@ class Farm(Base):
 
 
 class Batch(Base):
-    """Lô nông sản thu hoạch từ một vùng trồng.
+    """Lô nông sản thu hoạch từ một vùng trồng hoặc tạo từ giao dịch gộp (SCRUM-60).
 
     Quan hệ: ``Farm 1 ---- N Batch``.
 
@@ -66,8 +66,10 @@ class Batch(Base):
         id: Khoá chính, tự tăng.
         farm_id: Khoá ngoại trỏ tới ``farms.id`` (vùng trồng xuất xứ).
         product_name: Tên sản phẩm của lô (ví dụ: "Xoài cát Chu").
-        quantity: Số lượng / khối lượng của lô, đơn vị kg.
-        harvest_date: Ngày thu hoạch.
+        quantity: Số lượng / khối lượng ban đầu của lô, đơn vị kg.
+        remaining_quantity: Khối lượng tồn còn lại sau khi xuất hoặc gộp lô (SCRUM-60).
+        harvest_date: Ngày thu hoạch hoặc ngày gộp lô.
+        organization_id: Mã tổ chức / đơn vị hiện đang nắm giữ lô (SCRUM-70).
         farm: Đối tượng ``Farm`` tương ứng (chiều N-1 của quan hệ).
     """
 
@@ -82,22 +84,89 @@ class Batch(Base):
     )
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    remaining_quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     harvest_date: Mapped[date] = mapped_column(Date, nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None, index=True)
 
     # Quan hệ N-1: nhiều lô có thể thuộc về một vùng trồng.
     farm: Mapped["Farm"] = relationship(back_populates="batches")
 
+    # Quan hệ phả hệ (Genealogy) - SCRUM-60
+    parent_relations: Mapped[list["BatchRelation"]] = relationship(
+        "BatchRelation",
+        foreign_keys="[BatchRelation.child_batch_id]",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    child_relations: Mapped[list["BatchRelation"]] = relationship(
+        "BatchRelation",
+        foreign_keys="[BatchRelation.parent_batch_id]",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return (
             f"<Batch id={self.id} farm_id={self.farm_id} "
-            f"product_name={self.product_name!r}>"
+            f"product_name={self.product_name!r} remaining={self.remaining_quantity}>"
         )
 
 
+class BatchRelation(Base):
+    """Bảng quan hệ cha - con (Genealogy / Phả hệ lô hàng) - SCRUM-60.
+
+    Lưu vết các lô mẹ (parent) gộp thành lô con (child) và khối lượng lấy từ mỗi lô mẹ.
+    """
+
+    __tablename__ = "batch_relations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    parent_batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    child_batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    used_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("parent_batch_id", "child_batch_id", name="uq_parent_child_batch"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<BatchRelation parent_id={self.parent_batch_id} -> child_id={self.child_batch_id} "
+            f"used={self.used_quantity}kg>"
+        )
+
+
+class BatchCustodyHistory(Base):
+    """Lịch sử nắm giữ lô của tổ chức (Custody / Ownership History) - SCRUM-70.
+
+    Dùng để kiểm tra quyền: tổ chức hiện tại đang giữ hoặc từng giữ lô nông sản.
+    """
+
+    __tablename__ = "batch_custody_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<BatchCustodyHistory batch_id={self.batch_id} org={self.organization_id}>"
+
+
 # ------------------------------------------------------------- Vai trò ---
-# Khai báo thành hằng số để không phải gõ chuỗi "admin"/"farmer" rải rác
-# trong code (tránh lỗi gõ sai, chỉ cần đổi giá trị ở một chỗ nếu sau này
-# muốn thêm vai trò mới như "inspector" hay "retailer").
 ROLE_ADMIN: str = "admin"
 ROLE_FARMER: str = "farmer"
 ROLES: tuple[str, ...] = (ROLE_ADMIN, ROLE_FARMER)
@@ -118,6 +187,7 @@ class User(Base):
             lưu mật khẩu dạng thô, và API cũng không bao giờ trả cột này ra.
         role: Vai trò của tài khoản: ``"admin"`` (quản trị - toàn quyền) hoặc
             ``"farmer"`` (nông dân - quản lý nông sản).
+        organization_id: Tổ chức mà tài khoản này trực thuộc (SCRUM-70).
     """
 
     __tablename__ = "users"
@@ -129,21 +199,23 @@ class User(Base):
         unique=True,
         index=True,
     )
-    # 64 ký tự là độ dài chuỗi hex của SHA-256 (xem `hash_password`).
     password: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default=ROLE_FARMER)
+    organization_id: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None, index=True)
 
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
-        # Không in `password` để tránh lộ mật khẩu đã băm ra log.
-        return f"<User id={self.id} username={self.username!r} role={self.role}>"
+        return f"<User id={self.id} username={self.username!r} role={self.role} org={self.organization_id}>"
 
 
 __all__ = [
     "Base",
     "Batch",
+    "BatchCustodyHistory",
+    "BatchRelation",
     "Farm",
     "ROLE_ADMIN",
     "ROLE_FARMER",
     "ROLES",
     "User",
 ]
+
