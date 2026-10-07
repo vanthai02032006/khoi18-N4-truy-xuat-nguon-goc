@@ -330,9 +330,7 @@ def _migrate_sqlite_schema() -> None:
             if existing_cols:
                 if "batch_code" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN batch_code VARCHAR(50)")
-                    batches = conn.exec_driver_sql("SELECT id FROM batches").fetchall()
-                    for (b_id,) in batches:
-                        conn.exec_driver_sql(f"UPDATE batches SET batch_code = 'LOT-00{b_id}' WHERE id = {b_id}")
+                conn.exec_driver_sql("UPDATE batches SET batch_code = printf('LOT-%04d', id) WHERE batch_code IS NULL OR batch_code NOT LIKE 'LOT-%'")
                 if "current_holder_org" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN current_holder_org VARCHAR(100) DEFAULT 'HTX Nông Nghiệp Số 4'")
                 if "pending_receiver_org" not in existing_cols:

@@ -169,13 +169,22 @@ def list_batches(
 
     # Tìm kiếm theo tên sản phẩm, mã lô (batch_code), hoặc ID (không phân biệt chữ thường chữ hoa)
     if search:
+        import re
         search_term = search.strip()
-        search_filter = or_(
+        conditions = [
             Batch.product_name.ilike(f"%{search_term}%"),
             Batch.batch_code.ilike(f"%{search_term}%"),
             cast(Batch.id, String).ilike(f"%{search_term}%"),
-        )
-        stmt = stmt.where(search_filter)
+        ]
+        digits = re.findall(r"\d+", search_term)
+        if digits:
+            try:
+                num_id = int(digits[-1])
+                conditions.append(Batch.id == num_id)
+                conditions.append(Batch.batch_code.ilike(f"LOT-%{num_id:04d}%"))
+            except ValueError:
+                pass
+        stmt = stmt.where(or_(*conditions))
 
     # Phân trang con trỏ (keyset cursor)
     if cursor:
