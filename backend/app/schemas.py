@@ -348,3 +348,37 @@ class DeleteResponse(BaseModel):
         ),
         examples=[2],
     )
+
+
+# ----------------------------------------------------------- Batch Events ---
+class BatchEventCreate(BaseModel):
+    """Dữ liệu ghi thêm sự kiện vào lô hàng (SCRUM-39)."""
+
+    event_type: str = Field(..., description="Loại sự kiện (HARVEST, PROCESSING, HANDOVER, SPLIT, MERGE).", examples=["HARVEST"])
+    payload: str = Field(..., description="Dữ liệu chi tiết sự kiện dạng JSON canonical.", examples=['{"weight": 500, "note": "Thu hoach buoi sang"}'])
+    organization: str = Field(default="HTX Nông Nghiệp Số 4", description="Tên tổ chức ghi nhận.")
+
+
+class BatchEventResponse(BaseModel):
+    """Thông tin một sự kiện trong chuỗi bản ghi."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int
+    event_type: str
+    payload: str
+    actor: str
+    organization: str
+    timestamp: str
+    hash: str
+    previous_hash: str
+
+
+class BatchTimelineResponse(BaseModel):
+    """Dòng thời gian sự kiện của một lô hàng kèm trạng thái tính toàn vẹn."""
+
+    batch_id: int
+    is_valid: bool = Field(..., description="True nếu toàn bộ chuỗi mã băm toàn vẹn, False nếu bị can thiệp sửa lén.")
+    tampered_index: int | None = Field(None, description="Vị trí sự kiện đầu tiên bị sai lệch nếu có.")
+    events: list[BatchEventResponse]
