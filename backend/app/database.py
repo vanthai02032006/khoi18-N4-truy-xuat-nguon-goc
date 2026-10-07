@@ -321,6 +321,27 @@ def seed_default_thresholds() -> None:
         db.close()
 
 
+def _migrate_sqlite_schema() -> None:
+    """Tự động bổ sung các cột mới vào SQLite nếu database đã tồn tại từ trước."""
+    try:
+        with engine.connect() as conn:
+            cursor = conn.exec_driver_sql("PRAGMA table_info(batches)").fetchall()
+            existing_cols = {row[1] for row in cursor}
+            if existing_cols:
+                if "batch_code" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN batch_code VARCHAR(50)")
+                    batches = conn.exec_driver_sql("SELECT id FROM batches").fetchall()
+                    for (b_id,) in batches:
+                        conn.exec_driver_sql(f"UPDATE batches SET batch_code = 'LOT-00{b_id}' WHERE id = {b_id}")
+                if "current_holder_org" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN current_holder_org VARCHAR(100) DEFAULT 'HTX Nông Nghiệp Số 4'")
+                if "pending_receiver_org" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN pending_receiver_org VARCHAR(100)")
+            conn.commit()
+    except Exception:
+        pass
+
+
 def init_db() -> None:
     """Tạo toàn bộ bảng trong database dựa trên metadata của các models.
 
@@ -336,6 +357,7 @@ def init_db() -> None:
     from app import models  # noqa: F401  (import để đăng ký metadata)
 
     Base.metadata.create_all(bind=engine)
+    _migrate_sqlite_schema()
     seed_default_users()
     seed_sample_agricultural_data()
     seed_default_thresholds()
