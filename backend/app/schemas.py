@@ -7,7 +7,7 @@ Tách riêng schemas (Pydantic) khỏi models (SQLAlchemy) giúp:
 
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class HealthResponse(BaseModel):
@@ -157,6 +157,13 @@ class FarmCreate(BaseModel):
         examples=["Hợp tác xã Xoài Mỹ Xương"],
     )
 
+    @field_validator("area")
+    @classmethod
+    def validate_area_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Diện tích thửa đất phải lớn hơn 0 ha (không được âm hoặc bằng 0).")
+        return v
+
 
 class FarmUpdate(FarmCreate):
     """Dữ liệu client gửi lên khi **sửa** vùng trồng (``PUT /farms/{farm_id}``).
@@ -210,6 +217,7 @@ class FarmResponse(BaseModel):
 # ----------------------------------------------------------------- Batch ---
 _BATCH_EXAMPLE: dict = {
     "id": 1,
+    "code": "7X9KM2RP",
     "farm_id": 1,
     "product_name": "Xoài cát Chu",
     "quantity": 120.5,
@@ -222,6 +230,7 @@ class BatchCreate(BaseModel):
 
     ``farm_id`` phải trỏ tới một vùng trồng **đã tồn tại** — router sẽ trả
     ``404 Not Found`` nếu không tìm thấy.
+    Mã lô 8 ký tự (``code``) được hệ thống tự động sinh ngẫu nhiên an toàn nếu client để trống.
     """
 
     model_config = ConfigDict(
@@ -235,6 +244,13 @@ class BatchCreate(BaseModel):
         },
     )
 
+    code: str | None = Field(
+        None,
+        min_length=8,
+        max_length=8,
+        description="Mã định danh lô hàng 8 ký tự (tự động sinh an toàn nếu để trống - T-18 / SCRUM-34).",
+        examples=["7X9KM2RP"],
+    )
     farm_id: int = Field(
         ...,
         gt=0,
@@ -300,10 +316,13 @@ class BatchResponse(BaseModel):
     )
 
     id: int = Field(..., description="Mã định danh lô nông sản.", examples=[1])
+    code: str = Field(..., description="Mã truy xuất nguồn gốc 8 ký tự duy nhất (T-18 / SCRUM-34).", examples=["7X9KM2RP"])
     farm_id: int = Field(..., description="ID vùng trồng xuất xứ.", examples=[1])
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
     quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
     harvest_date: date = Field(..., description="Ngày thu hoạch.")
+    status: str = Field(default="ACTIVE", description="Trạng thái hiện tại của lô (ACTIVE, PENDING_HANDOVER, HANDED_OVER, SPLIT, MERGED).", examples=["ACTIVE"])
+
 
 
 # ----------------------------------------------------------------- Chung ---
@@ -382,3 +401,188 @@ class BatchTimelineResponse(BaseModel):
     is_valid: bool = Field(..., description="True nếu toàn bộ chuỗi mã băm toàn vẹn, False nếu bị can thiệp sửa lén.")
     tampered_index: int | None = Field(None, description="Vị trí sự kiện đầu tiên bị sai lệch nếu có.")
     events: list[BatchEventResponse]
+
+
+# ----------------------------------------------------------- Inspection Audit ---
+class InspectionResultResponse(BaseModel):
+    """Kết quả thẩm định tính toàn vẹn của lô hàng dành cho cán bộ kiểm tra (T-28 / SCRUM-44)."""
+
+    batch_id: int = Field(..., description="ID định danh số của lô nông sản.")
+    batch_code: str = Field(..., description="Mã truy xuất 8 ký tự của lô nông sản.")
+    product_name: str = Field(..., description="Tên sản phẩm của lô nông sản.")
+    is_valid: bool = Field(..., description="True nếu toàn bộ chuỗi sự kiện nguyên vẹn, False nếu bị can thiệp.")
+    error_type: str | None = Field(None, description="Loại lỗi (TAMPERED_PAYLOAD, BROKEN_CHAIN, NO_EVENTS).")
+    tampered_index: int | None = Field(None, description="Vị trí (chỉ số 0-based) sự kiện bị sai lệch nếu phát hiện.")
+    tampered_event_id: int | None = Field(None, description="ID sự kiện bị can thiệp nếu phát hiện.")
+    details: str = Field(..., description="Mô tả kết quả hoặc chi tiết lỗi vi phạm.")
+    inspector: str = Field(..., description="Tên tài khoản cán bộ kiểm tra.")
+    timestamp: str = Field(..., description="Thời điểm thực hiện kiểm định (ISO 8601).")
+    total_events: int = Field(..., description="Tổng số sự kiện trong chuỗi.")
+    events: list[BatchEventResponse] = Field(default_factory=list, description="Danh sách các sự kiện trong chuỗi.")
+
+
+class InspectionLogResponse(BaseModel):
+    """Bản ghi nhật ký kiểm định lưu vết để đối chiếu về sau (T-28 / SCRUM-44)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int
+    batch_code: str
+    inspector: str
+    timestamp: str
+    is_valid: bool
+    error_type: str | None = None
+    tampered_index: int | None = None
+    details: str
+
+
+# ----------------------------------------------------------- Batch Lineage (T-37 / SCRUM-53) ---
+class BatchLineageCreate(BaseModel):
+    """Dữ liệu khai báo quan hệ phân tách (SPLIT) hoặc sáp nhập (MERGE) giữa các lô hàng."""
+
+    parent_batch_id: int = Field(..., gt=0, description="ID lô cha xuất xứ.")
+    child_batch_id: int = Field(..., gt=0, description="ID lô con tiếp nhận.")
+    transferred_quantity: float = Field(..., gt=0, description="Khối lượng chuyển từ cha sang con (kg).")
+    relation_type: str = Field(..., pattern="^(SPLIT|MERGE)$", description="Loại quan hệ: 'SPLIT' (tách) hoặc 'MERGE' (gộp).", examples=["SPLIT", "MERGE"])
+
+
+class BatchLineageResponse(BaseModel):
+    """Thông tin một bản ghi quan hệ phả hệ lô hàng."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    parent_batch_id: int
+    child_batch_id: int
+    transferred_quantity: float
+    relation_type: str
+    created_at: str
+
+
+class BatchGenealogyNode(BaseModel):
+    """Nút thông tin lô hàng trong cây phả hệ."""
+
+    batch_id: int
+    batch_code: str
+    product_name: str
+    transferred_quantity: float
+    relation_type: str
+    created_at: str
+
+
+class BatchGenealogyResponse(BaseModel):
+    """Toàn bộ phả hệ truy ngược (Parents) và truy xuôi (Children) của lô hàng."""
+
+    target_batch_id: int
+    target_batch_code: str
+    target_product_name: str
+    parents: list[BatchGenealogyNode] = Field(default_factory=list, description="Danh sách các lô cha đóng góp tạo nên lô này (Truy ngược - Backward trace).")
+    children: list[BatchGenealogyNode] = Field(default_factory=list, description="Danh sách các lô con được sinh ra từ lô này (Truy xuôi - Forward trace).")
+
+
+class BatchAncestorsBFSResponse(BaseModel):
+    """Kết quả truy ngược phả hệ theo tầng bằng BFS (T-48 / SCRUM-64)."""
+
+    target_batch: str
+    ancestors_by_level: list[list[str]] = Field(..., description="Danh sách tổ tiên phân theo từng tầng (tầng 1: cha trực tiếp, tầng 2: ông bà...).")
+    root_batches: list[str] = Field(..., description="Danh sách các lô gốc xuất xứ (không có cha).")
+    all_ancestors: list[str] = Field(default_factory=list, description="Danh sách phẳng toàn bộ tổ tiên theo thứ tự BFS.")
+
+
+# --------------------------------------------------- Thao tác Lô & 3 Tab (T-58 / SCRUM-74) ---
+class BatchHandoverRequest(BaseModel):
+    """Yêu cầu bàn giao lô nông sản."""
+
+    target_organization: str = Field(..., description="Tổ chức / đơn vị tiếp nhận bàn giao.", examples=["Công Ty Chế Biến Xuất Khẩu Đồng Tháp"])
+    note: str | None = Field(None, description="Ghi chú thêm về lô bàn giao.", examples=["Bàn giao đợt 1 xe lạnh 12 tấn"])
+
+
+class BatchSplitChildItem(BaseModel):
+    """Thông tin một lô con trong thao tác tách lô."""
+
+    product_name: str = Field(..., description="Tên nông sản của lô con.")
+    quantity: float = Field(..., gt=0, description="Khối lượng chuyển sang lô con (kg).")
+
+
+class BatchSplitRequest(BaseModel):
+    """Yêu cầu phân tách lô nông sản thành nhiều lô con (SPLIT)."""
+
+    children: list[BatchSplitChildItem] = Field(..., min_length=2, description="Danh sách các lô con tách ra (tối thiểu 2 lô con).")
+
+
+class BatchMergeRequest(BaseModel):
+    """Yêu cầu sáp nhập nhiều lô nông sản thành một lô mới (MERGE)."""
+
+    parent_batch_ids: list[int] = Field(..., min_length=2, description="Danh sách ID các lô cha tham gia gộp.")
+    product_name: str = Field(..., description="Tên sản phẩm của lô gộp mới.")
+    transferred_quantities: list[float] | None = Field(None, description="Khối lượng chuyển từ từng lô cha tương ứng (nếu để trống sẽ lấy toàn bộ).")
+
+
+class BatchDetailCombinedResponse(BaseModel):
+    """Dữ liệu tổng hợp phục vụ trang chi tiết 3 Tab (T-58 / SCRUM-74)."""
+
+    batch: BatchResponse = Field(..., description="Dữ liệu lô hàng (Tab 1: Tổng quan).")
+    farm_name: str = Field(..., description="Tên vùng trồng / thửa đất.")
+    farm_location: str = Field(..., description="Vị trí thửa đất.")
+    farm_owner: str = Field(..., description="Chủ sở hữu thửa đất.")
+    farm_area: float = Field(..., description="Diện tích thửa đất (ha).")
+    timeline: BatchTimelineResponse = Field(..., description="Dòng thời gian sự kiện (Tab 2: Dòng thời gian - T-32).")
+    genealogy: BatchGenealogyResponse = Field(..., description="Phả hệ cha & con (Tab 3: Nguồn gốc - T-50).")
+    ancestors: BatchAncestorsBFSResponse = Field(..., description="Cây tổ tiên BFS theo tầng và danh sách lô gốc.")
+
+
+# ----------------------------------------------------------- Lệnh thu hồi (Recall) ---
+class RecallItem(BaseModel):
+    """Một lô hậu duệ cần thu hồi theo chuỗi phân tách / sáp nhập."""
+
+    batch_code: str
+    batch_id: int | None = None
+    product_name: str | None = None
+    quantity: float | None = None
+    organization: str | None = None
+    level: int
+    relation_type: str
+    is_merged_multiple_sources: bool = False
+    other_sources: list[str] = Field(default_factory=list)
+
+
+class RecallOrderResponse(BaseModel):
+    """Kết quả phát lệnh thu hồi sản phẩm từ lô gốc."""
+
+    root_batch_code: str
+    total_affected_batches: int
+    total_affected_organizations: int
+    affected_organizations: list[str]
+    items: list[RecallItem]
+
+
+# ----------------------------------------------------------- Bản đồ hành trình công khai (S-06) ---
+class MapWaypoint(BaseModel):
+    """Điểm dừng trên hành trình công khai (Cấp xã/huyện, bảo vệ quyền riêng tư thửa đất)."""
+
+    order: int = Field(..., description="Thứ tự điểm dừng trên hành trình (1, 2, 3...).")
+    name: str = Field(..., description="Tên điểm dừng / cơ sở / chặng trung chuyển.")
+    location_level: str = Field(..., description="Cấp hành chính hiển thị (Xã / Phường hoặc Quận / Huyện).")
+    organization: str = Field(..., description="Tên tổ chức / đơn vị thực hiện chặng này.")
+    action: str = Field(..., description="Hành động tại điểm dừng (Xuất phát, Sơ chế, Vận chuyển, Phân phối...).")
+    latitude: float = Field(..., description="Toạ độ vĩ độ xấp xỉ cấp xã/huyện.")
+    longitude: float = Field(..., description="Toạ độ kinh độ xấp xỉ cấp xã/huyện.")
+    timestamp: str | None = Field(None, description="Thời điểm ghi nhận.")
+
+
+class PublicTrackingMapResponse(BaseModel):
+    """Dữ liệu hiển thị bản đồ hành trình công khai cho người tiêu dùng (S-06)."""
+
+    batch_code: str
+    product_name: str
+    origin_point: MapWaypoint = Field(..., description="Điểm vùng trồng xuất xứ (toạ độ đại diện cấp xã/huyện).")
+    waypoints: list[MapWaypoint] = Field(default_factory=list, description="Các điểm dừng chính theo thứ tự thời gian.")
+    privacy_note: str = Field(
+        default="Toạ độ hiển thị ở cấp xã/huyện nhằm bảo vệ bí mật nông hộ và quyền riêng tư thửa đất.",
+        description="Ghi chú về tính ẩn danh và bảo vệ vị trí chính xác của thửa đất.",
+    )
+
+
+
+

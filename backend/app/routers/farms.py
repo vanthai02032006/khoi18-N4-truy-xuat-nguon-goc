@@ -67,7 +67,13 @@ def create_farm(
     _ = current_user  # bắt buộc khai báo để dependency kiểm tra quyền chạy
 
     # `model_dump()` chuyển Pydantic model -> dict để map thẳng vào ORM model.
-    farm = Farm(**payload.model_dump())
+    data = payload.model_dump()
+    # Nếu là farmer và không nhập owner hoặc muốn đảm bảo thuộc tổ chức của user:
+    # Nếu payload.owner để trống hoặc user là farmer, đảm bảo liên kết chặt chẽ với tài khoản/tổ chức
+    if current_user.role != "admin" and not data.get("owner"):
+        data["owner"] = current_user.username
+
+    farm = Farm(**data)
     db.add(farm)
 
     try:
@@ -92,8 +98,9 @@ def create_farm(
     summary="Lấy danh sách vùng trồng",
     description=(
         "Trả về toàn bộ vùng trồng, sắp xếp theo `id` tăng dần.\n\n"
-        "**Phân quyền:** đăng nhập với role `farmer` hoặc `admin` - cả hai vai trò "
-        "đều được phép xem."
+        "**Phân quyền:** đăng nhập với role `farmer` hoặc `admin`. "
+        "Nếu là `farmer`, chỉ hiển thị các thửa đất thuộc tổ chức/chủ sở hữu của tài khoản đó. "
+        "Nếu là `admin`, hiển thị toàn bộ thửa đất của hệ thống."
     ),
     responses={
         status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
@@ -116,9 +123,13 @@ def list_farms(
     Raises:
         HTTPException: 401/403 nếu chưa đăng nhập hoặc sai vai trò.
     """
-    _ = current_user
+    stmt = select(Farm).order_by(Farm.id)
+    # Kịch bản 3: Giả sử tôi xem danh sách thửa, Khi tải trang, Thì chỉ thấy thửa của tổ chức mình
+    if current_user.role != "admin":
+        stmt = stmt.where(Farm.owner == current_user.username)
+
     # SQLAlchemy 2.0 style: `select()` + `db.scalars()` -> trả về ORM objects.
-    return list(db.scalars(select(Farm).order_by(Farm.id)).all())
+    return list(db.scalars(stmt).all())
 
 
 @router.put(

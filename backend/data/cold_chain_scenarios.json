@@ -1,0 +1,105 @@
+{
+  "metadata": {
+    "title": "Bộ kịch bản mẫu kiểm thử chuỗi lạnh IoT (S-41 Cold Chain Benchmarks)",
+    "tier": "Later",
+    "story_points": 3,
+    "temperature_range": [2.0, 8.0]
+  },
+  "scenarios": [
+    {
+      "id": "scenario_1_no_excursion",
+      "name": "Kịch bản 1: Không vượt ngưỡng nhiệt độ",
+      "description": "Nhiệt độ dao động đều trong dải an toàn 2.0°C - 8.0°C trong suốt 2 giờ",
+      "min_temp": 2.0,
+      "max_temp": 8.0,
+      "expected_violations": 0,
+      "expected_is_compliant": true,
+      "readings": [
+        {"timestamp": "2026-03-20T08:00:00Z", "temperature": 4.5},
+        {"timestamp": "2026-03-20T08:15:00Z", "temperature": 5.0},
+        {"timestamp": "2026-03-20T08:30:00Z", "temperature": 5.8},
+        {"timestamp": "2026-03-20T08:45:00Z", "temperature": 6.2},
+        {"timestamp": "2026-03-20T09:00:00Z", "temperature": 5.5},
+        {"timestamp": "2026-03-20T09:15:00Z", "temperature": 4.8},
+        {"timestamp": "2026-03-20T09:30:00Z", "temperature": 4.2},
+        {"timestamp": "2026-03-20T09:45:00Z", "temperature": 4.0},
+        {"timestamp": "2026-03-20T10:00:00Z", "temperature": 4.3}
+      ]
+    },
+    {
+      "id": "scenario_2_exceed_10_minutes",
+      "name": "Kịch bản 2: Vượt ngưỡng 10 phút",
+      "description": "Nhiệt độ tăng vọt lên 10.5°C từ 10:00 đến 10:10 (đúng 10 phút) rồi hạ về mức an toàn",
+      "min_temp": 2.0,
+      "max_temp": 8.0,
+      "expected_violations": 1,
+      "expected_is_compliant": false,
+      "expected_duration_minutes": 10.0,
+      "readings": [
+        {"timestamp": "2026-03-20T09:55:00Z", "temperature": 5.0},
+        {"timestamp": "2026-03-20T10:00:00Z", "temperature": 9.2},
+        {"timestamp": "2026-03-20T10:05:00Z", "temperature": 10.5},
+        {"timestamp": "2026-03-20T10:10:00Z", "temperature": 8.8},
+        {"timestamp": "2026-03-20T10:15:00Z", "temperature": 6.0},
+        {"timestamp": "2026-03-20T10:20:00Z", "temperature": 5.5}
+      ]
+    },
+    {
+      "id": "scenario_3_exceed_45_minutes",
+      "name": "Kịch bản 3: Vượt ngưỡng 45 phút",
+      "description": "Hỏng máy lạnh xe tải làm nhiệt độ tăng lên 12.0°C liên tục trong 45 phút (từ 11:00 đến 11:45)",
+      "min_temp": 2.0,
+      "max_temp": 8.0,
+      "expected_violations": 1,
+      "expected_is_compliant": false,
+      "expected_duration_minutes": 45.0,
+      "readings": [
+        {"timestamp": "2026-03-20T10:50:00Z", "temperature": 4.8},
+        {"timestamp": "2026-03-20T11:00:00Z", "temperature": 8.5},
+        {"timestamp": "2026-03-20T11:15:00Z", "temperature": 10.2},
+        {"timestamp": "2026-03-20T11:30:00Z", "temperature": 12.0},
+        {"timestamp": "2026-03-20T11:45:00Z", "temperature": 9.1},
+        {"timestamp": "2026-03-20T11:50:00Z", "temperature": 6.5},
+        {"timestamp": "2026-03-20T12:00:00Z", "temperature": 5.0}
+      ]
+    },
+    {
+      "id": "scenario_4_two_excursions_5min_gap",
+      "name": "Kịch bản 4: Hai lần vượt cách nhau 5 phút",
+      "description": "Lần 1 vượt từ 14:00 đến 14:15. Hạ nhiệt an toàn 5 phút (14:20). Lần 2 lại vượt từ 14:25 đến 14:40",
+      "min_temp": 2.0,
+      "max_temp": 8.0,
+      "expected_violations": 2,
+      "expected_is_compliant": false,
+      "readings": [
+        {"timestamp": "2026-03-20T13:55:00Z", "temperature": 5.2},
+        {"timestamp": "2026-03-20T14:00:00Z", "temperature": 9.0},
+        {"timestamp": "2026-03-20T14:15:00Z", "temperature": 9.5},
+        {"timestamp": "2026-03-20T14:20:00Z", "temperature": 6.0},
+        {"timestamp": "2026-03-20T14:25:00Z", "temperature": 10.0},
+        {"timestamp": "2026-03-20T14:40:00Z", "temperature": 8.9},
+        {"timestamp": "2026-03-20T14:45:00Z", "temperature": 5.5}
+      ]
+    },
+    {
+      "id": "scenario_5_across_midnight",
+      "name": "Kịch bản 5: Vượt qua nửa đêm (across midnight)",
+      "description": "Vi phạm bắt đầu từ 23:45 ngày hôm trước kéo dài qua 00:00 và kết thúc lúc 00:30 ngày hôm sau (tổng 45 phút)",
+      "min_temp": 2.0,
+      "max_temp": 8.0,
+      "expected_violations": 1,
+      "expected_is_compliant": false,
+      "expected_duration_minutes": 45.0,
+      "readings": [
+        {"timestamp": "2026-03-20T23:30:00Z", "temperature": 4.5},
+        {"timestamp": "2026-03-20T23:45:00Z", "temperature": 9.0},
+        {"timestamp": "2026-03-20T23:55:00Z", "temperature": 10.5},
+        {"timestamp": "2026-03-21T00:00:00Z", "temperature": 11.2},
+        {"timestamp": "2026-03-21T00:15:00Z", "temperature": 10.8},
+        {"timestamp": "2026-03-21T00:30:00Z", "temperature": 8.7},
+        {"timestamp": "2026-03-21T00:35:00Z", "temperature": 6.0},
+        {"timestamp": "2026-03-21T00:45:00Z", "temperature": 5.0}
+      ]
+    }
+  ]
+}

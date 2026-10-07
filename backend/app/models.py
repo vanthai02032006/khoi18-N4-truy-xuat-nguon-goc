@@ -18,9 +18,10 @@ Mọi model đều kế thừa ``Base`` và bảng sẽ được ``init_db()`` t
 
 from datetime import date
 
-from sqlalchemy import Date, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Date, Float, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.code_generator import generate_code
 from app.database import Base
 
 
@@ -57,6 +58,20 @@ class Farm(Base):
         return f"<Farm id={self.id} name={self.name!r} area={self.area}ha>"
 
 
+BATCH_STATUS_ACTIVE: str = "ACTIVE"
+BATCH_STATUS_PENDING_HANDOVER: str = "PENDING_HANDOVER"
+BATCH_STATUS_HANDED_OVER: str = "HANDED_OVER"
+BATCH_STATUS_SPLIT: str = "SPLIT"
+BATCH_STATUS_MERGED: str = "MERGED"
+BATCH_STATUSES: tuple[str, ...] = (
+    BATCH_STATUS_ACTIVE,
+    BATCH_STATUS_PENDING_HANDOVER,
+    BATCH_STATUS_HANDED_OVER,
+    BATCH_STATUS_SPLIT,
+    BATCH_STATUS_MERGED,
+)
+
+
 class Batch(Base):
     """Lô nông sản thu hoạch từ một vùng trồng.
 
@@ -68,12 +83,21 @@ class Batch(Base):
         product_name: Tên sản phẩm của lô (ví dụ: "Xoài cát Chu").
         quantity: Số lượng / khối lượng của lô, đơn vị kg.
         harvest_date: Ngày thu hoạch.
+        status: Trạng thái hiện tại của lô (ACTIVE, PENDING_HANDOVER, HANDED_OVER, SPLIT, MERGED).
         farm: Đối tượng ``Farm`` tương ứng (chiều N-1 của quan hệ).
     """
 
     __tablename__ = "batches"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Mã định danh lô hàng 8 ký tự duy nhất (T-18 / SCRUM-34)
+    code: Mapped[str] = mapped_column(
+        String(8),
+        unique=True,
+        index=True,
+        nullable=False,
+        default=generate_code,
+    )
     # `index=True` để tra cứu "các lô của một vùng trồng" nhanh hơn.
     farm_id: Mapped[int] = mapped_column(
         ForeignKey("farms.id"),
@@ -83,6 +107,12 @@ class Batch(Base):
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
     harvest_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default=BATCH_STATUS_ACTIVE,
+    )
+
 
     # Quan hệ N-1: nhiều lô có thể thuộc về một vùng trồng.
     farm: Mapped["Farm"] = relationship(back_populates="batches")
@@ -137,7 +167,40 @@ class BatchEvent(Base):
 # muốn thêm vai trò mới như "inspector" hay "retailer").
 ROLE_ADMIN: str = "admin"
 ROLE_FARMER: str = "farmer"
-ROLES: tuple[str, ...] = (ROLE_ADMIN, ROLE_FARMER)
+ROLE_INSPECTOR: str = "inspector"
+ROLES: tuple[str, ...] = (ROLE_ADMIN, ROLE_FARMER, ROLE_INSPECTOR)
+
+
+class InspectionLog(Base):
+    """Bảng lưu lịch sử kiểm định/thẩm định tính toàn vẹn của lô hàng (T-28 / SCRUM-44).
+
+    Ghi log kèm thời điểm, cán bộ thực hiện, trạng thái và vị trí/loại lỗi
+    để phục vụ đối chiếu, thanh tra về sau.
+    """
+
+    __tablename__ = "inspection_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id"),
+        nullable=False,
+        index=True,
+    )
+    batch_code: Mapped[str] = mapped_column(String(8), nullable=False, index=True)
+    inspector: Mapped[str] = mapped_column(String(100), nullable=False)
+    timestamp: Mapped[str] = mapped_column(String(50), nullable=False)
+    is_valid: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    error_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    tampered_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    details: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    batch: Mapped["Batch"] = relationship()
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<InspectionLog id={self.id} batch_code={self.batch_code!r} "
+            f"valid={self.is_valid} by={self.inspector!r}>"
+        )
 
 
 class User(Base):
@@ -153,8 +216,8 @@ class User(Base):
         username: Tên đăng nhập, **duy nhất** (có index để tra cứu nhanh).
         password: Mật khẩu **đã băm** (SHA-256 hex = 64 ký tự) - không bao giờ
             lưu mật khẩu dạng thô, và API cũng không bao giờ trả cột này ra.
-        role: Vai trò của tài khoản: ``"admin"`` (quản trị - toàn quyền) hoặc
-            ``"farmer"`` (nông dân - quản lý nông sản).
+        role: Vai trò của tài khoản: ``"admin"`` (quản trị), ``"farmer"`` (nông dân),
+            hoặc ``"inspector"`` (cán bộ kiểm tra).
     """
 
     __tablename__ = "users"
@@ -175,13 +238,87 @@ class User(Base):
         return f"<User id={self.id} username={self.username!r} role={self.role}>"
 
 
+# ------------------------------------------------------------- Phả hệ lô hàng ---
+RELATION_SPLIT: str = "SPLIT"
+RELATION_MERGE: str = "MERGE"
+RELATION_TYPES: tuple[str, ...] = (RELATION_SPLIT, RELATION_MERGE)
+
+
+class BatchLineage(Base):
+    """Bảng quan hệ phả hệ lô hàng (batch_lineage) — Đáp ứng T-37 (SCRUM-53).
+
+    Lưu vết quan hệ phân tách (SPLIT) và sáp nhập (MERGE) giữa các lô hàng:
+    - parent_batch_id: Lô cha xuất xứ.
+    - child_batch_id: Lô con tiếp nhận.
+    - transferred_quantity: Khối lượng chuyển từ cha sang con (kg).
+    - relation_type: Loại quan hệ ("SPLIT" hoặc "MERGE").
+    - created_at: Thời điểm phát sinh quan hệ (ISO 8601).
+
+    Ràng buộc & Chỉ mục (DoD / AC):
+    - Ràng buộc UNIQUE trên cặp [lô cha, lô con] để tránh ghi trùng quan hệ.
+    - Tạo chỉ mục trên cả cột cha (parent_batch_id) lẫn con (child_batch_id) để tối ưu truy ngược & truy xuôi.
+    - Một lô con của phép gộp có nhiều dòng cha.
+    """
+
+    __tablename__ = "batch_lineage"
+    __table_args__ = (
+        UniqueConstraint("parent_batch_id", "child_batch_id", name="uq_batch_lineage_parent_child"),
+        Index("ix_batch_lineage_parent_batch_id", "parent_batch_id"),
+        Index("ix_batch_lineage_child_batch_id", "child_batch_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    parent_batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    child_batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    transferred_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    relation_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Relationships
+    parent_batch: Mapped["Batch"] = relationship(
+        "Batch",
+        foreign_keys=[parent_batch_id],
+        backref="child_lineages",
+    )
+    child_batch: Mapped["Batch"] = relationship(
+        "Batch",
+        foreign_keys=[child_batch_id],
+        backref="parent_lineages",
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<BatchLineage id={self.id} parent={self.parent_batch_id} -> "
+            f"child={self.child_batch_id} qty={self.transferred_quantity}kg type={self.relation_type}>"
+        )
+
+
 __all__ = [
+    "BATCH_STATUS_ACTIVE",
+    "BATCH_STATUS_HANDED_OVER",
+    "BATCH_STATUS_MERGED",
+    "BATCH_STATUS_PENDING_HANDOVER",
+    "BATCH_STATUS_SPLIT",
+    "BATCH_STATUSES",
     "Base",
     "Batch",
     "BatchEvent",
+    "BatchLineage",
     "Farm",
+    "InspectionLog",
+    "RELATION_MERGE",
+    "RELATION_SPLIT",
+    "RELATION_TYPES",
     "ROLE_ADMIN",
     "ROLE_FARMER",
+    "ROLE_INSPECTOR",
     "ROLES",
     "User",
 ]
+

@@ -36,6 +36,12 @@
       </div>
 
       <div class="navbar__controls">
+        <!-- Nút Tra cứu hành trình công khai (S-06) -->
+        <button id="btn-open-public-map" class="action-btn" type="button" style="background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;" title="Tra cứu bản đồ hành trình công khai">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+          <span>Bản đồ hành trình</span>
+        </button>
+
         <div id="user-badge" class="user-pill" hidden>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           <span id="user-badge-text">Chưa xác thực</span>
@@ -127,6 +133,10 @@
               <button type="button" class="btn-quick" onclick="quickFill('admin', '123456')">
                 <span class="role-pill role-admin">Admin</span>
                 <span class="role-creds">admin / 123456</span>
+              </button>
+              <button type="button" class="btn-quick" onclick="quickFill('inspector', '123456')">
+                <span class="role-pill" style="background: #e0e7ff; color: #4338ca; font-weight: 600; padding: 2px 8px; border-radius: 999px; font-size: 11px;">Inspector</span>
+                <span class="role-creds">inspector / 123456</span>
               </button>
               <button type="button" class="btn-quick" onclick="quickFill('farmer', '123456')">
                 <span class="role-pill role-farmer">Farmer</span>
@@ -431,7 +441,141 @@
         </div>
       </section>
 
-      <!-- Section 3: Quản trị Tài Khoản (Admin Only) -->
+      <!-- Section 3: Thẩm Định Tính Toàn Vẹn & Nguồn Gốc (Cán bộ kiểm tra & Admin - T-28 / SCRUM-44) -->
+      <section id="inspector-section" class="content-card" hidden>
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar" style="background: #e0e7ff; color: #4338ca;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <path d="M9 12l2 2 4-4"/>
+              </svg>
+            </div>
+            <div>
+              <h3 class="card-title">3. Thẩm định tính toàn vẹn chuỗi sự kiện lô hàng (Cán bộ kiểm tra)</h3>
+              <p class="card-subtitle">
+                Nhập mã định danh 8 ký tự hoặc ID lô để kiểm tra chữ ký mật mã, quét phát hiện can thiệp sửa lén dữ liệu (Chỉ vai trò <strong>inspector</strong> và <strong>admin</strong>).
+              </p>
+            </div>
+          </div>
+          <span class="role-pill" style="background: #e0e7ff; color: #4338ca; font-weight: 700; padding: 4px 10px; border-radius: 6px;">
+            INSPECTOR AUDIT
+          </span>
+        </header>
+
+        <!-- Form nhập mã lô kiểm tra -->
+        <div class="form-wrapper">
+          <form id="inspection-form" style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+            <div class="form-group" style="flex: 1; min-width: 260px;">
+              <label for="inspect-batch-input" class="input-label">
+                Mã lô nông sản cần kiểm định (Mã 8 ký tự hoặc ID số) <span class="required">*</span>
+              </label>
+              <input id="inspect-batch-input" type="text" maxlength="50" required
+                     placeholder="Ví dụ: Nhập mã 8 ký tự (VD: 7X9KM2RP) hoặc ID lô..."
+                     style="font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 15px; letter-spacing: 0.5px;" />
+            </div>
+
+            <div style="display: flex; gap: 8px;">
+              <button id="inspect-submit-btn" class="btn-action-primary" type="submit" style="background: #4338ca;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <span>Kiểm tra tính toàn vẹn</span>
+              </button>
+
+              <button id="inspect-simulate-tamper-btn" type="button" class="btn-action-ghost" style="color: #dc2626; border-color: #fca5a5;" title="Cố tình làm sai lệch dữ liệu để kiểm chứng phản ứng cảnh báo đỏ">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <span>Giả lập can thiệp (Test Đỏ)</span>
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Khu vực hiển thị kết quả kiểm định trực quan (DoD / AC) -->
+        <div id="inspection-result-box" style="margin: 16px 20px; display: none;">
+          <!-- Khung kết quả HỢP LỆ (Màu xanh) -->
+          <div id="inspection-card-valid" class="audit-card" style="display: none; background: #f0fdf4; border: 2px solid #22c55e; border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.1);">
+            <div style="display: flex; align-items: flex-start; gap: 16px;">
+              <div style="background: #22c55e; color: white; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </div>
+              <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <span style="background: #16a34a; color: white; font-weight: 800; font-size: 13px; padding: 3px 10px; border-radius: 6px; letter-spacing: 0.5px;">HỢP LỆ — NGUYÊN VẸN 100%</span>
+                  <span id="valid-batch-badge" style="font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #166534;"></span>
+                  <span id="valid-timestamp" style="font-size: 12px; color: #64748b; margin-left: auto;"></span>
+                </div>
+                <h4 style="color: #166534; margin: 8px 0 4px; font-size: 16px; font-weight: 700;">Chứng nhận chuỗi bất biến không bị can thiệp</h4>
+                <p id="valid-details-text" style="color: #15803d; font-size: 13px; line-height: 1.5; margin: 0;"></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Khung kết quả BỊ CAN THIỆP (Cảnh báo đỏ & vị trí sai lệch) -->
+          <div id="inspection-card-tampered" class="audit-card" style="display: none; background: #fef2f2; border: 2px solid #ef4444; border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15);">
+            <div style="display: flex; align-items: flex-start; gap: 16px;">
+              <div style="background: #ef4444; color: white; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+              </div>
+              <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <span style="background: #dc2626; color: white; font-weight: 800; font-size: 13px; padding: 3px 10px; border-radius: 6px; letter-spacing: 0.5px;">CẢNH BÁO ĐỎ: PHÁT HIỆN CAN THIỆP SỬA LÉN!</span>
+                  <span id="tampered-batch-badge" style="font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #991b1b;"></span>
+                  <span id="tampered-timestamp" style="font-size: 12px; color: #64748b; margin-left: auto;"></span>
+                </div>
+                <h4 style="color: #991b1b; margin: 8px 0 4px; font-size: 16px; font-weight: 700;">Dữ liệu chuỗi sự kiện đã bị sửa đổi trái phép</h4>
+                <div id="tampered-meta" style="background: #fee2e2; border-left: 4px solid #dc2626; padding: 10px 14px; border-radius: 4px; margin: 8px 0;">
+                  <div style="font-size: 13px; color: #991b1b; font-weight: 700;" id="tampered-position-text"></div>
+                  <div style="font-size: 12px; color: #b91c1c; margin-top: 4px;" id="tampered-type-text"></div>
+                </div>
+                <p id="tampered-details-text" style="color: #7f1d1d; font-size: 13px; line-height: 1.5; margin: 0;"></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dòng sự kiện chi tiết của lô hàng -->
+          <div style="margin-top: 20px;">
+            <h4 style="font-size: 14px; font-weight: 700; color: #334155; margin-bottom: 8px;">Dòng thời gian sự kiện & Chuỗi Hash xác thực:</h4>
+            <div id="inspection-events-timeline" style="display: flex; flex-direction: column; gap: 8px;"></div>
+          </div>
+        </div>
+
+        <!-- Bảng lịch sử các lần kiểm định để đối chiếu về sau -->
+        <div class="table-container" style="border-top: 1px solid #e2e8f0; margin-top: 20px;">
+          <div class="table-subhead" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 20px;">
+            <span class="table-heading">Nhật ký kiểm định gần đây (Lưu vết đối chiếu về sau)</span>
+            <button id="inspect-refresh-logs-btn" class="btn-action-ghost" type="button" style="padding: 4px 10px; font-size: 12px;">Làm mới nhật ký</button>
+          </div>
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 70px;">STT</th>
+                  <th style="width: 120px;">MÃ LÔ</th>
+                  <th>CÁN BỘ KIỂM TRA</th>
+                  <th style="width: 180px;">THỜI ĐIỂM KIỂM ĐỊNH</th>
+                  <th style="width: 140px;">KẾT QUẢ</th>
+                  <th>CHI TIẾT ĐỐI CHIẾU</th>
+                </tr>
+              </thead>
+              <tbody id="inspection-logs-table-body"></tbody>
+            </table>
+          </div>
+          <div id="inspection-logs-empty" class="empty-placeholder" hidden>
+            <p>Chưa có lượt kiểm tra nào được ghi nhận.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 4: Quản trị Tài Khoản (Admin Only) -->
       <section id="users-card" class="content-card" hidden>
         <header class="card-header">
           <div class="header-left">
@@ -439,7 +583,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </div>
             <div>
-              <h3 class="card-title">3. Quản trị thành viên hệ thống</h3>
+              <h3 class="card-title">4. Quản trị thành viên hệ thống</h3>
               <p class="card-subtitle">
                 Danh sách tài khoản và phân quyền truy cập hệ thống canh tác.
               </p>
@@ -468,6 +612,273 @@
       </section>
     </div>
   </main>
+
+  <!-- ======================== MODAL CHI TIẾT LÔ HÀNG 3 TAB (T-58 / SCRUM-74) ======================== -->
+  <div id="batch-detail-modal" class="modal-backdrop" hidden>
+    <div class="modal-card modal-card--xl">
+      <div class="modal-card__header">
+        <div class="modal-title-group">
+          <div class="module-avatar module-avatar--batch">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+              <line x1="12" y1="22.08" x2="12" y2="12"/>
+            </svg>
+          </div>
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <h3 id="modal-batch-title" style="margin: 0; font-size: 18px; font-weight: 700; color: #0f172a;">Chi tiết lô nông sản</h3>
+              <span id="modal-batch-code-badge" style="font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #0284c7; background: #e0f2fe; padding: 2px 8px; border-radius: 4px; font-size: 13px; border: 1px solid #bae6fd;"></span>
+              <span id="modal-batch-status-badge" style="font-weight: 700; padding: 3px 10px; border-radius: 6px; font-size: 12px;"></span>
+            </div>
+            <p id="modal-batch-subtitle" style="margin: 3px 0 0; font-size: 13px; color: #64748b;"></p>
+          </div>
+        </div>
+
+        <!-- Cụm nút thao tác: Bàn giao, Tách, Gộp (Hiện theo vai trò và trạng thái lô) -->
+        <div class="modal-header__actions" style="display: flex; align-items: center; gap: 10px;">
+          <div id="batch-actions-wrapper" style="display: flex; gap: 8px; align-items: center;">
+            <button id="btn-action-handover" class="action-btn-pill action-btn-pill--warning" type="button" title="Bàn giao lô hàng">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+              <span>Bàn giao</span>
+            </button>
+            <button id="btn-action-split" class="action-btn-pill action-btn-pill--info" type="button" title="Phân tách lô hàng">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>
+              <span>Tách</span>
+            </button>
+            <button id="btn-action-merge" class="action-btn-pill action-btn-pill--primary" type="button" title="Gộp lô hàng">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 6v12a6 6 0 0 0 6 6h6"/></svg>
+              <span>Gộp</span>
+            </button>
+          </div>
+          <button id="btn-close-detail-modal" class="btn-close-modal" type="button" title="Đóng cửa sổ">✕</button>
+        </div>
+      </div>
+
+      <!-- Banner cảnh báo khi lô đang chờ bàn giao (Tự động ẩn nút) -->
+      <div id="modal-pending-handover-banner" style="display: none; margin: 12px 20px 0; background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; padding: 10px 14px; border-radius: 6px; font-size: 13px; color: #92400e;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <strong>Lô hàng đang ở trạng thái CHỜ BÀN GIAO:</strong>
+          <span>Các nút thao tác (Bàn giao, Tách, Gộp) tự động ẩn để bảo toàn trạng thái theo đúng yêu cầu nghiệp vụ.</span>
+        </div>
+      </div>
+
+      <!-- Navigation 3 Tab -->
+      <div class="tabs-bar">
+        <button id="tab-nav-overview" class="tab-nav-btn is-active" type="button" data-tab="overview">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          <span>1. Tổng quan</span>
+        </button>
+        <button id="tab-nav-timeline" class="tab-nav-btn" type="button" data-tab="timeline">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>2. Dòng thời gian (T-32)</span>
+        </button>
+        <button id="tab-nav-origin" class="tab-nav-btn" type="button" data-tab="origin">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          <span>3. Nguồn gốc (T-50)</span>
+        </button>
+      </div>
+
+      <!-- Thân modal hiển thị nội dung 3 Tab -->
+      <div class="modal-card__body">
+        <!-- Tab 1: Tổng quan -->
+        <div id="tab-pane-overview" class="tab-content-pane is-active">
+          <div class="overview-grid">
+            <div class="info-group-box">
+              <h4 class="box-heading">Thông tin mẻ nông sản</h4>
+              <div class="info-row"><span class="label">Mã định danh 8 ký tự:</span><code id="ov-code" class="val-mono"></code></div>
+              <div class="info-row"><span class="label">Loại cây trồng / Nông sản:</span><strong id="ov-product"></strong></div>
+              <div class="info-row"><span class="label">Sản lượng mẻ:</span><span id="ov-quantity"></span> kg</div>
+              <div class="info-row"><span class="label">Ngày thu hoạch:</span><span id="ov-date"></span></div>
+              <div class="info-row"><span class="label">Trạng thái vận hành:</span><span id="ov-status" class="status-pill"></span></div>
+            </div>
+
+            <div class="info-group-box">
+              <h4 class="box-heading">Thửa đất & Vùng trồng xuất xứ</h4>
+              <div class="info-row"><span class="label">Vùng canh tác:</span><strong id="ov-farm-name"></strong></div>
+              <div class="info-row"><span class="label">Vị trí địa lý:</span><span id="ov-farm-loc"></span></div>
+              <div class="info-row"><span class="label">Chủ thửa đất / HTX:</span><span id="ov-farm-owner"></span></div>
+              <div class="info-row"><span class="label">Diện tích canh tác:</span><span id="ov-farm-area"></span> ha</div>
+              <div class="info-row"><span class="label">Tiêu chuẩn chất lượng:</span><span class="text-safe" style="font-weight: 700;">VietGAP / GlobalGAP</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Dòng thời gian sự kiện (T-32) -->
+        <div id="tab-pane-timeline" class="tab-content-pane" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h4 style="margin: 0; font-size: 15px; font-weight: 700; color: #1e293b;">Chuỗi sự kiện bất biến (Immutable Cryptographic Hash-Chain)</h4>
+            <span id="timeline-integrity-badge" style="font-weight: 700; font-size: 12px; padding: 4px 10px; border-radius: 6px;"></span>
+          </div>
+          <div id="timeline-events-container" class="timeline-stream"></div>
+        </div>
+
+        <!-- Tab 3: Nguồn gốc phả hệ (T-50) -->
+        <div id="tab-pane-origin" class="tab-content-pane" style="display: none;">
+          <div class="origin-sections">
+            <div class="origin-subcard">
+              <h4 style="margin: 0 0 10px; font-size: 14px; font-weight: 700; color: #1e293b; display: flex; align-items: center; gap: 6px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                <span>Nguồn gốc tổ tiên (Truy ngược con -> cha / Ancestor Levels & Lô gốc)</span>
+              </h4>
+              <div id="origin-ancestor-levels" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            </div>
+
+            <div class="origin-subcard" style="margin-top: 16px;">
+              <h4 style="margin: 0 0 10px; font-size: 14px; font-weight: 700; color: #1e293b; display: flex; align-items: center; gap: 6px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.2"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+                <span>Phân nhánh đầu ra (Truy xuôi cha -> con / Output Children)</span>
+              </h4>
+              <div id="origin-children-container" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            </div>
+
+            <!-- Khối Lệnh Thu Hồi Sản Phẩm (S-39 Recall Orders) -->
+            <div class="origin-subcard" style="margin-top: 16px; border: 1px solid #fecaca; background: #fffaf0;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                <h4 style="margin: 0; font-size: 14px; font-weight: 700; color: #b91c1c; display: flex; align-items: center; gap: 6px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2.2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                  <span>Lệnh Thu Hồi Khẩn Cấp (Truy vết toàn bộ hậu duệ qua 4 tầng & đa tổ chức)</span>
+                </h4>
+                <button id="btn-refresh-recall" type="button" class="btn btn--sm" style="background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; font-weight: 700;">
+                  🔄 Làm mới danh sách thu hồi
+                </button>
+              </div>
+              <p style="font-size: 12px; color: #78350f; margin: 0 0 10px;">
+                Tự động rà soát mọi lô con, cháu, chắt... sinh ra từ lô này qua các đợt tách & gộp. Nếu phát hiện lô gộp có nguồn khác trộn vào sẽ gắn cờ cảnh báo.
+              </p>
+              <div id="origin-recall-container" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Bàn giao -->
+  <div id="action-modal-handover" class="modal-backdrop" hidden>
+    <div class="modal-card modal-card--sm">
+      <div class="modal-card__header">
+        <h4 style="margin: 0; font-size: 16px; font-weight: 700;">Bàn giao lô nông sản</h4>
+        <button class="btn-close-modal" type="button" onclick="$('action-modal-handover').hidden = true;">✕</button>
+      </div>
+      <form id="form-action-handover" style="padding: 20px;">
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="input-label">Tổ chức / Đơn vị tiếp nhận <span class="required">*</span></label>
+          <input id="handover-target-org" type="text" required placeholder="Ví dụ: Công Ty Chế Biến Nông Sản Xuất Khẩu" />
+        </div>
+        <div class="form-group" style="margin-bottom: 16px;">
+          <label class="input-label">Ghi chú bàn giao</label>
+          <input id="handover-note" type="text" placeholder="Ví dụ: Bàn giao xe lạnh số 02, nhiệt độ 4.5°C" />
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" class="btn-action-ghost" onclick="$('action-modal-handover').hidden = true;">Huỷ</button>
+          <button type="submit" class="btn-action-primary" style="background: #f59e0b;">Xác nhận Bàn giao</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Tách lô -->
+  <div id="action-modal-split" class="modal-backdrop" hidden>
+    <div class="modal-card modal-card--md">
+      <div class="modal-card__header">
+        <h4 style="margin: 0; font-size: 16px; font-weight: 700;">Phân tách lô nông sản (SPLIT)</h4>
+        <button class="btn-close-modal" type="button" onclick="$('action-modal-split').hidden = true;">✕</button>
+      </div>
+      <form id="form-action-split" style="padding: 20px;">
+        <p style="margin: 0 0 12px; font-size: 13px; color: #475569;">
+          Tách lô thành tối thiểu 2 lô con. Tổng khối lượng tách không được vượt quá sản lượng lô cha (<strong id="split-parent-max-qty"></strong> kg).
+        </p>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+          <div>
+            <label class="input-label">Tên lô con 1 <span class="required">*</span></label>
+            <input id="split-c1-name" type="text" required placeholder="Lô con A (Loại 1)" />
+          </div>
+          <div>
+            <label class="input-label">Khối lượng (kg) <span class="required">*</span></label>
+            <input id="split-c1-qty" type="number" min="0.1" step="0.1" required placeholder="kg" />
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+          <div>
+            <label class="input-label">Tên lô con 2 <span class="required">*</span></label>
+            <input id="split-c2-name" type="text" required placeholder="Lô con B (Loại 2)" />
+          </div>
+          <div>
+            <label class="input-label">Khối lượng (kg) <span class="required">*</span></label>
+            <input id="split-c2-qty" type="number" min="0.1" step="0.1" required placeholder="kg" />
+          </div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" class="btn-action-ghost" onclick="$('action-modal-split').hidden = true;">Huỷ</button>
+          <button type="submit" class="btn-action-primary" style="background: #0284c7;">Xác nhận Tách lô</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Gộp lô -->
+  <div id="action-modal-merge" class="modal-backdrop" hidden>
+    <div class="modal-card modal-card--md">
+      <div class="modal-card__header">
+        <h4 style="margin: 0; font-size: 16px; font-weight: 700;">Sáp nhập các lô nông sản (MERGE)</h4>
+        <button class="btn-close-modal" type="button" onclick="$('action-modal-merge').hidden = true;">✕</button>
+      </div>
+      <form id="form-action-merge" style="padding: 20px;">
+        <p style="margin: 0 0 12px; font-size: 13px; color: #475569;">
+          Chọn thêm các lô nông sản khác để gộp cùng lô hiện tại tạo thành mẻ nông sản chế biến / đóng gói mới.
+        </p>
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="input-label">Tên sản phẩm sau khi gộp <span class="required">*</span></label>
+          <input id="merge-target-name" type="text" required placeholder="Ví dụ: Nông sản đóng thùng xuất khẩu" />
+        </div>
+        <div class="form-group" style="margin-bottom: 16px;">
+          <label class="input-label">Chọn các lô cha tham gia gộp (Giữ Ctrl để chọn nhiều) <span class="required">*</span></label>
+          <select id="merge-parents-select" multiple size="4" style="width: 100%; border-radius: 6px; border: 1px solid #cbd5e1; padding: 6px;" required></select>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" class="btn-action-ghost" onclick="$('action-modal-merge').hidden = true;">Huỷ</button>
+          <button type="submit" class="btn-action-primary" style="background: #10b981;">Xác nhận Gộp lô</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Bản Đồ Hành Trình Công Khai (S-06 / Tier Later) -->
+  <div id="action-modal-public-map" class="modal-backdrop" hidden>
+    <div class="modal-card modal-card--lg" style="max-width: 850px;">
+      <div class="modal-card__header" style="background: #f0fdf4; border-bottom: 1px solid #bbf7d0;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+          <h4 style="margin: 0; font-size: 16px; font-weight: 700; color: #166534;">Bản Đồ Hành Trình Chuỗi Cung Ứng Công Khai</h4>
+        </div>
+        <button class="btn-close-modal" type="button" onclick="$('action-modal-public-map').hidden = true;">✕</button>
+      </div>
+      <div style="padding: 20px;">
+        <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+          <input id="public-map-search-code" type="text" maxlength="8" placeholder="Nhập mã lô 8 ký tự (ví dụ: 7X9KM2RP)..." style="flex: 1; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 6px; font-family: monospace; font-weight: 600;" />
+          <button id="btn-search-public-map" class="btn-action-primary" type="button" style="background: #16a34a;">Xem bản đồ</button>
+        </div>
+
+        <!-- Thông báo bảo vệ quyền riêng tư thửa đất -->
+        <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span style="font-size: 13px; color: #065f46; font-weight: 500;">
+            <strong>Chính sách bảo mật:</strong> Điểm vùng trồng và các điểm dừng được hiển thị ở <strong>cấp Xã hoặc Huyện</strong> nhằm bảo vệ quyền riêng tư & vị trí chính xác của thửa đất nông hộ.
+          </span>
+        </div>
+
+        <!-- Vùng vẽ bản đồ trực quan hành trình -->
+        <div id="public-map-render-area" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; min-height: 250px;">
+          <div style="text-align: center; color: #64748b; padding: 40px 0;">
+            Nhập mã lô nông sản và bấm "Xem bản đồ" để hiển thị hành trình điểm dừng.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 
   <!-- Page Footer -->
   <footer class="site-footer">

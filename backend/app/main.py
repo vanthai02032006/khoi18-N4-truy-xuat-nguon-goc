@@ -24,7 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.database import init_db
-from app.routers import auth, batches, events, farms, health, users
+from app.routers import auth, batches, cold_chain, events, farms, health, inspections, lineage, users
+
 
 # ------------------------------------------------------------------ Lifespan ---
 @asynccontextmanager
@@ -82,4 +83,8 @@ app.include_router(auth.router)
 app.include_router(farms.router)
 app.include_router(batches.router)
 app.include_router(events.router)
+app.include_router(inspections.router)
+app.include_router(lineage.router)
+app.include_router(cold_chain.router)
 app.include_router(users.router)
+
