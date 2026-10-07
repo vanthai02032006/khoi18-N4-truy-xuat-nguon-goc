@@ -1088,7 +1088,6 @@ async function openTimelineModal(batchId) {
         `;
       })
       .join("");
-    }
   } catch (error) {
     $("timeline-integrity-badge").textContent = "Lỗi khi tải";
     $("timeline-integrity-badge").style.color = "#dc2626";
