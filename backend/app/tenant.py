@@ -5,6 +5,8 @@ Nguyên tắc:
 - Tự động lọc dữ liệu theo tổ chức (Data isolation) để tránh rò rỉ dữ liệu giữa các bên trong chuỗi.
 """
 
+from __future__ import annotations
+
 from contextvars import ContextVar
 from fastapi import Header, HTTPException, status
 from sqlalchemy import Select

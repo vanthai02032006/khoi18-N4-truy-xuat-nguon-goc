@@ -6,6 +6,7 @@ Tách riêng schemas (Pydantic) khỏi models (SQLAlchemy) giúp:
 """
 
 from datetime import date
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -339,7 +340,7 @@ class DeleteResponse(BaseModel):
         description="ID của bản ghi vừa bị xoá.",
         examples=[2],
     )
-    deleted_batches: int | None = Field(
+    deleted_batches: Optional[int] = Field(
         default=None,
         description=(
             "Số lô nông sản bị xoá kèm - chỉ có giá trị khi gọi "
@@ -380,5 +381,5 @@ class BatchTimelineResponse(BaseModel):
 
     batch_id: int
     is_valid: bool = Field(..., description="True nếu toàn bộ chuỗi mã băm toàn vẹn, False nếu bị can thiệp sửa lén.")
-    tampered_index: int | None = Field(None, description="Vị trí sự kiện đầu tiên bị sai lệch nếu có.")
+    tampered_index: Optional[int] = Field(None, description="Vị trí sự kiện đầu tiên bị sai lệch nếu có.")
     events: list[BatchEventResponse]

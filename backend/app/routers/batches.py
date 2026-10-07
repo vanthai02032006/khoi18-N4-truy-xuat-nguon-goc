@@ -17,6 +17,8 @@ Cung cấp **đầy đủ CRUD** (hoàn thiện ở Sprint 5):
 gốc công khai.
 """
 
+from __future__ import annotations
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
