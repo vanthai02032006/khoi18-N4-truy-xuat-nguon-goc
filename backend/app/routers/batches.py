@@ -17,7 +17,7 @@ Cung cấp **đầy đủ CRUD** (hoàn thiện ở Sprint 5):
 gốc công khai.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -107,19 +107,33 @@ def create_batch(
     "",
     response_model=list[BatchResponse],
     status_code=status.HTTP_200_OK,
-    summary="Lấy danh sách lô nông sản",
-    description="Trả về toàn bộ lô nông sản, sắp xếp theo `id` tăng dần.",
+    summary="Lấy danh sách lô nông sản (hỗ trợ lọc sản phẩm & phân trang con trỏ - SCRUM-49)",
+    description="Hỗ trợ tìm kiếm, lọc theo loại sản phẩm và phân trang con trỏ keyset (cursor pagination).",
 )
-def list_batches(db: Session = Depends(get_db)) -> list[Batch]:
-    """Lấy danh sách lô nông sản.
+def list_batches(
+    product: str | None = Query(None, description="Lọc chính xác hoặc tương đối theo tên sản phẩm."),
+    search: str | None = Query(None, description="Tìm kiếm mã lô hoặc tên sản phẩm không phân biệt hoa thường."),
+    cursor: int | None = Query(None, ge=1, description="ID con trỏ cho trang kế tiếp (Keyset pagination)."),
+    limit: int = Query(50, ge=1, le=100, description="Số lượng bản ghi tối đa trả về."),
+    db: Session = Depends(get_db),
+) -> list[Batch]:
+    """Lấy danh sách lô nông sản có hỗ trợ bộ lọc và phân trang con trỏ (SCRUM-49)."""
+    stmt = select(Batch)
 
-    Args:
-        db: Session SQLAlchemy từ dependency ``get_db``.
+    # Lọc theo sản phẩm
+    if product:
+        stmt = stmt.where(Batch.product_name.ilike(f"%{product}%"))
 
-    Returns:
-        list[Batch]: Danh sách lô (rỗng nếu chưa có dữ liệu).
-    """
-    return list(db.scalars(select(Batch).order_by(Batch.id)).all())
+    # Tìm kiếm chung
+    if search:
+        stmt = stmt.where(Batch.product_name.ilike(f"%{search}%"))
+
+    # Phân trang con trỏ (keyset cursor)
+    if cursor:
+        stmt = stmt.where(Batch.id > cursor)
+
+    stmt = stmt.order_by(Batch.id.asc()).limit(limit)
+    return list(db.scalars(stmt).all())
 
 
 @router.get(
