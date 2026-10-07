@@ -23,6 +23,7 @@ production** (Basic gửi mật khẩu ở mọi request nên bắt buộc phả
 SHA-256 không salt nên không chống được brute-force - production nên dùng
 ``bcrypt``/``argon2`` qua ``passlib`` và chuyển sang JWT/OAuth2).
 """
+from __future__ import annotations
 
 from __future__ import annotations
 
@@ -192,13 +193,26 @@ def require_farmer(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+def require_inspector(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency: cho phép **inspector và admin** (Cán bộ kiểm tra & Quản trị viên)."""
+    from app.models import ROLE_INSPECTOR
+    if current_user.role not in (ROLE_INSPECTOR, ROLE_ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ cán bộ kiểm tra (inspector) hoặc admin được phép thực hiện chức năng này.",
+        )
+    return current_user
+
+
 __all__ = [
     "authenticate_user",
     "basic_scheme",
+    "compute_event_hash",
     "get_current_user",
     "hash_password",
     "require_admin",
     "require_farmer",
+    "require_inspector",
     "verify_password",
 ]
 

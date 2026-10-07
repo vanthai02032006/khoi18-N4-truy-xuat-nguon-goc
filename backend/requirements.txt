@@ -10,3 +10,6 @@ SQLAlchemy==2.0.36
 
 # Validation / serialization (FastAPI dùng ở tầng schema)
 pydantic==2.10.4
+
+# PDF Export (Hồ sơ truy xuất nguồn gốc - S-53)
+reportlab==4.2.5
