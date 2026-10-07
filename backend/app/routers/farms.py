@@ -13,6 +13,7 @@ và ``admin``. Riêng ``DELETE`` dùng ``require_admin`` -> **chỉ admin** đư
 (trên giao diện, nút Xoá cũng bị ẩn với farmer). Chưa đăng nhập → **401**,
 sai vai trò → **403**.
 """
+from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import select

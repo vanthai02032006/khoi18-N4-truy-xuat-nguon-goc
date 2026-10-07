@@ -5,9 +5,11 @@ Tách riêng schemas (Pydantic) khỏi models (SQLAlchemy) giúp:
 - Validate dữ liệu đầu vào tự động và sinh tài liệu Swagger chuẩn.
 """
 
+from __future__ import annotations
+
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class HealthResponse(BaseModel):
@@ -256,9 +258,17 @@ class BatchCreate(BaseModel):
     )
     harvest_date: date = Field(
         ...,
-        description="Ngày thu hoạch, định dạng yyyy-MM-dd.",
+        description="Ngày thu hoạch, định dạng yyyy-MM-dd. Không được ở tương lai.",
         examples=["2026-01-15"],
     )
+
+    @field_validator("harvest_date")
+    @classmethod
+    def validate_harvest_date(cls, v: date) -> date:
+        """Từ chối ngày thu hoạch trong tương lai (SCRUM-36 / T-20)."""
+        if v > date.today():
+            raise ValueError("Ngày thu hoạch không được ở trong tương lai.")
+        return v
 
 
 class BatchUpdate(BatchCreate):
@@ -300,10 +310,19 @@ class BatchResponse(BaseModel):
     )
 
     id: int = Field(..., description="Mã định danh lô nông sản.", examples=[1])
+    batch_code: str = Field(..., description="Mã lô sinh tự động (Unique Batch Code).", examples=["LOT-20261007-0001"])
     farm_id: int = Field(..., description="ID vùng trồng xuất xứ.", examples=[1])
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
     quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
     harvest_date: date = Field(..., description="Ngày thu hoạch.")
+    current_holder_org: str = Field(
+        default="HTX Nông Nghiệp Số 4",
+        description="Tổ chức hiện đang nắm giữ lô hàng thực tế.",
+    )
+    pending_receiver_org: str | None = Field(
+        default=None,
+        description="Tổ chức đang được bàn giao (chờ xác nhận hoặc từ chối).",
+    )
 
 
 # ----------------------------------------------------------------- Chung ---
@@ -370,15 +389,308 @@ class BatchEventResponse(BaseModel):
     payload: str
     actor: str
     organization: str
+    organization_name: str | None = None
     timestamp: str
     hash: str
     previous_hash: str
 
 
 class BatchTimelineResponse(BaseModel):
-    """Dòng thời gian sự kiện của một lô hàng kèm trạng thái tính toàn vẹn."""
+    """Dòng thời gian sự kiện của một lô hàng kèm trạng thái tính toàn vẹn và phân trang."""
 
     batch_id: int
     is_valid: bool = Field(..., description="True nếu toàn bộ chuỗi mã băm toàn vẹn, False nếu bị can thiệp sửa lén.")
     tampered_index: int | None = Field(None, description="Vị trí sự kiện đầu tiên bị sai lệch nếu có.")
+    total: int = Field(default=0, description="Tổng số sự kiện của lô hàng.")
+    limit: int | None = Field(default=None, description="Số lượng sự kiện tối đa trên mỗi trang.")
+    offset: int | None = Field(default=None, description="Vị trí bắt đầu lấy sự kiện.")
     events: list[BatchEventResponse]
+
+
+# ------------------------------------------------------------- Batch Split (T-40) ---
+class BatchSplitItem(BaseModel):
+    """Thông tin một dòng lô con cần tách."""
+
+    quantity: float = Field(..., gt=0, description="Khối lượng của lô con (kg). Phải lớn hơn 0.")
+    note: str | None = Field(default=None, max_length=255, description="Ghi chú phân loại / đóng thùng.")
+
+
+class BatchSplitRequest(BaseModel):
+    """Dữ liệu yêu cầu tách nhập nhiều dòng lô con (SCRUM-56 / T-40)."""
+
+    items: list[BatchSplitItem] = Field(..., min_length=1, description="Danh sách các dòng khối lượng lô con.")
+
+
+class BatchSplitResponse(BaseModel):
+    """Kết quả sau khi tách lô: danh sách các mã lô con và số dư còn lại của lô mẹ."""
+
+    parent_batch_id: int
+    parent_remaining_quantity: float
+    child_batches: list[BatchResponse]
+    message: str
+
+
+# ------------------------------------------------------------- Batch Merge ---
+class BatchMergeItem(BaseModel):
+    """Dòng đóng góp từ một lô mẹ vào mẻ gộp."""
+
+    batch_id: int = Field(..., gt=0, description="ID hoặc mã định danh của lô mẹ cần gộp.")
+    quantity: float = Field(..., gt=0, description="Khối lượng lấy từ lô mẹ này (kg). Phải lớn hơn 0.")
+
+
+class BatchMergeRequest(BaseModel):
+    """Yêu cầu gộp nhiều lô nông sản thành một lô mới."""
+
+    items: list[BatchMergeItem] = Field(..., min_length=2, description="Danh sách các lô thành phần cần gộp (tối thiểu 2 lô).")
+    product_name: str | None = Field(default=None, max_length=255, description="Tên sản phẩm của lô mới (nếu không truyền sẽ lấy theo lô mẹ đầu tiên).")
+    note: str | None = Field(default=None, max_length=500, description="Ghi chú mẻ gộp.")
+
+
+class BatchMergeResponse(BaseModel):
+    """Kết quả sau khi gộp lô thành công."""
+
+    merged_batch: BatchResponse
+    parent_batches: list[BatchResponse]
+    message: str
+
+
+# ------------------------------------------------------------- Batch Handover ---
+class HandoverInitiateRequest(BaseModel):
+    """Dữ liệu khởi tạo bàn giao lô hàng sang một tổ chức khác."""
+
+    target_organization: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Tên tổ chức bên nhận bàn giao (ví dụ: 'Hợp tác xã Sơ chế Mỹ Xương').",
+    )
+    note: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Ghi chú đợt bàn giao (ví dụ: 'Giao 500kg sơ chế').",
+    )
+
+    @field_validator("target_organization")
+    @classmethod
+    def validate_target_org(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("Tên tổ chức nhận không được để trống.")
+        return trimmed
+
+
+class HandoverRejectRequest(BaseModel):
+    """Dữ liệu khi từ chối nhận bàn giao - bắt buộc kèm lý do rõ ràng."""
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Lý do từ chối nhận lô hàng (bắt buộc, không được để trống).",
+    )
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("Lý do từ chối không được để trống.")
+        return trimmed
+
+
+class HandoverActionResponse(BaseModel):
+    """Kết quả sau khi thực hiện thao tác bàn giao (khởi tạo, xác nhận, từ chối)."""
+
+    batch_id: int
+    current_holder_org: str
+    pending_receiver_org: str | None
+    status: str
+    message: str
+    event_id: int
+    event_hash: str
+
+
+# ----------------------------------------------------------- Recall / Inspection Orders ---
+class RecallOrderTargetCreate(BaseModel):
+    """Tổ chức liên quan cần thực thi lệnh."""
+
+    org_name: str = Field(..., min_length=1, max_length=255, description="Tên tổ chức liên quan.")
+
+
+class RecallOrderCreate(BaseModel):
+    """Dữ liệu ban hành lệnh thu hồi / kiểm tra."""
+
+    title: str = Field(..., min_length=1, max_length=255, description="Tiêu đề lệnh (ví dụ: 'Thu hồi khẩn cấp lô xoài nhiễm khuẩn').")
+    reason: str = Field(..., min_length=1, max_length=500, description="Lý do ban hành lệnh.")
+    description: str | None = Field(default=None, max_length=1000, description="Mô tả chi tiết và hướng dẫn xử lý.")
+    batch_id: int | None = Field(default=None, description="ID lô nông sản liên quan (nếu có).")
+    target_organizations: list[str] = Field(..., min_length=1, description="Danh sách các tổ chức liên quan phải xác nhận.")
+
+
+class RecallOrderConfirm(BaseModel):
+    """Dữ liệu xác nhận thực thi lệnh từ một tổ chức."""
+
+    org_name: str | None = Field(default=None, description="Tên tổ chức xác nhận (nếu không truyền qua header X-Organization-Id).")
+    note: str | None = Field(default=None, max_length=500, description="Ghi chú xác nhận hoặc kết quả xử lý.")
+
+
+class RecallTargetResponse(BaseModel):
+    """Trạng thái thực thi của một tổ chức trong lệnh."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    order_id: int
+    org_name: str
+    status: str
+    confirmed_at: str | None = None
+    confirmed_by: str | None = None
+    note: str | None = None
+
+
+class RecallOrderResponse(BaseModel):
+    """Thông tin chi tiết một lệnh thu hồi kèm tiến độ."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    order_code: str
+    title: str
+    description: str | None = None
+    reason: str
+    batch_id: int | None = None
+    issuer_username: str
+    created_at: str
+    completed_at: str | None = None
+    status: str
+    targets: list[RecallTargetResponse]
+
+    # Các trường tổng hợp tiến độ phục vụ cán bộ kiểm tra
+    total_targets: int
+    confirmed_count: int
+    pending_count: int
+    progress_ratio: str  # Ví dụ "3/5"
+    is_completed: bool
+    pending_organizations: list[str]  # Tên các bên chưa xong
+
+
+class RecallOrderConfirmResponse(BaseModel):
+    """Kết quả sau khi một tổ chức xác nhận lệnh."""
+
+    order_id: int
+    order_code: str
+    org_name: str
+    target_status: str
+    order_status: str
+    progress_ratio: str
+    is_order_completed: bool
+    message: str
+    event_id: int | None = None
+    event_hash: str | None = None
+
+
+# ------------------------------------------------------------- Cold Chain ---
+class ColdChainThresholdCreate(BaseModel):
+    """Cấu hình ngưỡng nhiệt độ và độ trễ cho một loại sản phẩm mới."""
+
+    product_type: str = Field(..., min_length=1, max_length=100, description="Tên loại sản phẩm (VD: 'Rau lá', 'Thịt đông lạnh')")
+    temp_min: float = Field(..., description="Ngưỡng nhiệt độ dưới (°C)")
+    temp_max: float = Field(..., description="Ngưỡng nhiệt độ trên (°C)")
+    delay_minutes: int = Field(..., ge=0, description="Độ trễ cho phép vượt ngưỡng trước khi cảnh báo (phút)")
+    description: str | None = Field(default="", max_length=255)
+
+    @field_validator("temp_max")
+    @classmethod
+    def validate_temp_range(cls, v: float, info) -> float:
+        min_v = info.data.get("temp_min")
+        if min_v is not None and v <= min_v:
+            raise ValueError("Ngưỡng trên (temp_max) phải lớn hơn ngưỡng dưới (temp_min)")
+        return v
+
+
+class ColdChainThresholdUpdate(BaseModel):
+    """Cập nhật ngưỡng nhiệt độ hoặc độ trễ."""
+
+    temp_min: float | None = None
+    temp_max: float | None = None
+    delay_minutes: int | None = Field(default=None, ge=0)
+    description: str | None = None
+
+
+class ColdChainThresholdResponse(BaseModel):
+    """Thông tin cấu hình ngưỡng nhiệt độ của loại sản phẩm."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    product_type: str
+    temp_min: float
+    temp_max: float
+    delay_minutes: int
+    description: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class MultiProductEffectiveThresholdRequest(BaseModel):
+    """Yêu cầu tính toán ngưỡng hiệu dụng cho chuyến xe chở nhiều sản phẩm."""
+
+    product_types: list[str] = Field(..., min_length=1, description="Danh sách các loại sản phẩm cùng chở")
+
+
+class MultiProductEffectiveThresholdResponse(BaseModel):
+    """Ngưỡng áp dụng chặt nhất cho chuyến hàng chở nhiều sản phẩm."""
+
+    product_types: list[str]
+    effective_temp_min: float
+    effective_temp_max: float
+    effective_delay_minutes: int
+    strictest_rule_summary: str
+    is_compatible: bool
+    compatibility_warning: str | None = None
+
+
+class TelemetryCheckRequest(BaseModel):
+    """Kiểm tra một bản ghi telemetry nhiệt độ của chuyến xe so với ngưỡng."""
+
+    shipment_code: str = Field(..., min_length=1, max_length=50)
+    product_types: list[str] = Field(..., min_length=1)
+    recorded_temperature: float
+    duration_minutes: float = Field(..., ge=0)
+    location: str | None = "Xe lạnh chuyên dụng"
+
+
+class TelemetryCheckResponse(BaseModel):
+    """Kết quả đánh giá vi phạm chuỗi lạnh."""
+
+    shipment_code: str
+    product_types: list[str]
+    recorded_temperature: float
+    duration_minutes: float
+    applied_temp_min: float
+    applied_temp_max: float
+    applied_delay_minutes: int
+    is_violated: bool
+    violation_reason: str | None = None
+    violation_id: int | None = None
+
+
+class ColdChainViolationResponse(BaseModel):
+    """Chi tiết một bản ghi vi phạm chuỗi lạnh đã lưu (bất biến, không bị tính lại khi đổi cấu hình)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    shipment_code: str
+    product_types_json: str
+    product_types: list[str] = []
+    recorded_temperature: float
+    duration_minutes: float
+    applied_temp_min: float
+    applied_temp_max: float
+    applied_delay_minutes: int
+    violation_reason: str
+    timestamp: str
+    location: str | None = None
+
+

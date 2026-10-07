@@ -90,12 +90,13 @@ def seed_default_users() -> None:
     """
     # Import trong hàm để tránh import vòng: models cần `Base` ở module này,
     # còn security cần `get_db` ở module này.
-    from app.models import ROLE_ADMIN, ROLE_FARMER, User
+    from app.models import ROLE_ADMIN, ROLE_FARMER, ROLE_INSPECTOR, User
     from app.security import hash_password
 
     default_users: tuple[dict[str, str], ...] = (
         {"username": "admin", "password": "123456", "role": ROLE_ADMIN},
         {"username": "farmer", "password": "123456", "role": ROLE_FARMER},
+        {"username": "inspector", "password": "123456", "role": ROLE_INSPECTOR},
     )
 
     db: Session = SessionLocal()
@@ -268,6 +269,58 @@ def seed_sample_agricultural_data() -> None:
         db.close()
 
 
+def seed_default_thresholds() -> None:
+    """Tạo các cấu hình ngưỡng mẫu ban đầu cho từng loại sản phẩm (Rau lá, Thịt đông lạnh, Trái cây)."""
+    from datetime import datetime, timezone
+    from app.models import ColdChainThreshold
+
+    db: Session = SessionLocal()
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        samples = [
+            {
+                "product_type": "Rau lá",
+                "temp_min": 2.0,
+                "temp_max": 8.0,
+                "delay_minutes": 15,
+                "description": "Rau muống, rau cải, xà lách bảo quản mát tiêu chuẩn",
+            },
+            {
+                "product_type": "Thịt đông lạnh",
+                "temp_min": -22.0,
+                "temp_max": -18.0,
+                "delay_minutes": 5,
+                "description": "Thịt bò, thịt heo, thủy hải sản đông sâu",
+            },
+            {
+                "product_type": "Trái cây nhiệt đới",
+                "temp_min": 10.0,
+                "temp_max": 14.0,
+                "delay_minutes": 20,
+                "description": "Xoài, chuối, thanh long tránh tổn thương do lạnh",
+            },
+        ]
+        for s in samples:
+            exists = db.scalar(select(ColdChainThreshold).where(ColdChainThreshold.product_type == s["product_type"]))
+            if exists is None:
+                db.add(
+                    ColdChainThreshold(
+                        product_type=s["product_type"],
+                        temp_min=s["temp_min"],
+                        temp_max=s["temp_max"],
+                        delay_minutes=s["delay_minutes"],
+                        description=s["description"],
+                        created_at=now_iso,
+                        updated_at=now_iso,
+                    )
+                )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def init_db() -> None:
     """Tạo toàn bộ bảng trong database dựa trên metadata của các models.
 
@@ -278,9 +331,11 @@ def init_db() -> None:
     - ``seed_default_users()``: tạo 2 tài khoản mặc định cho chức năng đăng nhập
       + phân quyền (Sprint 4).
     - ``seed_sample_agricultural_data()``: nạp dữ liệu mẫu về thửa đất và lô nông sản.
+    - ``seed_default_thresholds()``: nạp cấu hình ngưỡng nhiệt độ & độ trễ từng loại sản phẩm.
     """
     from app import models  # noqa: F401  (import để đăng ký metadata)
 
     Base.metadata.create_all(bind=engine)
     seed_default_users()
     seed_sample_agricultural_data()
+    seed_default_thresholds()
