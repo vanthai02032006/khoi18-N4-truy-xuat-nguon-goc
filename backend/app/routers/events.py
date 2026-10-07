@@ -15,6 +15,7 @@ from app.database import get_db
 from app.models import Batch, BatchEvent, User
 from app.schemas import BatchEventCreate, BatchEventResponse, BatchTimelineResponse
 from app.security import compute_event_hash, get_current_user, require_farmer
+from app.tenant import scope_query_by_tenant
 
 router = APIRouter(prefix="/batches", tags=["Chuỗi sự kiện & Truy xuất (Batch Events)"])
 
@@ -98,7 +99,9 @@ def get_batch_timeline(
             detail=f"Không tìm thấy lô nông sản với ID #{batch_id}.",
         )
 
-    stmt = select(BatchEvent).where(BatchEvent.batch_id == batch_id).order_by(BatchEvent.id.asc())
+    stmt = select(BatchEvent).where(BatchEvent.batch_id == batch_id)
+    # Tự động lọc theo tổ chức nếu có yêu cầu cách ly dữ liệu (SCRUM-28)
+    stmt = scope_query_by_tenant(stmt, BatchEvent).order_by(BatchEvent.id.asc())
     events = list(db.scalars(stmt).all())
 
     # Quét tính toàn vẹn của chuỗi hash (SCRUM-44)
