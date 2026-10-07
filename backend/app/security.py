@@ -59,6 +59,30 @@ def hash_password(raw_password: str) -> str:
     return hashlib.sha256(raw_password.encode("utf-8")).hexdigest()
 
 
+def compute_event_hash(
+    event_type: str,
+    payload: str,
+    actor: str,
+    organization: str,
+    timestamp: str,
+    previous_hash: str,
+) -> str:
+    """Tính toán mã băm SHA-256 bảo vệ tính toàn vẹn sự kiện (SCRUM-40 / T-24).
+
+    Nội dung được chuẩn hoá, nối cùng previous_hash tạo thành chuỗi liên kết mật mã
+    không thể sửa lén (Cryptographic hash-chain).
+    """
+    import json
+    try:
+        data = json.loads(payload)
+        canonical_payload = json.dumps(data, sort_keys=True, separators=(',', ':'))
+    except Exception:
+        canonical_payload = payload.strip()
+
+    raw_string = f"{previous_hash}|{event_type}|{canonical_payload}|{actor}|{organization}|{timestamp}"
+    return hashlib.sha256(raw_string.encode("utf-8")).hexdigest()
+
+
 def verify_password(raw_password: str, hashed_password: str) -> bool:
     """So sánh mật khẩu người dùng nhập với mật khẩu đã băm trong database.
 

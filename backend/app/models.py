@@ -87,11 +87,48 @@ class Batch(Base):
     # Quan hệ N-1: nhiều lô có thể thuộc về một vùng trồng.
     farm: Mapped["Farm"] = relationship(back_populates="batches")
 
+    # Quan hệ 1-N: một lô có chuỗi sự kiện lịch sử (SCRUM-39).
+    events: Mapped[list["BatchEvent"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+    )
+
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return (
             f"<Batch id={self.id} farm_id={self.farm_id} "
             f"product_name={self.product_name!r}>"
         )
+
+
+class BatchEvent(Base):
+    """Bảng sự kiện gắn với lô hàng (batch_events) — Cơ chế chuỗi bản ghi không sửa được.
+
+    Đáp ứng SCRUM-39 (T-23) & K-01:
+    - Chỉ cho phép ghi thêm (Append-only).
+    - Mỗi sự kiện lưu: loại sự kiện, nội dung JSON (payload), người thực hiện, tổ chức,
+      thời điểm, hash của chính nó và previous_hash tạo thành chuỗi liên kết mật mã.
+    """
+
+    __tablename__ = "batch_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id"),
+        nullable=False,
+        index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload: Mapped[str] = mapped_column(String(1000), nullable=False)
+    actor: Mapped[str] = mapped_column(String(100), nullable=False)
+    organization: Mapped[str] = mapped_column(String(100), nullable=False, default="HTX Nông Nghiệp Số 4")
+    timestamp: Mapped[str] = mapped_column(String(50), nullable=False)
+    hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    previous_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="0" * 64)
+
+    batch: Mapped["Batch"] = relationship(back_populates="events")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<BatchEvent id={self.id} batch_id={self.batch_id} type={self.event_type!r} hash={self.hash[:8]}>"
 
 
 # ------------------------------------------------------------- Vai trò ---
@@ -141,6 +178,7 @@ class User(Base):
 __all__ = [
     "Base",
     "Batch",
+    "BatchEvent",
     "Farm",
     "ROLE_ADMIN",
     "ROLE_FARMER",
