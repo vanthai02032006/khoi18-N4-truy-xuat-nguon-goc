@@ -1,0 +1,50 @@
+{
+  "metadata": {
+    "title": "Bộ dữ liệu chuẩn kiểm chứng phả hệ lô hàng (Lineage Benchmark)",
+    "task": "SCRUM-69 (T-53) & SCRUM-65 (T-49)",
+    "verified_by": ["Nguyễn Thanh Sơn (Lead)", "Lê Hoàng Quân"],
+    "verified_date": "2026-10-07",
+    "description": "Đồ thị mẫu 3 tầng gồm 3 lô gốc thu hoạch, 6 lô tách và 3 lô gộp chéo"
+  },
+  "graph_structure": {
+    "root_batches": ["B-ROOT-01", "B-ROOT-02", "B-ROOT-03"],
+    "relations": [
+      {"parent": "B-ROOT-01", "child": "B-SPLIT-1A", "type": "SPLIT", "quantity": 100},
+      {"parent": "B-ROOT-01", "child": "B-SPLIT-1B", "type": "SPLIT", "quantity": 150},
+      {"parent": "B-ROOT-02", "child": "B-SPLIT-2A", "type": "SPLIT", "quantity": 200},
+      {"parent": "B-ROOT-02", "child": "B-SPLIT-2B", "type": "SPLIT", "quantity": 250},
+      {"parent": "B-ROOT-03", "child": "B-SPLIT-3A", "type": "SPLIT", "quantity": 300},
+      {"parent": "B-ROOT-03", "child": "B-SPLIT-3B", "type": "SPLIT", "quantity": 100},
+      {"parent": "B-SPLIT-1A", "child": "B-MERGE-G1", "type": "MERGE", "quantity": 80},
+      {"parent": "B-SPLIT-2A", "child": "B-MERGE-G1", "type": "MERGE", "quantity": 120},
+      {"parent": "B-SPLIT-2B", "child": "B-MERGE-G2", "type": "MERGE", "quantity": 100},
+      {"parent": "B-SPLIT-3A", "child": "B-MERGE-G2", "type": "MERGE", "quantity": 150}
+    ]
+  },
+  "ground_truth_ancestors": {
+    "B-ROOT-01": [],
+    "B-ROOT-02": [],
+    "B-ROOT-03": [],
+    "B-SPLIT-1A": ["B-ROOT-01"],
+    "B-SPLIT-1B": ["B-ROOT-01"],
+    "B-SPLIT-2A": ["B-ROOT-02"],
+    "B-SPLIT-2B": ["B-ROOT-02"],
+    "B-SPLIT-3A": ["B-ROOT-03"],
+    "B-SPLIT-3B": ["B-ROOT-03"],
+    "B-MERGE-G1": ["B-SPLIT-1A", "B-SPLIT-2A", "B-ROOT-01", "B-ROOT-02"],
+    "B-MERGE-G2": ["B-SPLIT-2B", "B-SPLIT-3A", "B-ROOT-02", "B-ROOT-03"]
+  },
+  "ground_truth_descendants": {
+    "B-ROOT-01": ["B-SPLIT-1A", "B-SPLIT-1B", "B-MERGE-G1"],
+    "B-ROOT-02": ["B-SPLIT-2A", "B-SPLIT-2B", "B-MERGE-G1", "B-MERGE-G2"],
+    "B-ROOT-03": ["B-SPLIT-3A", "B-SPLIT-3B", "B-MERGE-G2"],
+    "B-SPLIT-1A": ["B-MERGE-G1"],
+    "B-SPLIT-1B": [],
+    "B-SPLIT-2A": ["B-MERGE-G1"],
+    "B-SPLIT-2B": ["B-MERGE-G2"],
+    "B-SPLIT-3A": ["B-MERGE-G2"],
+    "B-SPLIT-3B": [],
+    "B-MERGE-G1": [],
+    "B-MERGE-G2": []
+  }
+}
