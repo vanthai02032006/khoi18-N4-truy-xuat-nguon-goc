@@ -147,7 +147,7 @@
               </label>
               <div class="input-wrapper">
                 <input id="login-username" type="text" maxlength="50" required
-                       autocomplete="username" placeholder="Nhập admin hoặc farmer" />
+                       autocomplete="username" placeholder="Nhập admin, farmer hoặc inspector" />
               </div>
             </div>
 
@@ -259,6 +259,11 @@
           </div>
         </header>
 
+        <div id="farm-inspector-note" style="padding: 12px 18px; background: #eef2ff; border: 1.5px solid #c7d2fe; border-radius: 8px; margin: 16px 20px; color: #3730a3; font-size: 0.9rem; display: flex; align-items: center; gap: 10px;" hidden>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <div><strong>Chế độ Kiểm Định & Thanh Tra:</strong> Bạn đang xem danh mục thửa đất canh tác để đối chiếu nguồn gốc. Chức năng khai báo mới dành cho hộ nông dân và quản trị viên.</div>
+        </div>
+
         <form id="farm-form" class="form-wrapper">
           <div id="farm-form-mode" class="mode-alert" hidden></div>
           <div class="form-grid">
@@ -352,6 +357,11 @@
             </div>
           </div>
         </header>
+
+        <div id="batch-inspector-note" style="padding: 12px 18px; background: #eef2ff; border: 1.5px solid #c7d2fe; border-radius: 8px; margin: 16px 20px; color: #3730a3; font-size: 0.9rem; display: flex; align-items: center; gap: 10px;" hidden>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <div><strong>Chế độ Kiểm Định & Thanh Tra:</strong> Bạn có toàn quyền tra cứu lịch sử sự kiện (Audit Chain), xem bản đồ hành trình và trích xuất hồ sơ pháp lý (PDF Dossier) của từng lô hàng bên dưới.</div>
+        </div>
 
         <form id="batch-form" class="form-wrapper">
           <div id="batch-form-mode" class="mode-alert" hidden></div>
@@ -474,6 +484,11 @@
             </div>
           </div>
         </header>
+
+        <div id="order-farmer-note" style="padding: 12px 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin: 16px 20px; color: #475569; font-size: 0.9rem; display: flex; align-items: center; gap: 10px;" hidden>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <div><strong>Hồ sơ lệnh thanh tra:</strong> Danh sách các lệnh kiểm tra và thu hồi từ cơ quan thẩm quyền. Chỉ Cán bộ kiểm tra (Inspector) hoặc Quản trị viên mới được ban hành lệnh mới.</div>
+        </div>
 
         <!-- Form tạo lệnh mới (Chỉ dành cho inspector hoặc admin) -->
         <form id="order-form" class="entity-form" style="margin-bottom: 24px;">
@@ -1040,12 +1055,15 @@
     function quickFill(user, pass) {
       const u = document.getElementById('login-username');
       const p = document.getElementById('login-password');
+      const f = document.getElementById('login-form');
       if (u && p) {
         u.value = user;
         p.value = pass;
-        u.dispatchEvent(new Event('input'));
-        p.dispatchEvent(new Event('input'));
-        u.focus();
+        u.dispatchEvent(new Event('input', { bubbles: true }));
+        p.dispatchEvent(new Event('input', { bubbles: true }));
+        if (f) {
+          f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        }
       }
     }
   </script>

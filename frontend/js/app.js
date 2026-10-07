@@ -225,6 +225,7 @@ function clearSession() {
 function applySessionToUi() {
   const isLoggedIn = session !== null;
   const isAdmin = isLoggedIn && session.role === ROLE_ADMIN;
+  const isInspector = isLoggedIn && session.role === ROLE_INSPECTOR;
 
   $("login-view").hidden = isLoggedIn;
   $("app-view").hidden = !isLoggedIn;
@@ -245,7 +246,35 @@ function applySessionToUi() {
     }
   }
 
+  // 1. Quản trị tài khoản: chỉ admin
   $("users-card").hidden = !isAdmin;
+
+  // 2. Form vùng trồng và lô thu hoạch: chỉ farmer hoặc admin (inspector xem dạng kiểm tra/đối chiếu)
+  if ($("farm-form")) {
+    $("farm-form").hidden = isInspector;
+  }
+  if ($("batch-form")) {
+    $("batch-form").hidden = isInspector;
+  }
+  if ($("farm-inspector-note")) {
+    $("farm-inspector-note").hidden = !isInspector;
+  }
+  if ($("batch-inspector-note")) {
+    $("batch-inspector-note").hidden = !isInspector;
+  }
+
+  // 3. Form ban hành lệnh kiểm tra / thu hồi: chỉ inspector hoặc admin
+  if ($("order-form")) {
+    $("order-form").hidden = !isInspector && !isAdmin;
+  }
+  if ($("order-farmer-note")) {
+    $("order-farmer-note").hidden = isInspector || isAdmin;
+  }
+
+  // 4. Form cấu hình ngưỡng chuỗi lạnh: chỉ admin mới sửa ngưỡng gốc
+  if ($("threshold-form")) {
+    $("threshold-form").hidden = !isAdmin;
+  }
 }
 
 /**
@@ -294,12 +323,17 @@ function handleLogout() {
   farms = [];
   batches = [];
   users = [];
+  orders = [];
+  thresholds = [];
+  violations = [];
   resetFarmForm(); // bỏ chế độ sửa (nếu đang sửa) trước khi vẽ lại bảng rỗng
   resetBatchForm();
   renderFarms();
   renderFarmOptions();
   renderBatches();
   renderUsers();
+  renderOrders();
+  renderViolations();
 
   applySessionToUi();
   toast(username ? `Đã đăng xuất tài khoản ${username}.` : "Đã đăng xuất.", "info");
@@ -350,9 +384,13 @@ function renderFarms() {
         <td>${escapeHtml(farm.owner)}</td>
         <td>
           <div class="table__actions">
-            <button class="btn btn--primary btn--sm" type="button"
+            ${
+              session && session.role !== ROLE_INSPECTOR
+                ? `<button class="btn btn--primary btn--sm" type="button"
                     data-action="edit" data-entity="farm"
-                    data-id="${escapeHtml(farm.id)}">Sửa</button>
+                    data-id="${escapeHtml(farm.id)}">Sửa</button>`
+                : `<span style="font-size: 0.82rem; color: #64748b; font-style: italic;">Chỉ xem</span>`
+            }
             ${
               canDelete()
                 ? `<button class="btn btn--danger btn--sm" type="button"
@@ -551,13 +589,17 @@ function renderBatches() {
                     data-action="timeline" data-entity="batch"
                     data-id="${escapeHtml(batch.id)}"
                     title="Xem dòng thời gian lịch sử & tính toàn vẹn chuỗi">Lịch sử</button>
-            <button class="btn btn--sm btn-table-split" type="button"
+            ${
+              session && session.role !== ROLE_INSPECTOR
+                ? `<button class="btn btn--sm btn-table-split" type="button"
                     data-action="split" data-entity="batch"
                     data-id="${escapeHtml(batch.id)}"
                     title="Tách nhập nhiều dòng lô con (T-40)">Tách</button>
-            <button class="btn btn--primary btn--sm" type="button"
+                   <button class="btn btn--primary btn--sm" type="button"
                     data-action="edit" data-entity="batch"
-                    data-id="${escapeHtml(batch.id)}">Sửa</button>
+                    data-id="${escapeHtml(batch.id)}">Sửa</button>`
+                : ""
+            }
             ${
               canDelete()
                 ? `<button class="btn btn--danger btn--sm" type="button"

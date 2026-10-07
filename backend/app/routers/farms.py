@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Farm, User
 from app.schemas import DeleteResponse, FarmCreate, FarmResponse, FarmUpdate
-from app.security import require_admin, require_farmer
+from app.security import require_admin, require_farm_view, require_farmer
 
 router = APIRouter(
     prefix="/farms",
@@ -93,7 +93,7 @@ def create_farm(
     summary="Lấy danh sách vùng trồng",
     description=(
         "Trả về toàn bộ vùng trồng, sắp xếp theo `id` tăng dần.\n\n"
-        "**Phân quyền:** đăng nhập với role `farmer` hoặc `admin` - cả hai vai trò "
+        "**Phân quyền:** đăng nhập với role `farmer`, `inspector` hoặc `admin` - "
         "đều được phép xem."
     ),
     responses={
@@ -102,7 +102,7 @@ def create_farm(
     },
 )
 def list_farms(
-    current_user: User = Depends(require_farmer),
+    current_user: User = Depends(require_farm_view),
     db: Session = Depends(get_db),
 ) -> list[Farm]:
     """Lấy danh sách vùng trồng.

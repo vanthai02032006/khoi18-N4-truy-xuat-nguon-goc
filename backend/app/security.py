@@ -204,6 +204,17 @@ def require_inspector(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+def require_farm_view(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency: cho phép farmer, admin, và inspector xem danh sách vùng trồng."""
+    from app.models import ROLE_ADMIN, ROLE_FARMER, ROLE_INSPECTOR
+    if current_user.role not in (ROLE_FARMER, ROLE_ADMIN, ROLE_INSPECTOR):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ tài khoản nông dân, thanh tra hoặc admin mới có quyền xem danh sách vùng trồng.",
+        )
+    return current_user
+
+
 __all__ = [
     "authenticate_user",
     "basic_scheme",
@@ -211,6 +222,7 @@ __all__ = [
     "get_current_user",
     "hash_password",
     "require_admin",
+    "require_farm_view",
     "require_farmer",
     "require_inspector",
     "verify_password",
