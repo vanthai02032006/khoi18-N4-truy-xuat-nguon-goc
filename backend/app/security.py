@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ROLE_ADMIN, ROLE_FARMER, User
+from app.models import ROLE_ADMIN, ROLE_FARMER, ROLE_INSPECTOR, User
 
 # ``auto_error=False`` để mình tự trả lỗi 401 với thông điệp tiếng Việt,
 # thay vì để FastAPI trả "Not authenticated" (mặc định của HTTPBasic).
@@ -190,6 +190,19 @@ def require_farmer(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+def require_inspector(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency: chỉ cho phép cán bộ kiểm tra (inspector) và vai trò cao hơn (admin).
+
+    Đáp ứng yêu cầu: Chỉ vai trò cán bộ kiểm tra và vai trò cao hơn mới thấy và được gọi API này (T-28 / SCRUM-44).
+    """
+    if current_user.role not in (ROLE_INSPECTOR, ROLE_ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ cán bộ kiểm tra (inspector) hoặc quản trị viên (admin) được phép thực hiện chức năng này.",
+        )
+    return current_user
+
+
 __all__ = [
     "authenticate_user",
     "basic_scheme",
@@ -197,6 +210,7 @@ __all__ = [
     "hash_password",
     "require_admin",
     "require_farmer",
+    "require_inspector",
     "verify_password",
 ]
 

@@ -90,12 +90,13 @@ def seed_default_users() -> None:
     """
     # Import trong hàm để tránh import vòng: models cần `Base` ở module này,
     # còn security cần `get_db` ở module này.
-    from app.models import ROLE_ADMIN, ROLE_FARMER, User
+    from app.models import ROLE_ADMIN, ROLE_FARMER, ROLE_INSPECTOR, User
     from app.security import hash_password
 
     default_users: tuple[dict[str, str], ...] = (
         {"username": "admin", "password": "123456", "role": ROLE_ADMIN},
         {"username": "farmer", "password": "123456", "role": ROLE_FARMER},
+        {"username": "inspector", "password": "123456", "role": ROLE_INSPECTOR},
     )
 
     db: Session = SessionLocal()
@@ -279,8 +280,18 @@ def init_db() -> None:
       + phân quyền (Sprint 4).
     - ``seed_sample_agricultural_data()``: nạp dữ liệu mẫu về thửa đất và lô nông sản.
     """
+    from sqlalchemy import text
     from app import models  # noqa: F401  (import để đăng ký metadata)
 
     Base.metadata.create_all(bind=engine)
+
+    # Đảm bảo cột status tồn tại nếu database đã được khởi tạo từ trước
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE batches ADD COLUMN status VARCHAR(50) DEFAULT 'ACTIVE';"))
+    except Exception:
+        pass  # Cột đã tồn tại hoặc bảng mới tạo
+
     seed_default_users()
     seed_sample_agricultural_data()
+

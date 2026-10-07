@@ -7,13 +7,15 @@
 """
 
 from datetime import datetime, timezone
+import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Batch, BatchEvent, User
+from app.models import Batch, BatchEvent, Farm, User
 from app.schemas import BatchEventCreate, BatchEventResponse, BatchTimelineResponse
+
 from app.security import compute_event_hash, get_current_user, require_farmer
 from app.tenant import scope_query_by_tenant
 
@@ -104,10 +106,52 @@ def get_batch_timeline(
     stmt = scope_query_by_tenant(stmt, BatchEvent).order_by(BatchEvent.id.asc())
     events = list(db.scalars(stmt).all())
 
+    # Nếu lô vừa tạo chưa có sự kiện nào, tự động tạo sự kiện HARVEST ban đầu
+    # để bảo đảm chuỗi mắt xích liên tục và thấy đúng một dòng, không hiện trang trống
+    if not events:
+        farm = db.get(Farm, batch.farm_id) if hasattr(batch, 'farm_id') else None
+        org_name = farm.owner if farm and farm.owner else "Hợp Tác Xã Nông Nghiệp"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        init_payload = json.dumps(
+            {
+                "product_name": batch.product_name,
+                "quantity": batch.quantity,
+                "harvest_date": str(batch.harvest_date),
+                "note": "Khởi tạo thu hoạch ban đầu",
+            },
+            ensure_ascii=False,
+        )
+        init_hash = compute_event_hash(
+            event_type="HARVEST",
+            payload=init_payload,
+            actor="farmer",
+            organization=org_name,
+            timestamp=now_iso,
+            previous_hash="0" * 64,
+        )
+        initial_event = BatchEvent(
+            batch_id=batch_id,
+            event_type="HARVEST",
+            payload=init_payload,
+            actor="farmer",
+            organization=org_name,
+            timestamp=now_iso,
+            hash=init_hash,
+            previous_hash="0" * 64,
+        )
+        db.add(initial_event)
+        try:
+            db.commit()
+            db.refresh(initial_event)
+            events = [initial_event]
+        except Exception:
+            db.rollback()
+
     # Quét tính toàn vẹn của chuỗi hash (SCRUM-44)
     is_valid = True
     tampered_index = None
     expected_prev_hash = "0" * 64
+
 
     for idx, ev in enumerate(events):
         # 1. Kiểm tra previous_hash có khớp không
