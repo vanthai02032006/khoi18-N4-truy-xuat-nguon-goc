@@ -5,7 +5,8 @@ Cung cấp **đầy đủ CRUD** (hoàn thiện ở Sprint 5):
 - ``POST   /farms``           : tạo vùng trồng mới.
 - ``GET    /farms``           : lấy danh sách vùng trồng.
 - ``PUT    /farms/{farm_id}`` : cập nhật (thay thế) thông tin vùng trồng.
-- ``DELETE /farms/{farm_id}`` : xoá vùng trồng - **xoá kèm** mọi lô nông sản của nó.
+- ``DELETE /farms/{farm_id}`` : xoá vùng trồng - **xoá kèm** mọi lô nông sản của nó
+  (bị chặn bằng **409** nếu lô thuộc vùng đã có sự kiện trong nhật ký chỉ thêm).
 
 **Phân quyền (Sprint 4):** ``POST``/``GET``/``PUT`` dùng dependency
 ``require_farmer`` -> yêu cầu đăng nhập bằng HTTP Basic, cho phép role ``farmer``
@@ -15,12 +16,11 @@ sai vai trò → **403**.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-
 from app.database import get_db
-from app.models import Farm, User
+from app.models import Batch, BatchEvent, Farm, User
 from app.schemas import DeleteResponse, FarmCreate, FarmResponse, FarmUpdate
 from app.security import require_admin, require_farmer
 
@@ -196,12 +196,18 @@ def update_farm(
         "đó (nhờ `cascade=\"all, delete-orphan\"` ở quan hệ Farm 1-N). Số lô bị "
         "xoá kèm được trả về ở field `deleted_batches` để giao diện thông báo.\n\n"
         "**Phân quyền:** chỉ `role = admin` được xoá (dùng `require_admin`). "
-        "Farmer gọi sẽ nhận `403 Forbidden` - giao diện cũng ẩn nút Xoá với farmer."
+        "Farmer gọi sẽ nhận `403 Forbidden` - giao diện cũng ẩn nút Xoá với farmer.\n\n"
+        "**Bảng chỉ thêm:** nếu bất kỳ lô nào của vùng đã có sự kiện trong nhật ký "
+        "`batch_events` thì **không xoá được** - API trả `409 Conflict` (nhật ký "
+        "không bị xoá dây chuyền theo vùng trồng)."
     ),
     responses={
         status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
         status.HTTP_403_FORBIDDEN: {"description": "Đã đăng nhập nhưng không phải admin."},
         status.HTTP_404_NOT_FOUND: {"description": "Không tìm thấy vùng trồng."},
+        status.HTTP_409_CONFLICT: {
+            "description": "Lô thuộc vùng đã có sự kiện trong nhật ký chỉ thêm nên không thể xoá.",
+        },
     },
 )
 def delete_farm(
@@ -231,6 +237,25 @@ def delete_farm(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy vùng trồng có id={farm_id}.",
+        )
+
+    # Quy ước BẢNG CHỈ THÊM: xoá vùng trồng sẽ xoá dây chuyền các lô của nó, kéo
+    # theo lệnh DELETE trên nhật ký `batch_events` - thứ bị CSDL từ chối. Vì vậy
+    # nếu bất kỳ lô nào của vùng đã có sự kiện thì chặn sớm bằng 409.
+    event_count = db.scalar(
+        select(func.count())
+        .select_from(BatchEvent)
+        .join(Batch, Batch.id == BatchEvent.batch_id)
+        .where(Batch.farm_id == farm_id)
+    )
+    if event_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Vùng trồng #{farm_id} có {event_count} sự kiện trong nhật ký "
+                "chuỗi băm của các lô thuộc vùng nên không thể xoá (bảng chỉ thêm). "
+                "Muốn đính chính, hãy ghi thêm sự kiện mới thay vì xoá vùng trồng."
+            ),
         )
 
     # Đếm số lô TRƯỚC khi xoá: sau `db.delete()` không nên truy vấn lại quan hệ

@@ -20,7 +20,11 @@ Backend API cho đề tài **"Truy xuất nguồn gốc và giám sát chuỗi l
   `FarmUpdate`/`BatchUpdate`/`DeleteResponse`; frontend ẩn/hiện theo trạng thái
   đăng nhập, thêm cột **Thao tác** (Sửa/Xoá) và dashboard thống kê
   (tổng vùng trồng, tổng lô nông sản, tổng sản lượng).
-  *Chưa có* QR code, blockchain hay nghiệp vụ chuỗi lạnh.
+- **Bảng chỉ thêm (append-only):** nhật ký hành trình lô nông sản
+  (bảng `batch_events`) **chỉ được `SELECT`/`INSERT`** — `UPDATE`/`DELETE` bị
+  **cơ sở dữ liệu từ chối**. Quy ước và cơ chế bảo vệ: xem mục
+  [Bảng chỉ thêm](#bảng-chỉ-thêm-append-only).
+  *Chưa có* QR code, blockchain hay API nghiệp vụ cho chuỗi lạnh.
 
 ---
 
@@ -33,9 +37,11 @@ backend/
 │   ├── main.py              # Khởi tạo FastAPI, CORS, lifespan, đăng ký router
 │   ├── database.py          # Engine SQLite, SessionLocal, Base, get_db, init_db
 │   ├── models.py            # ORM models: Farm → "farms", Batch → "batches",
-│   │                        #             User → "users"
+│   │                        #   BatchEvent → "batch_events" (bảng chỉ thêm),
+│   │                        #   User → "users"
 │   ├── schemas.py           # Pydantic: Health / Farm / Batch / Auth
 │   │                        #   (Create + Update + Response + DeleteResponse)
+│   ├── append_only.py       # Quy ước BẢNG CHỈ THÊM + 2 lớp bảo vệ bất biến
 │   ├── security.py          # Băm mật khẩu + xác thực/phân quyền (Sprint 4)
 │   └── routers/
 │       ├── __init__.py      # Export các router
@@ -44,6 +50,11 @@ backend/
 │       ├── users.py         # GET /users - chỉ admin (Sprint 4)
 │       ├── farms.py         # CRUD /farms: POST, GET, PUT {id}, DELETE {id} (Sprint 5)
 │       └── batches.py       # CRUD /batches: POST, GET, GET {id}, PUT {id}, DELETE {id}
+├── migrations/              # Migration SQL cho PostgreSQL (production)
+│   └── 002_batch_events_append_only.sql  # Quyền append-only + trigger bất biến
+├── tests/                   # Test tự động (pytest) - chạy trong CI
+│   ├── conftest.py          # Fixture: file SQLite tạm, engine app/toàn quyền
+│   └── test_append_only_immutability.py  # CSDL từ chối UPDATE/DELETE
 ├── requirements.txt         # Danh sách thư viện Python
 ├── .gitignore               # Bỏ qua file DB, __pycache__, .venv...
 └── README.md                # Tài liệu này
@@ -146,6 +157,33 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 > thêm/sửa dữ liệu nông sản nhưng sẽ nhận **`403 Forbidden`** khi xoá, và trên
 > giao diện frontend thì **nút Xoá không hiện** với farmer.
 
+### Bước 6 — Chạy test tự động (pytest)
+
+Bộ test dùng file SQLite tạm nên **không cần PostgreSQL** và không chạm vào
+`backend/ttcs.db`:
+
+```powershell
+cd backend
+pip install pytest            # chỉ cần cho môi trường dev/CI
+$env:PYTHONPATH = "backend"   # PowerShell; trên bash: PYTHONPATH=backend
+pytest tests -v               # test của backend (gồm test bảng chỉ thêm)
+```
+
+Repo có **hai** bộ test, chạy từ thư mục gốc:
+
+```powershell
+$env:PYTHONPATH = "backend"
+pytest tests -v               # test tích hợp toàn hệ thống (concurrency, lineage, tenant)
+pytest backend/tests -v       # test của backend (quy ước bảng chỉ thêm)
+```
+
+Đây cũng đúng là 2 lệnh mà pipeline CI chạy:
+
+```bash
+flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics
+PYTHONPATH=backend pytest backend/tests -v
+```
+
 ---
 
 ## 3. API hiện có
@@ -157,12 +195,12 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | GET | `/farms` | Lấy danh sách vùng trồng (sắp xếp theo `id` tăng dần) | farmer **hoặc** admin | `200` · `401` |
 | POST | `/farms` | Tạo vùng trồng mới | farmer **hoặc** admin | `201` · `401` · `422` dữ liệu sai |
 | PUT | `/farms/{farm_id}` | Cập nhật (thay thế) vùng trồng theo `id` | farmer **hoặc** admin | `200` · `401` · `404` không tìm thấy · `422` dữ liệu sai |
-| DELETE | `/farms/{farm_id}` | Xoá vùng trồng **và các lô nông sản của nó** | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy |
+| DELETE | `/farms/{farm_id}` | Xoá vùng trồng **và các lô nông sản của nó** (chặn nếu lô thuộc vùng đã có sự kiện) | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy · `409` đã có sự kiện |
 | GET | `/batches` | Lấy danh sách lô nông sản (sắp xếp theo `id` tăng dần) | công khai | `200` |
 | GET | `/batches/{batch_id}` | Xem chi tiết một lô nông sản | công khai | `200` · `404` không tìm thấy |
 | POST | `/batches` | Tạo lô nông sản (kiểm tra `farm_id` tồn tại) | farmer **hoặc** admin | `201` · `401` · `404` farm không tồn tại · `422` dữ liệu sai |
 | PUT | `/batches/{batch_id}` | Cập nhật (thay thế) lô nông sản - đổi được `farm_id` nếu tồn tại | farmer **hoặc** admin | `200` · `401` · `404` lô/farm không tồn tại · `422` |
-| DELETE | `/batches/{batch_id}` | Xoá một lô nông sản | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy |
+| DELETE | `/batches/{batch_id}` | Xoá một lô nông sản (chặn nếu lô đã có sự kiện trong nhật ký) | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy · `409` đã có sự kiện |
 | GET | `/users` | Danh sách tài khoản (không kèm mật khẩu) | **chỉ admin** | `200` · `401` · `403` sai vai trò |
 
 > ✅ **Sprint 5 hoàn thiện CRUD:** cả Farm và Batch đều có đủ `POST` / `GET` /
@@ -252,6 +290,103 @@ chạy đầu tiên và **không ghi đè** nếu tài khoản đã tồn tại:
 | --- | --- | --- | --- |
 | `admin` | `123456` | `admin` | Toàn bộ chức năng, xem được `GET /users` |
 | `farmer` | `123456` | `farmer` | Quản lý vùng trồng + lô nông sản (`/farms`, `POST /batches`) |
+
+### Bảng chỉ thêm (Append-Only)
+
+> **Quy ước:** một bảng nằm trong `APPEND_ONLY_TABLES` (`app/append_only.py`) là
+> **sổ nhật ký bất biến** — tài khoản ứng dụng **chỉ được `SELECT` và `INSERT`**,
+> mọi câu lệnh `UPDATE` / `DELETE` bị **cơ sở dữ liệu từ chối**.
+
+**Bảng đang áp dụng:** `batch_events` — nhật ký chuỗi băm của lô nông sản (đã có
+sẵn trên `develop` từ T-25; quy ước này **bổ sung lớp bảo vệ** cho bảng đó, không
+tạo bảng mới).
+
+#### Vì sao cần quy ước này
+
+Nhật ký hành trình là **bằng chứng truy xuất nguồn gốc**. Chỉ cần một lệnh
+`UPDATE` sửa nhiệt độ kho lạnh, hoặc một lệnh `DELETE` xoá dấu vết bàn giao, là
+toàn bộ hồ sơ mất giá trị đối chiếu. Vì vậy quy ước được **thực thi ngay trong
+CSDL** thay vì trông chờ vào việc lập trình viên nhớ kiểm tra ở tầng code.
+
+#### Hai lớp bảo vệ bất biến (defense-in-depth)
+
+| Lớp | PostgreSQL (production) | SQLite (local/demo + CI) |
+| --- | --- | --- |
+| **1. Quyền tài khoản ứng dụng** | `GRANT SELECT, INSERT` + `REVOKE UPDATE, DELETE, TRUNCATE` cho role `agri_app_user` — xem `migrations/002_batch_events_append_only.sql` | `sqlite3.Connection.set_authorizer` trên mọi kết nối của engine (`app/append_only.py`); SQLite không có role nên đây là lớp tương đương |
+| **2. Trigger CSDL** | Trigger `BEFORE UPDATE` / `BEFORE DELETE` + `RAISE EXCEPTION` | Trigger `BEFORE UPDATE` / `BEFORE DELETE` + `RAISE(ABORT, ...)` |
+
+- Lớp 1 chặn **tài khoản ứng dụng** — đúng thứ mà code nghiệp vụ dùng.
+- Lớp 2 là **van an toàn cuối cùng**: chặn cả kết nối **toàn quyền** (tài khoản
+  migration/admin) và cả khi truy cập bằng thư viện khác (`sqlite3` thuần,
+  `psql`), nên không thể lách bằng cách đổi cách kết nối.
+
+Thứ tự khởi động: `app/database.py` gọi `install_append_only_authorizer(engine)`
+**ngay sau khi tạo engine** (trước kết nối đầu tiên), còn `init_db()` gọi
+`create_append_only_triggers()` **sau** `create_all()` (vì trigger cần bảng đã
+tồn tại). Cả hai hàm đều **idempotent** nên khởi động lại server nhiều lần vẫn
+an toàn.
+
+#### Cấu trúc bảng `batch_events`
+
+Bảng do T-25 (`develop`) khai báo — mục này ghi lại để thấy rõ lớp bảo vệ áp lên
+cột nào khi có lệnh ghi/sửa.
+
+| Cột | Kiểu | Ràng buộc |
+| --- | --- | --- |
+| `id` | INTEGER | Khoá chính, tự tăng |
+| `batch_id` | INTEGER | **Khoá ngoại → `batches.id`**, bắt buộc, có index |
+| `event_type` | VARCHAR(50) | Bắt buộc (`HARVEST`, `HANDOVER_PENDING`, `OWNER_CHANGED`...) |
+| `payload` | VARCHAR(1000) | Bắt buộc — nội dung JSON (canonical) của sự kiện |
+| `actor` | VARCHAR(100) | Bắt buộc — tài khoản thực hiện |
+| `organization` | VARCHAR(100) | Bắt buộc — tổ chức ghi nhận |
+| `timestamp` | VARCHAR(50) | Bắt buộc — thời điểm ISO-8601 |
+| `hash` | VARCHAR(64) | Bắt buộc — băm của chính bản ghi |
+| `previous_hash` | VARCHAR(64) | Bắt buộc — băm của bản ghi liền trước |
+
+#### Hệ quả bắt buộc: lô/vùng trồng đã có sự kiện **không xoá được**
+
+Vì nhật ký là bảng chỉ thêm, quan hệ `Batch.events` **không** còn
+`cascade="all, delete-orphan"` (nếu giữ, xoá lô sẽ kéo theo `DELETE` trên nhật ký
+— đúng thứ bị cấm).
+
+Tuy nhiên kể cả khi bỏ cascade thì việc xoá lô **vẫn** không thực hiện được:
+SQLAlchemy sẽ cố gỡ khoá ngoại của các sự kiện con
+(`UPDATE batch_events SET batch_id = NULL`) và lệnh `UPDATE` đó cũng bị từ chối.
+Vì lỗi ở tầng CSDL sẽ thành **500** khó hiểu, tầng API **chặn sớm bằng `409`**:
+
+| Endpoint | Điều kiện | Kết quả |
+| --- | --- | --- |
+| `DELETE /batches/{batch_id}` | Lô đã có ≥ 1 sự kiện | **`409 Conflict`** + hướng dẫn ghi thêm sự kiện |
+| `DELETE /farms/{farm_id}` | Có lô thuộc vùng đã có ≥ 1 sự kiện | **`409 Conflict`** |
+| Cả hai | Đối tượng **chưa có** sự kiện | Vẫn xoá bình thường (**`200`**) |
+
+> Muốn "đính chính" nhật ký: **ghi thêm một sự kiện mới** mô tả việc đính chính,
+> không sửa/xoá bản ghi cũ. Đây là chủ ý của quy ước, không phải lỗi.
+
+#### Thêm một bảng chỉ thêm mới
+
+1. Khai báo model trong `app/models.py` (bảng sẽ tự được `create_all()` tạo).
+2. Thêm tên bảng vào `APPEND_ONLY_TABLES` trong `app/append_only.py`.
+3. (Production) bổ sung `GRANT`/`REVOKE` + trigger vào migration PostgreSQL.
+4. Chạy `pytest backend/tests -v` — test bất biến tự áp dụng cho bảng mới.
+
+#### Chốt chặn tự động trong CI
+
+`tests/test_append_only_immutability.py` chạy mỗi lần CI và khẳng định:
+
+- `INSERT` / `SELECT` trên bảng chỉ thêm **thành công**;
+- `UPDATE` / `DELETE` từ **tài khoản ứng dụng** bị **từ chối**, dữ liệu giữ nguyên;
+- `UPDATE` / `DELETE` từ **kết nối toàn quyền** (và từ `sqlite3` thuần) **vẫn bị
+  từ chối** — chứng minh lớp bảo vệ nằm trong CSDL;
+- mọi bảng trong `APPEND_ONLY_TABLES` đều **tồn tại** và có **đủ 2 trigger**;
+- các bảng nghiệp vụ khác (`farms`, `batches`, `users`) **không bị chặn nhầm**.
+
+Nhờ đó, nếu sau này có ai **vô tình cấp lại quyền** `UPDATE`/`DELETE` cho bảng
+chỉ thêm (hoặc xoá trigger bảo vệ), CI sẽ đỏ ngay.
+
+> ⚠️ **Lưu ý khi vận hành:** không chạy lệnh `UPDATE`/`DELETE` trên bảng chỉ thêm
+> bằng tài khoản admin để "sửa dữ liệu gấp" — trigger sẽ chặn. Muốn đính chính
+> nhật ký thì **ghi thêm một sự kiện mới** (append) mô tả việc đính chính.
 
 ### Cơ chế đăng nhập & phân quyền (Sprint 4 - không dùng JWT)
 
@@ -486,10 +621,14 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | File | Vai trò |
 | --- | --- |
 | `app/main.py` | Entrypoint: tạo `FastAPI(...)`, cấu hình CORS, dùng `lifespan` để gọi `init_db()` khi server start, và `include_router` để gom các endpoint. Khi mở rộng, chỉ cần thêm 1 dòng `app.include_router(...)`. |
-| `app/database.py` | Tầng hạ tầng dữ liệu: tạo `engine` kết nối SQLite (`check_same_thread=False` vì FastAPI có thể xử lý request trên thread khác — tham số này chỉ dành riêng cho SQLite), `SessionLocal` để mở session mỗi request, `Base` (DeclarativeBase) cho mọi model, `get_db()` (dependency đóng session tự động), `init_db()` (tạo bảng từ metadata) và `seed_default_users()` (tạo 2 tài khoản demo `admin`/`farmer` nếu chưa có). |
-| `app/models.py` | Nơi khai báo bảng ORM (SQLAlchemy 2.0 style: `Mapped` + `mapped_column`). Hiện có: `Farm` → bảng `farms` (`id`, `name`, `location`, `area`, `owner`) và `Batch` → bảng `batches` (`id`, `farm_id` FK → `farms.id`, `product_name`, `quantity`, `harvest_date`) với quan hệ 2 chiều `Farm 1-N Batch` (`farm.batches` ↔ `batch.farm`), cùng `User` → bảng `users` (`id`, `username` unique, `password` = hash SHA-256, `role`) kèm hằng số `ROLE_ADMIN`/`ROLE_FARMER`. Thêm bảng mới ở đây thì `init_db()` sẽ tự tạo. |
+| `app/database.py` | Tầng hạ tầng dữ liệu: tạo `engine` kết nối SQLite (`check_same_thread=False` vì FastAPI có thể xử lý request trên thread khác — tham số này chỉ dành riêng cho SQLite), `SessionLocal` để mở session mỗi request, `Base` (DeclarativeBase) cho mọi model, `get_db()` (dependency đóng session tự động), `init_db()` (tạo bảng từ metadata + tạo trigger bảng chỉ thêm) và `seed_default_users()` (tạo 2 tài khoản demo `admin`/`farmer` nếu chưa có). Gọi `install_append_only_authorizer(engine)` ngay sau khi tạo engine để mọi kết nối trong pool đều bị giới hạn quyền ghi trên bảng chỉ thêm. |
+| `app/models.py` | Nơi khai báo bảng ORM (SQLAlchemy 2.0 style: `Mapped` + `mapped_column`). Hiện có: `Farm` → bảng `farms` (`id`, `name`, `location`, `area`, `owner`) và `Batch` → bảng `batches` (`id`, `farm_id` FK → `farms.id`, `product_name`, `quantity`, `harvest_date`) với quan hệ 2 chiều `Farm 1-N Batch` (`farm.batches` ↔ `batch.farm`), `BatchEvent` → bảng **chỉ thêm** `batch_events` (`batch_id` FK → `batches.id`, `event_type`, `payload`, `actor`, `organization`, `timestamp`, `hash`, `previous_hash`; quan hệ `Batch.events` **không** dùng cascade), cùng `User` → bảng `users` (`id`, `username` unique, `password` = hash SHA-256, `role`) kèm hằng số `ROLE_ADMIN`/`ROLE_FARMER`. Thêm bảng mới ở đây thì `init_db()` sẽ tự tạo. |
 | `app/schemas.py` | Pydantic models mô tả dữ liệu request/response: `HealthResponse`, `FarmCreate`/`FarmResponse`, `BatchCreate`/`BatchResponse` (`farm_id > 0`, chuỗi không rỗng, `quantity > 0`, `harvest_date` kiểu `date`). `*Response` dùng `from_attributes=True` để trả thẳng ORM object kèm `id`; Sprint 4 bổ sung `LoginRequest` (`username`, `password`), `LoginResponse` (`username`, `role`) và `UserResponse` (**không** có trường `password`); Sprint 5 bổ sung `FarmUpdate`/`BatchUpdate` (kế thừa `*Create` để dùng lại validate, phục vụ `PUT`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`). Tách khỏi `models.py` để không lộ cấu trúc bảng ra API. |
 | `app/security.py` | **Sprint 4** — xác thực & phân quyền *không JWT*: `hash_password()` / `verify_password()` (SHA-256 + `hmac.compare_digest`, chỉ dùng thư viện chuẩn), `authenticate_user()` (tra bảng `users`), `basic_scheme = HTTPBasic(auto_error=False)` và 3 dependency: `get_current_user()` (**401** nếu thiếu/sai thông tin đăng nhập), `require_admin()` (**403** nếu không phải admin), `require_farmer()` (cho cả farmer và admin). Router chỉ cần thêm `user = Depends(require_admin)` là đã có phân quyền. |
+| `app/append_only.py` | **Quy ước BẢNG CHỈ THÊM**: hằng số `APPEND_ONLY_TABLES` (nguồn duy nhất), `is_append_only()`, `trigger_names()`; lớp bảo vệ 1 `install_append_only_authorizer()` (SQLite `set_authorizer` từ chối `UPDATE`/`DELETE`, tương đương `REVOKE` của PostgreSQL) và lớp bảo vệ 2 `create_append_only_triggers()` (`BEFORE UPDATE`/`BEFORE DELETE` + `RAISE(ABORT)`); tiện ích `install_append_only_protection()` cho app và test. |
+| `tests/test_append_only_immutability.py` | **Test tích hợp**: khẳng định CSDL từ chối `UPDATE`/`DELETE` trên bảng chỉ thêm - với tài khoản ứng dụng (authorizer), với kết nối toàn quyền (trigger) và cả khi gọi `sqlite3` thuần; khẳng định chốt **`409`** ở `DELETE /batches` / `DELETE /farms` khi đã có sự kiện, lô chưa có sự kiện vẫn xoá được, và không chặn nhầm `farms`/`batches`/`users`. Chạy trong CI bằng `PYTHONPATH=backend pytest backend/tests`. |
+| `tests/conftest.py` | Fixture dùng chung: `db_file` (SQLite tạm theo `tmp_path`), `app_engine` (đã bật cả 2 lớp bảo vệ), `privileged_engine` (toàn quyền, giả lập tài khoản migration/admin) và `seeded_event` (sẵn 1 vùng trồng + lô + sự kiện). |
+| `migrations/002_batch_events_append_only.sql` | Migration **PostgreSQL (production)**: tạo bảng `batch_events`, role `agri_app_user`, `GRANT SELECT, INSERT` + `REVOKE UPDATE, DELETE, TRUNCATE`, và trigger `plpgsql` `RAISE EXCEPTION`. Local/CI dùng SQLite nên lớp tương đương do `app/append_only.py` đảm nhiệm. |
 | `app/routers/auth.py` | **Sprint 4** — router `Auth`: `POST /auth/login` kiểm tra `username`/`password` với bảng `users`, trả `{username, role}` (**200**); sai thì **401**. **Không sinh token** — client dùng lại thông tin đăng nhập qua header HTTP Basic cho các request sau (mục đích chính của endpoint này là để frontend biết vai trò). |
 | `app/routers/users.py` | **Sprint 4** — router `Users`: `GET /users` trả danh sách tài khoản sắp theo `id` và **không kèm mật khẩu**. Dùng `Depends(require_admin)` nên: admin → **200**, farmer → **403**, chưa đăng nhập → **401**. |
 | `app/routers/health.py` | Router chứa endpoint `GET /health`, khai báo `response_model=HealthResponse`, trả về `{"status": "running"}`. |
@@ -556,4 +695,5 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 3 | Module **Batch** (quản lý lô nông sản): model `Batch` → bảng `batches` (FK `farm_id` → `farms.id`, quan hệ `Farm 1 ---- N Batch`), schemas `BatchCreate`/`BatchResponse`, router `app/routers/batches.py` với `POST /batches` (**201**, trả **404** nếu `farm_id` không tồn tại), `GET /batches` (**200**) và `GET /batches/{batch_id}` (**200**/**404**). `GET /health`, `POST /farms`, `GET /farms` giữ nguyên. |
 | Sprint 4 | **Đăng nhập + phân quyền cơ bản (không JWT):** model `User` → bảng `users` (`username` unique, mật khẩu băm SHA-256, `role`), `seed_default_users()` tạo sẵn `admin`/`farmer` (mật khẩu `123456`); module `app/security.py` với `hash_password`/`verify_password`/`authenticate_user` và dependency `get_current_user` (**401**), `require_admin` (**403**), `require_farmer`; router `POST /auth/login` (**200**/**401**) và `GET /users` (**200**, chỉ admin); áp `require_farmer` cho `GET /farms`, `POST /farms`, `POST /batches`. Cơ chế xác thực là **HTTP Basic** (Swagger có nút **Authorize**), không token/refresh token. |
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
+| Bảng chỉ thêm (Append-Only) | **Bảo vệ bất biến cho nhật ký có sẵn + chốt chặn tự động:** module `app/append_only.py` với quy ước `APPEND_ONLY_TABLES` và **2 lớp bảo vệ** áp lên bảng `batch_events` của T-25 — (1) quyền tài khoản ứng dụng (`REVOKE UPDATE, DELETE, TRUNCATE` trong `migrations/002_batch_events_append_only.sql` cho PostgreSQL; `sqlite3` authorizer cho SQLite) và (2) trigger `BEFORE UPDATE`/`BEFORE DELETE` + `RAISE` chặn cả kết nối toàn quyền. Bỏ `cascade` khỏi quan hệ `Batch.events` và thêm chốt **`409 Conflict`** ở `DELETE /batches/{id}` / `DELETE /farms/{id}` khi đối tượng đã có sự kiện (tránh lỗi 500). Bổ sung `backend/tests/` (`conftest.py` + `test_append_only_immutability.py`, **17 test**) khẳng định CSDL từ chối lệnh sửa/xoá, chốt 409 hoạt động, và không chặn nhầm bảng khác; chạy trong CI bằng `PYTHONPATH=backend pytest backend/tests -v`. Tài liệu: mục [Bảng chỉ thêm](#bảng-chỉ-thêm-append-only). |
 

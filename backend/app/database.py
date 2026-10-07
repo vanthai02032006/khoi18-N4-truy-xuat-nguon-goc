@@ -10,6 +10,10 @@ SQLite ở dưới - phần ORM (models/schemas/routers) không phải sửa.
 
 Sprint 4: thêm `seed_default_users()` - tạo sẵn 2 tài khoản demo
 (`admin`/`farmer`, mật khẩu `123456`) mỗi khi khởi động nếu chưa có.
+
+Bảng chỉ thêm: áp **quy ước append-only** - `install_append_only_authorizer()`
+gắn ngay sau khi tạo `engine` (trước kết nối đầu tiên) và `init_db()` tạo trigger
+chặn UPDATE/DELETE; chi tiết xem `app/append_only.py`.
 """
 
 from collections.abc import Generator
@@ -18,6 +22,11 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+from app.append_only import (
+    create_append_only_triggers,
+    install_append_only_authorizer,
+)
 
 # ---------------------------------------------------------------- Cấu hình ---
 # Thư mục `backend/` (cha của thư mục `app/`) - nơi đặt file database .db
@@ -38,6 +47,12 @@ engine = create_engine(
 
 # Mỗi request sẽ mở một Session riêng, không tự commit/autoflush (an toàn hơn).
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+# Lớp bảo vệ 1 của quy ước bảng chỉ thêm: áp quyền "chỉ SELECT/INSERT" cho
+# **mọi** kết nối của tài khoản ứng dụng. Đặt ngay tại đây (trước khi engine mở
+# kết nối đầu tiên) để các kết nối đã nằm trong pool cũng được bảo vệ.
+# Xem `app/append_only.py` và mục "Bảng chỉ thêm" trong `backend/README.md`.
+install_append_only_authorizer(engine)
 
 
 class Base(DeclarativeBase):
@@ -275,6 +290,8 @@ def init_db() -> None:
 
     - ``Base.metadata.create_all()``: bảng chưa có thì tạo, bảng đã có thì
       giữ nguyên (không làm mất dữ liệu đang lưu).
+    - ``create_append_only_triggers()``: tạo trigger chặn ``UPDATE``/``DELETE``
+      trên các bảng chỉ thêm (phải chạy **sau** ``create_all``).
     - ``seed_default_users()``: tạo 2 tài khoản mặc định cho chức năng đăng nhập
       + phân quyền (Sprint 4).
     - ``seed_sample_agricultural_data()``: nạp dữ liệu mẫu về thửa đất và lô nông sản.
@@ -282,5 +299,7 @@ def init_db() -> None:
     from app import models  # noqa: F401  (import để đăng ký metadata)
 
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as connection:
+        create_append_only_triggers(connection)  # lớp bảo vệ 2 (van an toàn)
     seed_default_users()
     seed_sample_agricultural_data()

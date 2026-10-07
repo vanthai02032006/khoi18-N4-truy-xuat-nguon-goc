@@ -4,10 +4,13 @@ Sprint 1: khung dự án + endpoint ``GET /health`` (chưa có bảng nghiệp v
 Sprint 2: module **Farm** (quản lý vùng trồng - bảng ``farms``)
 và module **Batch** (quản lý lô nông sản - bảng ``batches``).
 Sprint 4: module **Auth** (đăng nhập + phân quyền - bảng ``users``).
+Bảng chỉ thêm: module **BatchEvent** (nhật ký hành trình lô - bảng
+``batch_events``, chỉ được SELECT/INSERT).
 
 Quan hệ giữa các bảng::
 
     Farm 1 ---- N Batch   (một vùng trồng có nhiều lô nông sản)
+    Batch 1 -- N BatchEvent (một lô có nhiều sự kiện hành trình; nhật ký chỉ thêm)
     User                  (bảng độc lập, dùng cho đăng nhập/phân quyền)
 
 File này là điểm duy nhất (single source of truth) khai báo bảng dữ liệu.
@@ -88,10 +91,11 @@ class Batch(Base):
     farm: Mapped["Farm"] = relationship(back_populates="batches")
 
     # Quan hệ 1-N: một lô có chuỗi sự kiện lịch sử (SCRUM-39).
-    events: Mapped[list["BatchEvent"]] = relationship(
-        back_populates="batch",
-        cascade="all, delete-orphan",
-    )
+    # KHÔNG dùng `cascade="all, delete-orphan"`: bảng `batch_events` là **bảng chỉ
+    # thêm** (append-only) nên sự kiện không bao giờ bị xoá dây chuyền theo lô.
+    # Xoá lô/vùng trồng đã có sự kiện bị chặn ở tầng API (**409**) - xem
+    # `app/routers/batches.py` và `app/routers/farms.py`.
+    events: Mapped[list["BatchEvent"]] = relationship(back_populates="batch")
 
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return (
@@ -107,6 +111,10 @@ class BatchEvent(Base):
     - Chỉ cho phép ghi thêm (Append-only).
     - Mỗi sự kiện lưu: loại sự kiện, nội dung JSON (payload), người thực hiện, tổ chức,
       thời điểm, hash của chính nó và previous_hash tạo thành chuỗi liên kết mật mã.
+
+    Bảng này là **bảng chỉ thêm**: tài khoản ứng dụng chỉ được ``SELECT``/``INSERT``,
+    còn ``UPDATE``/``DELETE`` bị **cơ sở dữ liệu từ chối** - xem ``app/append_only.py``
+    và mục "Bảng chỉ thêm" trong ``backend/README.md``.
     """
 
     __tablename__ = "batch_events"

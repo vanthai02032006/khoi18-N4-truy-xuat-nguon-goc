@@ -18,14 +18,12 @@ gốc công khai.
 """
 
 from __future__ import annotations
-
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-
 from app.database import get_db
-from app.models import Batch, Farm, User
+from app.models import Batch, BatchEvent, Farm, User
 from app.schemas import BatchCreate, BatchResponse, BatchUpdate, DeleteResponse
 from app.security import require_admin, require_farmer
 
@@ -257,12 +255,18 @@ def update_batch(
     description=(
         "Xoá một lô nông sản theo `id`.\n\n"
         "**Phân quyền:** chỉ `role = admin` được xoá (dùng `require_admin`). "
-        "Farmer gọi sẽ nhận `403 Forbidden` - giao diện cũng ẩn nút Xoá với farmer."
+        "Farmer gọi sẽ nhận `403 Forbidden` - giao diện cũng ẩn nút Xoá với farmer.\n\n"
+        "**Bảng chỉ thêm:** lô đã có sự kiện trong nhật ký `batch_events` thì "
+        "**không xoá được** - API trả `409 Conflict` (nhật ký là bằng chứng truy "
+        "xuất nguồn gốc, không bị xoá dây chuyền)."
     ),
     responses={
         status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
         status.HTTP_403_FORBIDDEN: {"description": "Đã đăng nhập nhưng không phải admin."},
         status.HTTP_404_NOT_FOUND: {"description": "Không tìm thấy lô nông sản."},
+        status.HTTP_409_CONFLICT: {
+            "description": "Lô đã có sự kiện trong nhật ký chỉ thêm nên không thể xoá.",
+        },
     },
 )
 def delete_batch(
@@ -292,6 +296,25 @@ def delete_batch(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy lô nông sản có id={batch_id}.",
+        )
+
+    # Quy ước BẢNG CHỈ THÊM: nhật ký `batch_events` không bao giờ bị xoá, nên lô
+    # đã có sự kiện thì **không được xoá** - nếu cứ xoá, CSDL sẽ từ chối lệnh
+    # DELETE trên nhật ký và trả lỗi 500 khó hiểu. Chặn sớm ở đây bằng 409 kèm
+    # hướng dẫn xử lý. Xem `app/append_only.py`.
+    event_count = db.scalar(
+        select(func.count())
+        .select_from(BatchEvent)
+        .where(BatchEvent.batch_id == batch_id)
+    )
+    if event_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Lô nông sản #{batch_id} đã có {event_count} sự kiện trong nhật ký "
+                "chuỗi băm nên không thể xoá (bảng chỉ thêm). "
+                "Muốn đính chính, hãy ghi thêm một sự kiện mới thay vì xoá lô."
+            ),
         )
 
     # Lưu lại tên sản phẩm để viết thông báo (sau khi xoá không đọc được nữa).

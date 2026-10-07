@@ -9,6 +9,19 @@ Dự án TTCS K18C4 - Truy xuất nguồn gốc và giám sát chuỗi lạnh n�
 | `frontend/` | Demo giao diện: `index.html`, `css/style.css`, `js/app.js` — HTML5 + CSS + JavaScript thuần, không framework |
 | `docs/` | Tài liệu dự án |
 
+## Chạy test backend
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install pytest
+$env:PYTHONPATH = "backend"
+pytest tests -v
+```
+
+Đúng bằng 2 lệnh mà pipeline CI chạy (`flake8 backend --select=E9,F63,F7,F82` và
+`PYTHONPATH=backend pytest backend/tests -v`), không cần dịch vụ CSDL ngoài.
+
 ## Chạy backend
 
 ```powershell
@@ -88,3 +101,27 @@ $env:PYTHONPATH='backend'
 python -m pytest tests/ -v
 ```
 Toàn bộ test suite kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
+
+### Bảng chỉ thêm — nhật ký bất biến (Append-Only)
+
+Bảng `batch_events` (nhật ký chuỗi băm của lô) là **bảng chỉ thêm**: tài khoản ứng
+dụng **chỉ được `SELECT` và `INSERT`**; mọi câu lệnh `UPDATE` / `DELETE` bị **cơ
+sở dữ liệu từ chối**, không phải bằng kiểm tra trong code nghiệp vụ.
+
+- **Vì sao:** nhật ký hành trình là bằng chứng truy xuất nguồn gốc — sửa được nội
+  dung sự kiện hay xoá được dấu vết bàn giao thì hồ sơ mất giá trị đối chiếu.
+- **Cơ chế (2 lớp, defense-in-depth):** (1) *quyền tài khoản ứng dụng* —
+  PostgreSQL `REVOKE UPDATE, DELETE, TRUNCATE` cho role `agri_app_user`
+  (`backend/migrations/002_batch_events_append_only.sql`); SQLite không có role
+  nên dùng `sqlite3` authorizer (`backend/app/append_only.py`); (2) *trigger*
+  `BEFORE UPDATE` / `BEFORE DELETE` + `RAISE` — chặn cả kết nối toàn quyền.
+- **Hệ quả bắt buộc:** lô/vùng trồng **đã có sự kiện thì không xoá được** — API
+  trả **`409 Conflict`** kèm hướng dẫn, thay vì lỗi `500`. Nhật ký không bị xoá
+  dây chuyền theo lô (quan hệ `Batch.events` **không** còn `cascade`).
+- **Chốt chặn tự động:** `backend/tests/test_append_only_immutability.py` chạy
+  trong mỗi lần CI, khẳng định lệnh sửa/xoá bị từ chối và các bảng nghiệp vụ
+  khác không bị chặn nhầm — nhờ đó CI đỏ ngay nếu ai **vô tình cấp lại quyền**.
+- Muốn đính chính nhật ký thì **ghi thêm một sự kiện mới**, không sửa/xoá bản ghi cũ.
+
+Chi tiết đầy đủ (cấu trúc bảng, cách thêm bảng chỉ thêm mới): xem
+`backend/README.md`, mục **"Bảng chỉ thêm (Append-Only)"**.
