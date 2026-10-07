@@ -396,9 +396,15 @@
         </form>
 
         <div class="table-container">
-          <div class="table-subhead">
-            <span class="table-heading">Danh sách các lô cây trồng & nông sản thu hoạch</span>
-            <span class="table-tag">Gắn nhãn truy xuất</span>
+          <div class="table-subhead" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div>
+              <span class="table-heading">Danh sách các lô cây trồng & nông sản thu hoạch</span>
+              <span class="table-tag" style="margin-left: 8px;">Gắn nhãn truy xuất</span>
+            </div>
+            <div class="filter-controls" style="display: flex; gap: 8px; align-items: center;">
+              <input id="batch-filter-search" type="text" placeholder="Tìm theo tên nông sản / mã lô..."
+                     style="padding: 6px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px; min-width: 240px;" />
+            </div>
           </div>
           <div class="responsive-table">
             <table class="data-table">

@@ -504,10 +504,11 @@ async function deleteFarm(farmId) {
 }
 
 /* ------------------------------------------------------ 8. Lô nông sản --- */
-/** GET /batches -> cập nhật bảng danh sách lô. */
-async function loadBatches() {
+/** GET /batches -> cập nhật bảng danh sách lô (hỗ trợ tìm kiếm & lọc). */
+async function loadBatches(search = "") {
   try {
-    const data = await apiRequest("/batches");
+    const url = search ? `/batches?search=${encodeURIComponent(search)}` : "/batches";
+    const data = await apiRequest(url);
     batches = Array.isArray(data) ? data : [];
     renderBatches();
   } catch (error) {
@@ -731,6 +732,18 @@ function bindEvents() {
   // liên tục nên chỉ gắn 1 listener cho mỗi <tbody> thay vì gắn cho từng nút.
   $("farm-table-body").addEventListener("click", handleTableAction);
   $("batch-table-body").addEventListener("click", handleTableAction);
+
+  // Tìm kiếm & lọc lô nông sản có debounce 300ms (SCRUM-49 / SCRUM-50)
+  const batchFilter = $("batch-filter-search");
+  if (batchFilter) {
+    let debounceTimer;
+    batchFilter.addEventListener("input", (e) => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadBatches(e.target.value.trim());
+      }, 300);
+    });
+  }
 }
 
 /** Huỷ chế độ sửa của form vùng trồng / lô nông sản (nút "Huỷ sửa"). */
