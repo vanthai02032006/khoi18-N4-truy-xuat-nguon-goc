@@ -5,10 +5,10 @@ Tách riêng schemas (Pydantic) khỏi models (SQLAlchemy) giúp:
 - Validate dữ liệu đầu vào tự động và sinh tài liệu Swagger chuẩn.
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class HealthResponse(BaseModel):
@@ -305,6 +305,198 @@ class BatchResponse(BaseModel):
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
     quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
     harvest_date: date = Field(..., description="Ngày thu hoạch.")
+    current_owner: str | None = Field(
+        default=None,
+        description=(
+            "Tổ chức/đơn vị **đang giữ quyền quản lý lô**. Đổi sang bên nhận khi "
+            "bàn giao được xác nhận; giữ nguyên khi bàn giao bị từ chối."
+        ),
+        examples=["Hợp tác xã Xoài Mỹ Xương"],
+    )
+
+
+# -------------------------------------------------------------- Handover ---
+_HANDOVER_EXAMPLE: dict = {
+    "id": 1,
+    "batch_id": 1,
+    "sender_id": 1,
+    "sender_name": "Hợp tác xã Xoài Mỹ Xương",
+    "receiver_id": 2,
+    "receiver_name": "Công ty Thu mua Xuất khẩu Mekong",
+    "status": "pending",
+    "notes": "Bàn giao lô xoài sang kho đóng gói xuất khẩu.",
+    "created_at": "2026-10-07T00:00:00",
+    "updated_at": None,
+    "current_batch_owner": "Hợp tác xã Xoài Mỹ Xương",
+}
+
+
+class HandoverCreate(BaseModel):
+    """Dữ liệu client gửi lên khi **tạo** phiếu bàn giao (``POST /handovers``).
+
+    Phiếu mới luôn ở trạng thái ``pending``; lô **vẫn thuộc bên giao** cho tới khi
+    bên nhận xác nhận.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "batch_id": 1,
+                "receiver_id": 2,
+                "receiver_name": "Công ty Thu mua Xuất khẩu Mekong",
+                "notes": "Bàn giao lô xoài sang kho đóng gói xuất khẩu.",
+            }
+        },
+    )
+
+    batch_id: int = Field(
+        ...,
+        gt=0,
+        description="ID lô nông sản cần bàn giao (phải tồn tại).",
+        examples=[1],
+    )
+    receiver_id: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "ID tài khoản **bên nhận** - căn cứ để kiểm tra quyền gọi xác nhận/từ "
+            "chối. Nếu bỏ trống, phiếu vẫn tạo được nhưng **không ai** gọi được "
+            "xác nhận/từ chối (bên nhận chưa có tài khoản hệ thống)."
+        ),
+        examples=[2],
+    )
+    receiver_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Tên hiển thị của bên nhận; khi xác nhận sẽ thành chủ sở hữu lô.",
+        examples=["Công ty Thu mua Xuất khẩu Mekong"],
+    )
+    notes: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Ghi chú kèm theo khi tạo phiếu (không bắt buộc).",
+        examples=["Bàn giao lô xoài sang kho đóng gói xuất khẩu."],
+    )
+
+
+class HandoverAccept(BaseModel):
+    """Dữ liệu client gửi lên khi **xác nhận** bàn giao (``POST /handovers/{id}/accept``)."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"notes": "Đã kiểm tra chất lượng và nhận đủ số lượng."}
+        },
+    )
+
+    notes: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Ghi chú khi tiếp nhận (không bắt buộc).",
+        examples=["Đã kiểm tra chất lượng và nhận đủ số lượng."],
+    )
+
+
+class HandoverReject(BaseModel):
+    """Dữ liệu client gửi lên khi **từ chối** bàn giao (``POST /handovers/{id}/reject``).
+
+    **Lý do từ chối là bắt buộc**: phiếu từ chối phải lưu được vết giải thích vì
+    sao không tiếp nhận, nếu không hồ sơ truy xuất nguồn gốc sẽ thiếu căn cứ.
+    Chuỗi rỗng hoặc chỉ gồm khoảng trắng bị coi là thiếu lý do → ``422``.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"reason": "Lô bị dập trong quá trình vận chuyển, không đạt chuẩn."}
+        },
+    )
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Lý do từ chối (bắt buộc, không được rỗng).",
+        examples=["Lô bị dập trong quá trình vận chuyển, không đạt chuẩn."],
+    )
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        """Bỏ khoảng trắng thừa và chặn lý do rỗng/toàn khoảng trắng."""
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Lý do từ chối không được để trống.")
+        return cleaned
+
+
+class HandoverResponse(BaseModel):
+    """Thông tin một phiếu bàn giao.
+
+    ``current_batch_owner`` phản ánh **trạng thái hiện tại** của lô sau thao tác:
+    khi phiếu còn ``pending`` hoặc đã ``rejected`` thì vẫn là bên giao; khi đã
+    ``accepted`` thì là bên nhận.
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"example": _HANDOVER_EXAMPLE},
+    )
+
+    id: int = Field(..., description="Mã phiếu bàn giao.", examples=[1])
+    batch_id: int = Field(..., description="ID lô nông sản được bàn giao.", examples=[1])
+    sender_id: int | None = Field(default=None, description="ID tài khoản bên giao.")
+    sender_name: str = Field(..., description="Tên bên giao.")
+    receiver_id: int | None = Field(
+        default=None,
+        description="ID tài khoản bên nhận (người duy nhất được gọi xác nhận/từ chối).",
+    )
+    receiver_name: str = Field(..., description="Tên bên nhận.")
+    status: str = Field(
+        ...,
+        description="Trạng thái: `pending` (chờ xử lý), `accepted` (đã nhận), `rejected` (từ chối).",
+        examples=["pending"],
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Ghi chú của phiếu; khi từ chối chứa **lý do từ chối**.",
+    )
+    created_at: datetime = Field(..., description="Thời điểm tạo phiếu.")
+    updated_at: datetime | None = Field(
+        default=None,
+        description="Thời điểm xác nhận hoặc từ chối (null nếu còn chờ xử lý).",
+    )
+    current_batch_owner: str | None = Field(
+        default=None,
+        description="Tổ chức/đơn vị hiện đang giữ quyền quản lý lô.",
+    )
+
+
+class HandoverActionResponse(HandoverResponse):
+    """Kết quả của thao tác xác nhận/từ chối, kèm **danh sách sự kiện đã ghi**.
+
+    ``recorded_events`` giúp kiểm chứng ngay trên API rằng nghiệp vụ đã ghi đủ
+    nhật ký trong cùng transaction: xác nhận → 2 sự kiện
+    (`HANDOVER_ACCEPTED`, `OWNER_CHANGED`); từ chối → 1 sự kiện
+    (`HANDOVER_REJECTED`).
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                **_HANDOVER_EXAMPLE,
+                "status": "accepted",
+                "current_batch_owner": "Công ty Thu mua Xuất khẩu Mekong",
+                "recorded_events": ["HANDOVER_ACCEPTED", "OWNER_CHANGED"],
+            }
+        },
+    )
+
+    recorded_events: list[str] = Field(
+        default_factory=list,
+        description="Các loại sự kiện đã ghi vào nhật ký lô trong cùng transaction.",
+        examples=[["HANDOVER_ACCEPTED", "OWNER_CHANGED"]],
+    )
 
 
 # ----------------------------------------------------------------- Chung ---

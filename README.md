@@ -9,6 +9,19 @@ Dự án TTCS K18C4 - Truy xuất nguồn gốc và giám sát chuỗi lạnh n�
 | `frontend/` | Demo giao diện: `index.html`, `css/style.css`, `js/app.js` — HTML5 + CSS + JavaScript thuần, không framework |
 | `docs/` | Tài liệu dự án |
 
+## Chạy test backend
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install pytest
+$env:PYTHONPATH = "backend"
+pytest tests -v
+```
+
+Đúng bằng 2 lệnh mà pipeline CI chạy (`flake8 backend --select=E9,F63,F7,F82` và
+`PYTHONPATH=backend pytest backend/tests -v`), không cần dịch vụ CSDL ngoài.
+
 ## Chạy backend
 
 ```powershell
@@ -88,3 +101,24 @@ $env:PYTHONPATH='backend'
 python -m pytest tests/ -v
 ```
 Toàn bộ test suite kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
+
+### Bàn giao quyền giữ lô (API, chưa có giao diện)
+
+Nghiệp vụ chuyển quyền giữ một lô nông sản sang đơn vị khác trong chuỗi cung ứng:
+
+| Bước | Endpoint | Ai gọi được | Kết quả |
+| --- | --- | --- | --- |
+| Tạo phiếu | `POST /handovers` | đã đăng nhập | phiếu `pending`; lô **vẫn thuộc bên giao** |
+| Xác nhận | `POST /handovers/{id}/accept` | **chỉ bên nhận** | đổi "tổ chức đang giữ" lô sang bên nhận + ghi **2 sự kiện** |
+| Từ chối | `POST /handovers/{id}/reject` | **chỉ bên nhận** | giữ nguyên bên giao, lưu **lý do từ chối** (bắt buộc) |
+
+- Ai không phải bên nhận gọi xác nhận/từ chối đều nhận **`403 Forbidden`** — kể cả
+  `admin`; quyền được kiểm tra **ở máy chủ**, không phải chỉ ẩn trên giao diện.
+- Mỗi thao tác chạy trong **một transaction**: lỗi giữa chừng thì không đổi chủ
+  sở hữu và không ghi sự kiện nào (có test rollback).
+- Từ chối mà không nhập lý do → **`422`**.
+- Sự kiện bàn giao được ghi vào **cùng chuỗi băm** với `POST /batches/{id}/events`
+  (dùng `compute_event_hash`), nên `GET /batches/{id}/events` kiểm tra được toàn vẹn.
+- Chi tiết đầy đủ (luồng, sự kiện, cấu trúc bảng): xem `backend/README.md`, mục
+  **"Bàn giao quyền giữ lô (Handover)"**.
+- Giao diện frontend cho nghiệp vụ này **chưa được làm** (ngoài phạm vi task).

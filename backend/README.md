@@ -20,6 +20,12 @@ Backend API cho đề tài **"Truy xuất nguồn gốc và giám sát chuỗi l
   `FarmUpdate`/`BatchUpdate`/`DeleteResponse`; frontend ẩn/hiện theo trạng thái
   đăng nhập, thêm cột **Thao tác** (Sửa/Xoá) và dashboard thống kê
   (tổng vùng trồng, tổng lô nông sản, tổng sản lượng).
+- **Bàn giao quyền giữ lô (Handover):** module `/handovers` — bên giao tạo phiếu,
+  **chỉ bên nhận** xác nhận hoặc từ chối. Xác nhận đổi "tổ chức đang giữ" của lô
+  và ghi **2 sự kiện** vào **chuỗi băm** `batch_events` (dùng chung cơ chế với
+  `POST /batches/{id}/events`); từ chối **bắt buộc nhập lý do** và giữ nguyên bên
+  giao. Cả hai thao tác chạy trong **một transaction** và có test rollback
+  (xem mục [Bàn giao quyền giữ lô](#bàn-giao-quyền-giữ-lô-handover)).
   *Chưa có* QR code, blockchain hay nghiệp vụ chuỗi lạnh.
 
 ---
@@ -33,9 +39,11 @@ backend/
 │   ├── main.py              # Khởi tạo FastAPI, CORS, lifespan, đăng ký router
 │   ├── database.py          # Engine SQLite, SessionLocal, Base, get_db, init_db
 │   ├── models.py            # ORM models: Farm → "farms", Batch → "batches",
-│   │                        #             User → "users"
-│   ├── schemas.py           # Pydantic: Health / Farm / Batch / Auth
+│   │                        #   Handover → "handovers",
+│   │                        #   BatchEvent → "batch_events", User → "users"
+│   ├── schemas.py           # Pydantic: Health / Farm / Batch / Handover / Auth
 │   │                        #   (Create + Update + Response + DeleteResponse)
+│   ├── events.py            # record_event(): ghi nhật ký sự kiện vòng đời lô
 │   ├── security.py          # Băm mật khẩu + xác thực/phân quyền (Sprint 4)
 │   └── routers/
 │       ├── __init__.py      # Export các router
@@ -43,7 +51,11 @@ backend/
 │       ├── auth.py          # POST /auth/login (Sprint 4)
 │       ├── users.py         # GET /users - chỉ admin (Sprint 4)
 │       ├── farms.py         # CRUD /farms: POST, GET, PUT {id}, DELETE {id} (Sprint 5)
-│       └── batches.py       # CRUD /batches: POST, GET, GET {id}, PUT {id}, DELETE {id}
+│       ├── batches.py       # CRUD /batches: POST, GET, GET {id}, PUT {id}, DELETE {id}
+│       └── handovers.py     # /handovers: tạo phiếu + xác nhận/từ chối (chỉ bên nhận)
+├── tests/                   # Test tự động (pytest) - chạy trong CI
+│   ├── conftest.py          # Fixture: CSDL tạm, tài khoản bên giao/bên nhận
+│   └── test_handover_confirm_reject.py  # AC xác nhận/từ chối + rollback
 ├── requirements.txt         # Danh sách thư viện Python
 ├── .gitignore               # Bỏ qua file DB, __pycache__, .venv...
 └── README.md                # Tài liệu này
@@ -146,6 +158,30 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 > thêm/sửa dữ liệu nông sản nhưng sẽ nhận **`403 Forbidden`** khi xoá, và trên
 > giao diện frontend thì **nút Xoá không hiện** với farmer.
 
+### Bước 6 — Chạy test tự động (pytest)
+
+Bộ test dùng file SQLite tạm nên **không cần CSDL bên ngoài** và không chạm vào
+`backend/ttcs.db`:
+
+```powershell
+cd backend
+pip install pytest            # chỉ cần cho môi trường dev/CI
+$env:PYTHONPATH = "backend"   # PowerShell; trên bash: PYTHONPATH=backend
+pytest tests -v
+```
+
+Hai lệnh mà pipeline CI chạy (tương đương, chạy từ thư mục gốc repo):
+
+```bash
+flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics
+PYTHONPATH=backend pytest backend/tests -v
+```
+
+> Bộ test **không** dùng `fastapi.testclient` (CI không cài `httpx`): test gọi
+> trực tiếp hàm endpoint và dependency kiểm quyền, vẫn khẳng định đúng các mã
+> `403` / `400` / `422`. Phần kiểm chứng qua HTTP thật thực hiện thủ công bằng
+> `uvicorn` + `curl` (xem ví dụ ở mục Handover).
+
 ---
 
 ## 3. API hiện có
@@ -163,6 +199,11 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | POST | `/batches` | Tạo lô nông sản (kiểm tra `farm_id` tồn tại) | farmer **hoặc** admin | `201` · `401` · `404` farm không tồn tại · `422` dữ liệu sai |
 | PUT | `/batches/{batch_id}` | Cập nhật (thay thế) lô nông sản - đổi được `farm_id` nếu tồn tại | farmer **hoặc** admin | `200` · `401` · `404` lô/farm không tồn tại · `422` |
 | DELETE | `/batches/{batch_id}` | Xoá một lô nông sản | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy |
+| POST | `/handovers` | Tạo phiếu bàn giao lô (trạng thái `pending`, lô vẫn thuộc bên giao) | đã đăng nhập | `201` · `400` lô đang có phiếu chờ · `401` · `404` lô không tồn tại |
+| GET | `/handovers` | Lịch sử bàn giao, lọc theo `batch_id` / `status` | công khai | `200` |
+| GET | `/handovers/{handover_id}` | Xem chi tiết một phiếu bàn giao | công khai | `200` · `404` không tìm thấy |
+| POST | `/handovers/{handover_id}/accept` | **Bên nhận** xác nhận tiếp nhận lô (đổi chủ sở hữu, ghi 2 sự kiện) | **chỉ bên nhận** | `200` · `400` phiếu không chờ xử lý · `401` · `403` không phải bên nhận · `404` |
+| POST | `/handovers/{handover_id}/reject` | **Bên nhận** từ chối tiếp nhận (**bắt buộc lý do**) | **chỉ bên nhận** | `200` · `400` · `401` · `403` · `404` · `422` thiếu lý do |
 | GET | `/users` | Danh sách tài khoản (không kèm mật khẩu) | **chỉ admin** | `200` · `401` · `403` sai vai trò |
 
 > ✅ **Sprint 5 hoàn thiện CRUD:** cả Farm và Batch đều có đủ `POST` / `GET` /
@@ -226,6 +267,7 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | `product_name` | VARCHAR(255) | Bắt buộc |
 | `quantity` | FLOAT | Bắt buộc, **> 0** (đơn vị kg) |
 | `harvest_date` | DATE | Bắt buộc, định dạng `yyyy-MM-dd` |
+| `current_owner` | VARCHAR(255) | **Tổ chức đang giữ quyền quản lý lô**, có thể `NULL`; đổi khi bàn giao được xác nhận |
 
 **Quan hệ:** `Farm 1 ---- N Batch`, khai báo 2 chiều trong `app/models.py` bằng
 `relationship(back_populates=...)`:
@@ -235,6 +277,133 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 
 Khi tạo lô, backend **kiểm tra `farm_id` có tồn tại trước khi ghi** → nếu không
 tìm thấy vùng trồng, API trả `404 Not Found` thay vì tạo dữ liệu mồ côi.
+
+### Bàn giao quyền giữ lô (Handover)
+
+**Bàn giao** là nghiệp vụ chuyển "tổ chức đang giữ" một lô nông sản sang đơn vị
+khác trong chuỗi cung ứng. Quyền giữ lô nằm ở cột `batches.current_owner`.
+
+#### Luồng nghiệp vụ
+
+| Bước | Endpoint | Trạng thái phiếu | `batch.current_owner` |
+| --- | --- | --- | --- |
+| 1. Bên giao tạo phiếu | `POST /handovers` | `pending` | **giữ nguyên** (vẫn thuộc bên giao) |
+| 2. Bên nhận **xác nhận** | `POST /handovers/{id}/accept` | `accepted` | **đổi sang bên nhận** |
+| 2'. Bên nhận **từ chối** | `POST /handovers/{id}/reject` | `rejected` | **giữ nguyên** (vẫn thuộc bên giao) |
+
+- Mỗi lô chỉ có **tối đa 1 phiếu `pending`**: chặn ở tầng ứng dụng *và* bằng chỉ
+  mục duy nhất một phần `uq_handovers_one_pending_per_batch`
+  (`Index(..., sqlite_where=text("status = 'pending'"))`) nên hai request đồng
+  thời cũng không tạo được 2 phiếu chờ.
+- Lịch sử các phiếu `accepted` / `rejected` được giữ lại đầy đủ.
+
+#### Quyền: **chỉ bên nhận** được xác nhận/từ chối
+
+Kiểm tra nằm **ở máy chủ**, trong dependency `require_handover_receiver`
+(`app/routers/handovers.py`) - dùng chung cho cả hai endpoint nên quy tắc quyền
+chỉ tồn tại ở **một chỗ**:
+
+| Tình huống | Kết quả |
+| --- | --- |
+| Không có header `Authorization` / sai tài khoản | `401` |
+| Phiếu không tồn tại | `404` |
+| Người gọi **không phải** bên nhận (`current_user.id != handover.receiver_id`), kể cả `admin` | `403` |
+| Phiếu không gắn tài khoản bên nhận (`receiver_id = NULL`) | `403` |
+| Phiếu không còn ở trạng thái `pending` | `400` |
+
+> Thứ tự kiểm tra cố tình là **quyền trước, trạng thái sau** để người không có
+> quyền không đọc được trạng thái phiếu. Cần lưu ý `admin` **không** phải ngoại
+> lệ - đúng yêu cầu "chỉ bên nhận mới được gọi".
+
+#### Một giao dịch duy nhất (transaction)
+
+`accept` và `reject` gom **toàn bộ** thay đổi (trạng thái phiếu, quyền giữ lô,
+các dòng nhật ký) vào một `db.commit()` duy nhất; lỗi ở bất kỳ bước nào →
+`db.rollback()` huỷ tất cả. Nhờ vậy không có trạng thái nửa vời kiểu *đã đổi chủ
+sở hữu nhưng chưa ghi được sự kiện*.
+
+`record_event()` trong `app/events.py` **không tự commit** - đó là lý do hàm này
+chỉ `db.add()` rồi trả về, để router điều khiển ranh giới giao dịch. Hàm dùng
+`app.security.compute_event_hash()` và **tự `db.flush()`** trước khi đọc sự kiện
+liền trước, nên hai sự kiện ghi trong cùng một transaction vẫn nối đúng chuỗi băm
+(session của dự án đặt `autoflush=False`).
+
+#### Sự kiện ghi vào nhật ký
+
+| Thao tác | Sự kiện | Ghi chú |
+| --- | --- | --- |
+| Tạo phiếu | `HANDOVER_PENDING` | lô vẫn thuộc bên giao |
+| **Xác nhận** | `HANDOVER_ACCEPTED` **+** `OWNER_CHANGED` | **đủ 2 sự kiện**: một cho việc tiếp nhận, một cho việc đổi quyền giữ |
+| **Từ chối** | `HANDOVER_REJECTED` | có kèm **lý do từ chối** trong `payload` của sự kiện |
+
+Trường `recorded_events` trong response của `accept`/`reject` cho biết các sự kiện
+đã ghi, dùng để kiểm chứng ngay trên API.
+
+#### Cấu trúc bảng `handovers`
+
+| Cột | Kiểu | Ràng buộc |
+| --- | --- | --- |
+| `id` | INTEGER | Khoá chính, tự tăng |
+| `batch_id` | INTEGER | **Khoá ngoại → `batches.id`**, bắt buộc, có index |
+| `sender_id` | INTEGER | Khoá ngoại → `users.id`, có thể `NULL` |
+| `sender_name` | VARCHAR(255) | Bắt buộc (tên bên giao tại thời điểm tạo phiếu) |
+| `receiver_id` | INTEGER | Khoá ngoại → `users.id`, **căn cứ kiểm tra quyền**, có index |
+| `receiver_name` | VARCHAR(255) | Bắt buộc; khi xác nhận sẽ thành `batch.current_owner` |
+| `status` | VARCHAR(20) | `pending` / `accepted` / `rejected`, có index |
+| `notes` | VARCHAR(500) | Ghi chú; khi từ chối chứa **lý do từ chối** |
+| `created_at` | DATETIME | Bắt buộc |
+| `updated_at` | DATETIME | Tự đặt khi xác nhận/từ chối (`onupdate`), `NULL` khi còn chờ |
+
+#### Cấu trúc bảng `batch_events` (nhật ký chuỗi băm)
+
+Bảng này **đã có sẵn trên `develop`** (T-25 / SCRUM-39) - bàn giao **không** tạo
+bảng mới mà ghi vào **cùng chuỗi băm** đó qua `record_event()`.
+
+| Cột | Kiểu | Ràng buộc |
+| --- | --- | --- |
+| `id` | INTEGER | Khoá chính, tự tăng |
+| `batch_id` | INTEGER | **Khoá ngoại → `batches.id`**, bắt buộc, có index |
+| `event_type` | VARCHAR(50) | Bắt buộc (`HANDOVER_PENDING`, `HANDOVER_ACCEPTED`, `OWNER_CHANGED`, `HANDOVER_REJECTED`...) |
+| `payload` | VARCHAR(1000) | Nội dung JSON (canonical) của sự kiện, gồm cả `description` tiếng Việt |
+| `actor` | VARCHAR(100) | **Tài khoản** (`users.username`) thực hiện ghi nhận |
+| `organization` | VARCHAR(100) | Tổ chức ghi nhận |
+| `timestamp` | VARCHAR(50) | Thời điểm ISO-8601 (chuỗi, không phải DATETIME) |
+| `hash` | VARCHAR(64) | Băm SHA-256 của chính bản ghi |
+| `previous_hash` | VARCHAR(64) | Băm của bản ghi liền trước (sự kiện đầu tiên dùng `"0"*64`) |
+
+> Nhật ký **luôn** ghi qua `app/events.py::record_event()` để thống nhất định dạng
+> và giữ chuỗi băm liền mạch. Hàm chặn sớm `actor` rỗng hoặc > 100 ký tự (giới hạn
+> cột `actor`) - vì vậy **không** truyền tên tổ chức dài vào `actor`; tên tổ chức
+> nằm trong `payload`.
+>
+> Nhờ dùng chung cơ chế với `POST /batches/{id}/events`, sự kiện do bàn giao ghi ra
+> được `GET /batches/{id}/events` **xác thực toàn vẹn** (`is_valid`), không sinh ra
+> chuỗi băm thứ hai song song.
+
+#### Ví dụ gọi API
+
+```powershell
+# 1. Bên giao tạo phiếu (bên nhận là tài khoản id=2)
+curl.exe -s -u admin:123456 -X POST http://127.0.0.1:8000/handovers `
+  -H "Content-Type: application/json" `
+  -d "{\"batch_id\":1,\"receiver_id\":2,\"receiver_name\":\"Công ty Thu mua Mekong\"}"
+
+# 2. Người khác (kể cả admin) xác nhận -> 403 Forbidden
+curl.exe -s -o NUL -w "%{http_code}`n" -u admin:123456 -X POST `
+  http://127.0.0.1:8000/handovers/1/accept -H "Content-Type: application/json" -d "{}"
+
+# 3. Bên nhận xác nhận -> 200, đổi chủ sở hữu + ghi 2 sự kiện
+curl.exe -s -u farmer:123456 -X POST http://127.0.0.1:8000/handovers/1/accept `
+  -H "Content-Type: application/json" -d "{}"
+# {"status":"accepted","current_batch_owner":"Công ty Thu mua Mekong",
+#  "recorded_events":["HANDOVER_ACCEPTED","OWNER_CHANGED"]}
+
+# 4. Từ chối mà quên lý do -> 422; có lý do -> 200 và giữ nguyên bên giao
+curl.exe -s -o NUL -w "%{http_code}`n" -u farmer:123456 -X POST `
+  http://127.0.0.1:8000/handovers/2/reject -H "Content-Type: application/json" -d "{}"
+curl.exe -s -u farmer:123456 -X POST http://127.0.0.1:8000/handovers/2/reject `
+  -H "Content-Type: application/json" -d "{\"reason\":\"Lô bị dập, không đạt chuẩn.\"}"
+```
 
 ### Cấu trúc bảng `users` (Sprint 4)
 
@@ -487,14 +656,18 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | --- | --- |
 | `app/main.py` | Entrypoint: tạo `FastAPI(...)`, cấu hình CORS, dùng `lifespan` để gọi `init_db()` khi server start, và `include_router` để gom các endpoint. Khi mở rộng, chỉ cần thêm 1 dòng `app.include_router(...)`. |
 | `app/database.py` | Tầng hạ tầng dữ liệu: tạo `engine` kết nối SQLite (`check_same_thread=False` vì FastAPI có thể xử lý request trên thread khác — tham số này chỉ dành riêng cho SQLite), `SessionLocal` để mở session mỗi request, `Base` (DeclarativeBase) cho mọi model, `get_db()` (dependency đóng session tự động), `init_db()` (tạo bảng từ metadata) và `seed_default_users()` (tạo 2 tài khoản demo `admin`/`farmer` nếu chưa có). |
-| `app/models.py` | Nơi khai báo bảng ORM (SQLAlchemy 2.0 style: `Mapped` + `mapped_column`). Hiện có: `Farm` → bảng `farms` (`id`, `name`, `location`, `area`, `owner`) và `Batch` → bảng `batches` (`id`, `farm_id` FK → `farms.id`, `product_name`, `quantity`, `harvest_date`) với quan hệ 2 chiều `Farm 1-N Batch` (`farm.batches` ↔ `batch.farm`), cùng `User` → bảng `users` (`id`, `username` unique, `password` = hash SHA-256, `role`) kèm hằng số `ROLE_ADMIN`/`ROLE_FARMER`. Thêm bảng mới ở đây thì `init_db()` sẽ tự tạo. |
-| `app/schemas.py` | Pydantic models mô tả dữ liệu request/response: `HealthResponse`, `FarmCreate`/`FarmResponse`, `BatchCreate`/`BatchResponse` (`farm_id > 0`, chuỗi không rỗng, `quantity > 0`, `harvest_date` kiểu `date`). `*Response` dùng `from_attributes=True` để trả thẳng ORM object kèm `id`; Sprint 4 bổ sung `LoginRequest` (`username`, `password`), `LoginResponse` (`username`, `role`) và `UserResponse` (**không** có trường `password`); Sprint 5 bổ sung `FarmUpdate`/`BatchUpdate` (kế thừa `*Create` để dùng lại validate, phục vụ `PUT`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`). Tách khỏi `models.py` để không lộ cấu trúc bảng ra API. |
+| `app/models.py` | Nơi khai báo bảng ORM (SQLAlchemy 2.0 style: `Mapped` + `mapped_column`). Hiện có: `Farm` → bảng `farms` (`id`, `name`, `location`, `area`, `owner`) và `Batch` → bảng `batches` (`id`, `farm_id` FK → `farms.id`, `product_name`, `quantity`, `harvest_date`, **`current_owner`** = tổ chức đang giữ lô) với quan hệ 2 chiều `Farm 1-N Batch` (`farm.batches` ↔ `batch.farm`), `Handover` → bảng `handovers` (trạng thái `pending/accepted/rejected`, `receiver_id` để kiểm quyền, chỉ mục duy nhất một phần chặn 2 phiếu chờ trên cùng lô), `BatchEvent` → bảng `batch_events` (nhật ký vòng đời lô), cùng `User` → bảng `users` (`id`, `username` unique, `password` = hash SHA-256, `role`) kèm hằng số `ROLE_ADMIN`/`ROLE_FARMER`, `HANDOVER_STATUS_*` và `EVENT_TYPE_*`. Thêm bảng mới ở đây thì `init_db()` sẽ tự tạo. |
+| `app/schemas.py` | Pydantic models mô tả dữ liệu request/response: `HealthResponse`, `FarmCreate`/`FarmResponse`, `BatchCreate`/`BatchResponse` (`farm_id > 0`, chuỗi không rỗng, `quantity > 0`, `harvest_date` kiểu `date`), `HandoverCreate`/`HandoverAccept`/`HandoverReject` (**`reason` bắt buộc**, rỗng → lỗi validate) / `HandoverResponse` / `HandoverActionResponse` (`recorded_events`). `*Response` dùng `from_attributes=True` để trả thẳng ORM object kèm `id`; Sprint 4 bổ sung `LoginRequest` (`username`, `password`), `LoginResponse` (`username`, `role`) và `UserResponse` (**không** có trường `password`); Sprint 5 bổ sung `FarmUpdate`/`BatchUpdate` (kế thừa `*Create` để dùng lại validate, phục vụ `PUT`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`). Tách khỏi `models.py` để không lộ cấu trúc bảng ra API. |
 | `app/security.py` | **Sprint 4** — xác thực & phân quyền *không JWT*: `hash_password()` / `verify_password()` (SHA-256 + `hmac.compare_digest`, chỉ dùng thư viện chuẩn), `authenticate_user()` (tra bảng `users`), `basic_scheme = HTTPBasic(auto_error=False)` và 3 dependency: `get_current_user()` (**401** nếu thiếu/sai thông tin đăng nhập), `require_admin()` (**403** nếu không phải admin), `require_farmer()` (cho cả farmer và admin). Router chỉ cần thêm `user = Depends(require_admin)` là đã có phân quyền. |
 | `app/routers/auth.py` | **Sprint 4** — router `Auth`: `POST /auth/login` kiểm tra `username`/`password` với bảng `users`, trả `{username, role}` (**200**); sai thì **401**. **Không sinh token** — client dùng lại thông tin đăng nhập qua header HTTP Basic cho các request sau (mục đích chính của endpoint này là để frontend biết vai trò). |
 | `app/routers/users.py` | **Sprint 4** — router `Users`: `GET /users` trả danh sách tài khoản sắp theo `id` và **không kèm mật khẩu**. Dùng `Depends(require_admin)` nên: admin → **200**, farmer → **403**, chưa đăng nhập → **401**. |
 | `app/routers/health.py` | Router chứa endpoint `GET /health`, khai báo `response_model=HealthResponse`, trả về `{"status": "running"}`. |
 | `app/routers/farms.py` | Router module Farm - **CRUD đầy đủ**: `POST /farms` (thêm bản ghi, `commit` + `refresh`, rollback nếu lỗi DB), `GET /farms` (truy vấn bằng `select()` của SQLAlchemy 2.0), `PUT /farms/{farm_id}` (Sprint 5 - ghi đè từng trường bằng `setattr`, **404** nếu không thấy) và `DELETE /farms/{farm_id}` (Sprint 5 - **chỉ admin**, xoá kèm các lô nhờ cascade, trả `DeleteResponse`). |
 | `app/routers/batches.py` | Router module Batch - **CRUD đầy đủ**: `POST /batches` (**404** nếu `farm_id` không tồn tại — kiểm tra bằng `db.get(Farm, ...)` trước khi ghi), `GET /batches` (danh sách, sắp theo `id`), `GET /batches/{batch_id}` (**404** nếu không thấy), `PUT /batches/{batch_id}` (Sprint 5 - kiểm tra lại `farm_id` mới trước khi ghi) và `DELETE /batches/{batch_id}` (Sprint 5 - **chỉ admin**). |
+| `app/events.py` | Lớp ghi nhật ký dùng chung: `record_event()` (sinh `hash`/`previous_hash` qua `compute_event_hash`, **không** tự commit, tự `db.flush()` để hai sự kiện trong cùng transaction vẫn nối đúng chuỗi băm) và `get_events_for_batch()`. Nhờ đó sự kiện bàn giao nằm chung chuỗi băm với `POST /batches/{id}/events`. |
+| `app/routers/handovers.py` | Luồng bàn giao quyền giữ lô: `POST /handovers` (tạo phiếu `pending`, chặn phiếu chờ thứ hai), `GET /handovers` (+ lọc), `GET /handovers/{id}`, và 2 endpoint trọng tâm `POST /handovers/{id}/accept` / `reject`. Dependency `require_handover_receiver` là **chốt kiểm quyền bên nhận** dùng chung cho cả hai (404/403/400); `_commit_or_rollback()` đảm bảo mỗi thao tác là một giao dịch trọn vẹn. |
+| `tests/test_handover_confirm_reject.py` | Test theo AC: xác nhận đổi chủ + **đủ 2 sự kiện**, từ chối giữ nguyên chủ + lưu lý do, chỉ bên nhận gọi được (403 cho bên giao và cả `admin`), thiếu lý do → 422, và **rollback khi lỗi giữa chừng** (không đổi chủ, không thêm sự kiện). |
+| `tests/conftest.py` | Fixture dùng chung: CSDL SQLite tạm, tài khoản bên giao/bên nhận/người ngoài, lô nông sản có sẵn "tổ chức đang giữ". |
 | `app/routers/__init__.py` | Gom và export các router con để `main.py` import ngắn gọn (`from app.routers import auth, batches, farms, health, users`). |
 | `app/__init__.py` | Đánh dấu `app` là package Python; khai báo `__version__ = "0.2.0"` dùng cho metadata Swagger. |
 | `requirements.txt` | Ghim phiên bản thư viện: `fastapi`, `uvicorn[standard]`, `SQLAlchemy`, `pydantic` — đảm bảo cả nhóm cài ra môi trường giống nhau. **Sprint 4 không thêm thư viện nào**: băm mật khẩu dùng `hashlib`/`hmac` có sẵn, xác thực dùng `fastapi.security.HTTPBasic` của FastAPI. |
@@ -556,4 +729,5 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 3 | Module **Batch** (quản lý lô nông sản): model `Batch` → bảng `batches` (FK `farm_id` → `farms.id`, quan hệ `Farm 1 ---- N Batch`), schemas `BatchCreate`/`BatchResponse`, router `app/routers/batches.py` với `POST /batches` (**201**, trả **404** nếu `farm_id` không tồn tại), `GET /batches` (**200**) và `GET /batches/{batch_id}` (**200**/**404**). `GET /health`, `POST /farms`, `GET /farms` giữ nguyên. |
 | Sprint 4 | **Đăng nhập + phân quyền cơ bản (không JWT):** model `User` → bảng `users` (`username` unique, mật khẩu băm SHA-256, `role`), `seed_default_users()` tạo sẵn `admin`/`farmer` (mật khẩu `123456`); module `app/security.py` với `hash_password`/`verify_password`/`authenticate_user` và dependency `get_current_user` (**401**), `require_admin` (**403**), `require_farmer`; router `POST /auth/login` (**200**/**401**) và `GET /users` (**200**, chỉ admin); áp `require_farmer` cho `GET /farms`, `POST /farms`, `POST /batches`. Cơ chế xác thực là **HTTP Basic** (Swagger có nút **Authorize**), không token/refresh token. |
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
+| Bàn giao quyền giữ lô | **Luồng bàn giao + ghi vào chuỗi băm có sẵn:** thêm cột `batches.current_owner` và bảng `handovers` (trạng thái `pending`/`accepted`/`rejected`, chỉ mục duy nhất một phần chặn 2 phiếu chờ trên cùng lô), kèm module `app/events.py` (`record_event` **không** tự commit, sinh hash qua `compute_event_hash` của T-25). Router `app/routers/handovers.py`: `POST /handovers`, `GET /handovers` (+lọc), `GET /handovers/{id}`, `POST /handovers/{id}/accept` và `reject`. **Chỉ bên nhận** gọi được 2 thao tác cuối - kiểm tra ở máy chủ bằng dependency `require_handover_receiver` (không tồn tại → `404`, không phải bên nhận → `403` kể cả `admin`, phiếu đã xử lý → `400`). Xác nhận đổi `current_owner` sang bên nhận và ghi **2 sự kiện** (`HANDOVER_ACCEPTED`, `OWNER_CHANGED`); từ chối **bắt buộc nhập lý do** (`422` nếu thiếu), giữ nguyên bên giao và lưu lý do ở `notes` + `payload` của sự kiện. Mỗi thao tác là **một transaction** (`_commit_or_rollback`). Bổ sung `backend/tests/` (`conftest.py` + `test_handover_confirm_reject.py`) khẳng định các AC trên và **test rollback khi lỗi giữa chừng**. |
 

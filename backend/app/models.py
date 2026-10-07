@@ -4,10 +4,14 @@ Sprint 1: khung dự án + endpoint ``GET /health`` (chưa có bảng nghiệp v
 Sprint 2: module **Farm** (quản lý vùng trồng - bảng ``farms``)
 và module **Batch** (quản lý lô nông sản - bảng ``batches``).
 Sprint 4: module **Auth** (đăng nhập + phân quyền - bảng ``users``).
+Bàn giao: module **Handover** (bảng ``handovers`` - luồng bàn giao quyền giữ lô)
+và bảng nhật ký ``batch_events`` (sự kiện vòng đời lô phục vụ truy xuất nguồn gốc).
 
 Quan hệ giữa các bảng::
 
     Farm 1 ---- N Batch   (một vùng trồng có nhiều lô nông sản)
+    Batch 1 --- N Handover (lịch sử bàn giao quyền giữ lô)
+    Batch 1 --- N BatchEvent (nhật ký sự kiện vòng đời lô)
     User                  (bảng độc lập, dùng cho đăng nhập/phân quyền)
 
 File này là điểm duy nhất (single source of truth) khai báo bảng dữ liệu.
@@ -16,12 +20,22 @@ Mọi model đều kế thừa ``Base`` và bảng sẽ được ``init_db()`` t
 ở ``app/main.py``) - không cần chạy script SQL thủ công.
 """
 
-from datetime import date
+from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, Float, ForeignKey, Integer, String
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+
+def _utcnow() -> datetime:
+    """Giờ UTC dạng naive để lưu vào cột ``TIMESTAMP WITHOUT TIME ZONE``.
+
+    Dùng ``datetime.now(timezone.utc)`` rồi bỏ ``tzinfo`` thay vì
+    ``datetime.utcnow()`` - cùng giá trị nhưng không kích hoạt cảnh báo
+    ``DeprecationWarning`` (``utcnow`` sẽ bị loại bỏ ở phiên bản Python sau).
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Farm(Base):
@@ -68,6 +82,10 @@ class Batch(Base):
         product_name: Tên sản phẩm của lô (ví dụ: "Xoài cát Chu").
         quantity: Số lượng / khối lượng của lô, đơn vị kg.
         harvest_date: Ngày thu hoạch.
+        current_owner: **Tổ chức/đơn vị đang giữ quyền quản lý lô**. Ban đầu lấy
+            theo chủ vùng trồng; khi bên nhận **xác nhận** bàn giao thì trường này
+            được đổi sang bên nhận (xem ``app/routers/handovers.py``). Trong lúc
+            bàn giao còn *chờ xử lý* hoặc bị **từ chối**, giá trị này giữ nguyên.
         farm: Đối tượng ``Farm`` tương ứng (chiều N-1 của quan hệ).
     """
 
@@ -83,6 +101,8 @@ class Batch(Base):
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
     harvest_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # NULL = chưa ghi nhận chủ sở hữu (lô cũ trước khi có nghiệp vụ bàn giao).
+    current_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Quan hệ N-1: nhiều lô có thể thuộc về một vùng trồng.
     farm: Mapped["Farm"] = relationship(back_populates="batches")
@@ -96,7 +116,128 @@ class Batch(Base):
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return (
             f"<Batch id={self.id} farm_id={self.farm_id} "
-            f"product_name={self.product_name!r}>"
+            f"product_name={self.product_name!r} owner={self.current_owner!r}>"
+        )
+
+
+# ------------------------------------------------- Trạng thái bàn giao ---
+# Khai báo thành hằng số để router/schemas/test không phải gõ chuỗi rải rác và
+# chỉ cần đổi một chỗ nếu sau này thêm trạng thái mới (ví dụ "cancelled").
+HANDOVER_STATUS_PENDING: str = "pending"
+HANDOVER_STATUS_ACCEPTED: str = "accepted"
+HANDOVER_STATUS_REJECTED: str = "rejected"
+HANDOVER_STATUSES: tuple[str, ...] = (
+    HANDOVER_STATUS_PENDING,
+    HANDOVER_STATUS_ACCEPTED,
+    HANDOVER_STATUS_REJECTED,
+)
+
+# --------------------------------------------------- Loại sự kiện vòng đời ---
+EVENT_TYPE_BATCH_CREATED: str = "BATCH_CREATED"
+EVENT_TYPE_HANDOVER_PENDING: str = "HANDOVER_PENDING"
+EVENT_TYPE_HANDOVER_ACCEPTED: str = "HANDOVER_ACCEPTED"
+EVENT_TYPE_HANDOVER_REJECTED: str = "HANDOVER_REJECTED"
+EVENT_TYPE_OWNER_CHANGED: str = "OWNER_CHANGED"
+EVENT_TYPES: tuple[str, ...] = (
+    EVENT_TYPE_BATCH_CREATED,
+    EVENT_TYPE_HANDOVER_PENDING,
+    EVENT_TYPE_HANDOVER_ACCEPTED,
+    EVENT_TYPE_HANDOVER_REJECTED,
+    EVENT_TYPE_OWNER_CHANGED,
+)
+
+
+class Handover(Base):
+    """Phiếu bàn giao quyền giữ lô nông sản giữa bên giao và bên nhận - bảng ``handovers``.
+
+    Luồng nghiệp vụ:
+
+    1. Bên giao tạo phiếu → trạng thái ``pending``. **Lô vẫn thuộc bên giao**
+       (``Batch.current_owner`` giữ nguyên).
+    2. Bên nhận **xác nhận** (``accept``) → trạng thái ``accepted``, quyền giữ lô
+       chuyển sang bên nhận.
+    3. Bên nhận **từ chối** (``reject``) → trạng thái ``rejected``, quyền giữ lô
+       **giữ nguyên** ở bên giao, lý do từ chối được lưu lại.
+
+    Chỉ **bên nhận** được gọi 2 thao tác xác nhận/từ chối; kiểm tra ở máy chủ
+    bằng dependency ``require_handover_receiver`` (xem ``app/routers/handovers.py``).
+
+    Attributes:
+        id: Khoá chính, tự tăng.
+        batch_id: Khoá ngoại trỏ tới ``batches.id`` (lô được bàn giao).
+        sender_id: ID tài khoản bên giao (``users.id``), có thể ``None``.
+        sender_name: Tên hiển thị của bên giao (tổ chức/đơn vị).
+        receiver_id: ID tài khoản **bên nhận** - căn cứ để kiểm tra quyền gọi
+            xác nhận/từ chối. ``None`` nghĩa là bên nhận chưa có tài khoản hệ
+            thống, khi đó không ai gọi được 2 thao tác này.
+        receiver_name: Tên hiển thị của bên nhận; khi xác nhận, giá trị này được
+            ghi vào ``Batch.current_owner``.
+        status: ``pending`` / ``accepted`` / ``rejected``.
+        notes: Ghi chú khi tạo phiếu, hoặc **lý do từ chối** do bên nhận nhập.
+        created_at: Thời điểm tạo phiếu.
+        updated_at: Thời điểm xác nhận hoặc từ chối.
+    """
+
+    __tablename__ = "handovers"
+    # Ràng buộc CSDL: mỗi lô chỉ có **tối đa 1 phiếu bàn giao đang chờ** xử lý.
+    # Đây là chỉ mục duy nhất một phần (partial unique index) - chỉ áp dụng cho
+    # các dòng có `status = 'pending'`, nên một lô vẫn giữ được đầy đủ lịch sử
+    # các phiếu đã accepted/rejected.
+    __table_args__ = (
+        Index(
+            "uq_handovers_one_pending_per_batch",
+            "batch_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id"),
+        nullable=False,
+        index=True,
+    )
+    sender_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    sender_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    receiver_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    receiver_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=HANDOVER_STATUS_PENDING,
+        index=True,
+    )
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=_utcnow,
+        nullable=False,
+    )
+    # `onupdate=_utcnow`: tự động ghi nhận thời điểm xác nhận/từ chối mỗi khi
+    # phiếu được cập nhật, nên router không phải tự set thủ công.
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        onupdate=_utcnow,
+    )
+
+    # Quan hệ N-1 tới lô; không dùng cascade để tránh vô tình xoá mất lịch sử
+    # bàn giao khi xoá lô (nhật ký truy xuất nguồn gốc phải giữ được).
+    batch: Mapped["Batch"] = relationship()
+
+    def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
+        return (
+            f"<Handover id={self.id} batch_id={self.batch_id} "
+            f"status={self.status!r} receiver={self.receiver_name!r}>"
         )
 
 
@@ -179,7 +320,18 @@ __all__ = [
     "Base",
     "Batch",
     "BatchEvent",
+    "EVENT_TYPE_BATCH_CREATED",
+    "EVENT_TYPE_HANDOVER_ACCEPTED",
+    "EVENT_TYPE_HANDOVER_PENDING",
+    "EVENT_TYPE_HANDOVER_REJECTED",
+    "EVENT_TYPE_OWNER_CHANGED",
+    "EVENT_TYPES",
     "Farm",
+    "HANDOVER_STATUS_ACCEPTED",
+    "HANDOVER_STATUS_PENDING",
+    "HANDOVER_STATUS_REJECTED",
+    "HANDOVER_STATUSES",
+    "Handover",
     "ROLE_ADMIN",
     "ROLE_FARMER",
     "ROLES",
