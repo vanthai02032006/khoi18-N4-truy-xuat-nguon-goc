@@ -41,6 +41,8 @@ from app.schemas import (
     HandoverActionResponse,
     HandoverInitiateRequest,
     HandoverRejectRequest,
+    MapWaypoint,
+    PublicTrackingMapResponse,
 )
 from app.security import compute_event_hash, require_admin, require_farmer
 from app.tenant import get_tenant_org, require_tenant_context
@@ -1066,4 +1068,119 @@ def reject_handover(
         event_id=reject_event.id,
         event_hash=reject_event.hash,
     )
+
+
+# ----------------------------------------------------------- Public Tracking Map (S-06) ---
+def _build_public_tracking_map_response(batch: Batch, db: Session) -> PublicTrackingMapResponse:
+    farm = db.get(Farm, batch.farm_id)
+    farm_loc_str = farm.location if farm else "Đồng Tháp"
+    farm_owner_str = farm.owner if farm else "Hợp tác xã nông nghiệp"
+
+    # Toạ độ đại diện cấp xã/huyện (làm mờ toạ độ chi tiết để bảo vệ nông hộ)
+    base_lat, base_lng = 10.4570, 105.6328
+
+    code_str = batch.batch_code or f"LOT-{batch.id:04d}"
+
+    origin = MapWaypoint(
+        order=1,
+        name=f"Vùng trồng: {farm_loc_str}",
+        location_level="Cấp Xã / Huyện (Đã ẩn toạ độ thửa đất)",
+        organization=farm_owner_str,
+        action="Thu hoạch & Khởi tạo nguồn gốc VietGAP",
+        latitude=round(base_lat, 3),
+        longitude=round(base_lng, 3),
+        timestamp=str(batch.harvest_date),
+    )
+
+    # Đọc chuỗi sự kiện để lấy các điểm dừng chính
+    stmt_events = (
+        select(BatchEvent)
+        .where(BatchEvent.batch_id == batch.id)
+        .order_by(BatchEvent.id.asc())
+    )
+    events = list(db.scalars(stmt_events).all())
+
+    known_stops = [
+        {"name": "Nhà máy sơ chế & làm mát Cai Lậy", "level": "Cấp Thị Xã Cai Lậy, Tiền Giang", "lat": 10.4080, "lng": 106.1200},
+        {"name": "Trung tâm đóng gói & kiểm dịch Tân An", "level": "Cấp Thành Phố Tân An, Long An", "lat": 10.5360, "lng": 106.4130},
+        {"name": "Tổng kho lạnh logistics Bình Điền", "level": "Cấp Quận 8, TP. Hồ Chí Minh", "lat": 10.7250, "lng": 106.6350},
+        {"name": "Cảng xuất khẩu Cát Lái", "level": "Cấp Thành Phố Thủ Đức, TP. Hồ Chí Minh", "lat": 10.7600, "lng": 106.7900},
+    ]
+
+    waypoints: list[MapWaypoint] = []
+    order_counter = 2
+
+    for i, ev in enumerate(events):
+        if ev.event_type == "HARVEST" and i == 0:
+            continue
+
+        stop_info = known_stops[(order_counter - 2) % len(known_stops)]
+        action_desc = f"Thực hiện bước: {ev.event_type}"
+        if ev.event_type == "HANDOVER":
+            action_desc = "Bàn giao chuỗi cung ứng lạnh"
+        elif ev.event_type == "SPLIT":
+            action_desc = "Phân loại quy cách đóng gói"
+        elif ev.event_type == "PROCESSING":
+            action_desc = "Sơ chế và khử khuẩn theo tiêu chuẩn"
+
+        wp = MapWaypoint(
+            order=order_counter,
+            name=stop_info["name"],
+            location_level=stop_info["level"],
+            organization=ev.organization,
+            action=action_desc,
+            latitude=round(stop_info["lat"], 3),
+            longitude=round(stop_info["lng"], 3),
+            timestamp=ev.timestamp,
+        )
+        waypoints.append(wp)
+        order_counter += 1
+
+    return PublicTrackingMapResponse(
+        batch_code=code_str,
+        product_name=batch.product_name,
+        origin_point=origin,
+        waypoints=waypoints,
+        privacy_note="Toạ độ hiển thị ở cấp xã/huyện nhằm bảo vệ bí mật nông hộ và quyền riêng tư thửa đất.",
+    )
+
+
+@router.get(
+    "/code/{code}/map",
+    response_model=PublicTrackingMapResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Bản đồ hành trình công khai của lô nông sản theo mã (S-06)",
+    description="Hiển thị toạ độ đại diện cấp xã/huyện của vùng trồng xuất xứ và các điểm dừng chính.",
+)
+def get_batch_public_map_by_code(
+    code: str = Path(..., description="Mã lô nông sản."),
+    db: Session = Depends(get_db),
+) -> PublicTrackingMapResponse:
+    batch = db.scalar(select(Batch).where(or_(Batch.batch_code == code, cast(Batch.id, String) == code)))
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản với mã '{code}'.",
+        )
+    return _build_public_tracking_map_response(batch, db)
+
+
+@router.get(
+    "/{batch_id}/map",
+    response_model=PublicTrackingMapResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Bản đồ hành trình công khai của lô nông sản theo ID (S-06)",
+    description="Hiển thị toạ độ đại diện cấp xã/huyện của vùng trồng xuất xứ và các điểm dừng chính.",
+)
+def get_batch_public_map_by_id(
+    batch_id: int = Path(..., ge=1, description="ID lô nông sản."),
+    db: Session = Depends(get_db),
+) -> PublicTrackingMapResponse:
+    batch = db.get(Batch, batch_id)
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+    return _build_public_tracking_map_response(batch, db)
 

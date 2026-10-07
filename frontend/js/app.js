@@ -1099,6 +1099,88 @@ async function handleExportPdf() {
   }
 }
 
+/** Mở modal Bản Đồ Hành Trình Công Khai (S-06) */
+function openPublicMapModal(batchIdentifier = "") {
+  const modal = $("action-modal-public-map");
+  if (!modal) return;
+  modal.hidden = false;
+  const input = $("public-map-search-code");
+  if (input) {
+    if (batchIdentifier) {
+      input.value = batchIdentifier;
+      loadPublicMap(batchIdentifier);
+    } else {
+      input.focus();
+    }
+  }
+}
+
+/** Đóng modal Bản Đồ */
+function closePublicMapModal() {
+  const modal = $("action-modal-public-map");
+  if (modal) modal.hidden = true;
+}
+
+/** Tải và hiển thị bản đồ hành trình công khai (S-06) */
+async function loadPublicMap(batchIdentifier) {
+  const container = $("public-map-render-area");
+  if (!container || !batchIdentifier) return;
+
+  container.innerHTML = `<div style="text-align: center; color: #0284c7; padding: 30px 0;">Đang dựng hành trình chuỗi cung ứng công khai...</div>`;
+
+  try {
+    const mapData = await apiRequest(`/batches/code/${encodeURIComponent(batchIdentifier)}/map`, { auth: false });
+    const allStops = [mapData.origin_point, ...(mapData.waypoints || [])];
+
+    let stopsListHtml = `
+      <div style="margin-bottom: 16px;">
+        <h5 style="margin: 0 0 8px; font-size: 14px; font-weight: 700; color: #0f172a;">Lô: ${escapeHtml(mapData.product_name)} [Mã: ${escapeHtml(mapData.batch_code)}]</h5>
+        <div style="font-size: 12px; color: #64748b;">Hành trình bao gồm ${allStops.length} điểm dừng chính qua các cấp hành chính:</div>
+      </div>
+    `;
+
+    const nodesHtml = allStops.map((stop, idx) => {
+      const isOrigin = idx === 0;
+      const color = isOrigin ? "#16a34a" : "#0284c7";
+      const bg = isOrigin ? "#f0fdf4" : "#f0f9ff";
+      const badge = isOrigin ? "ĐIỂM XUẤT XỨ (VÙNG TRỒNG)" : `ĐIỂM DỪNG #${stop.order}`;
+
+      return `
+        <div style="display: flex; gap: 14px; margin-bottom: 12px; position: relative;">
+          <div style="display: flex; flex-direction: column; align-items: center; width: 32px; flex-shrink: 0;">
+            <div style="width: 28px; height: 28px; border-radius: 50%; background: ${color}; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; z-index: 2;">
+              ${stop.order}
+            </div>
+            ${idx < allStops.length - 1 ? `<div style="width: 2px; flex-grow: 1; background: #cbd5e1; margin: 4px 0;"></div>` : ''}
+          </div>
+
+          <div style="flex-grow: 1; background: ${bg}; border: 1px solid ${isOrigin ? '#bbf7d0' : '#bae6fd'}; border-radius: 8px; padding: 12px 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 4px;">
+              <div>
+                <span style="background: ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">${badge}</span>
+                <strong style="margin-left: 6px; color: #0f172a; font-size: 13px;">${escapeHtml(stop.name)}</strong>
+              </div>
+              <div style="font-family: monospace; font-size: 11px; color: #64748b; background: #ffffff; padding: 2px 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                📍 Toạ độ cấp Xã/Huyện: ${stop.latitude.toFixed(3)}°N, ${stop.longitude.toFixed(3)}°E
+              </div>
+            </div>
+            <div style="font-size: 12px; color: #334155; margin-bottom: 4px;">
+              <strong>Địa bàn hiển thị:</strong> ${escapeHtml(stop.location_level)} | <strong>Đơn vị:</strong> ${escapeHtml(stop.organization)}
+            </div>
+            <div style="font-size: 12px; color: #047857;">
+              ✓ ${escapeHtml(stop.action)}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    container.innerHTML = stopsListHtml + nodesHtml;
+  } catch (err) {
+    container.innerHTML = `<div style="padding: 20px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; color: #dc2626; text-align: center;">Không tìm thấy bản đồ cho mã lô "${escapeHtml(batchIdentifier)}": ${escapeHtml(err.message)}</div>`;
+  }
+}
+
 /* --------------------------- 9b. Giám Sát Lệnh Kiểm Tra & Thu Hồi (Inspector Orders) --- */
 /** GET /orders -> tải danh sách các lệnh kiểm tra / thu hồi */
 async function loadOrders() {
@@ -1634,6 +1716,45 @@ function bindEvents() {
       debounceTimer = setTimeout(() => {
         loadBatches(e.target.value.trim());
       }, 300);
+    });
+  }
+
+  // Sự kiện Bản đồ hành trình công khai (S-06)
+  if ($("btn-open-public-map")) {
+    $("btn-open-public-map").addEventListener("click", () => openPublicMapModal());
+  }
+  if ($("btn-open-map-from-timeline")) {
+    $("btn-open-map-from-timeline").addEventListener("click", () => {
+      if (activeTimelineBatchId) {
+        openPublicMapModal(String(activeTimelineBatchId));
+      } else {
+        openPublicMapModal();
+      }
+    });
+  }
+  if ($("btn-close-public-map")) {
+    $("btn-close-public-map").addEventListener("click", closePublicMapModal);
+  }
+  if ($("btn-close-public-map-footer")) {
+    $("btn-close-public-map-footer").addEventListener("click", closePublicMapModal);
+  }
+  if ($("btn-search-public-map")) {
+    $("btn-search-public-map").addEventListener("click", () => {
+      const code = $("public-map-search-code").value.trim();
+      if (!code) {
+        toast("Vui lòng nhập mã lô hoặc ID lô để xem bản đồ.", "error");
+        return;
+      }
+      loadPublicMap(code);
+    });
+  }
+  if ($("public-map-search-code")) {
+    $("public-map-search-code").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const code = $("public-map-search-code").value.trim();
+        if (code) loadPublicMap(code);
+      }
     });
   }
 }

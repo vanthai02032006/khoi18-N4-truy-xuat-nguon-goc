@@ -695,3 +695,30 @@ class ColdChainViolationResponse(BaseModel):
     location: str | None = None
 
 
+# ----------------------------------------------------------- Public Tracking Map (S-06) ---
+class MapWaypoint(BaseModel):
+    """Điểm dừng trên hành trình công khai (Cấp xã/huyện, bảo vệ quyền riêng tư thửa đất)."""
+
+    order: int = Field(..., description="Thứ tự điểm dừng trên hành trình (1, 2, 3...).")
+    name: str = Field(..., description="Tên điểm dừng / cơ sở / chặng trung chuyển.")
+    location_level: str = Field(..., description="Cấp hành chính hiển thị (Xã / Phường hoặc Quận / Huyện).")
+    organization: str = Field(..., description="Tên tổ chức / đơn vị thực hiện chặng này.")
+    action: str = Field(..., description="Hành động tại điểm dừng (Xuất phát, Sơ chế, Vận chuyển, Phân phối...).")
+    latitude: float = Field(..., description="Toạ độ vĩ độ xấp xỉ cấp xã/huyện.")
+    longitude: float = Field(..., description="Toạ độ kinh độ xấp xỉ cấp xã/huyện.")
+    timestamp: str | None = Field(None, description="Thời điểm ghi nhận.")
+
+
+class PublicTrackingMapResponse(BaseModel):
+    """Dữ liệu hiển thị bản đồ hành trình công khai cho người tiêu dùng (S-06)."""
+
+    batch_code: str
+    product_name: str
+    origin_point: MapWaypoint = Field(..., description="Điểm vùng trồng xuất xứ (toạ độ đại diện cấp xã/huyện).")
+    waypoints: list[MapWaypoint] = Field(default_factory=list, description="Các điểm dừng chính theo thứ tự thời gian.")
+    privacy_note: str = Field(
+        default="Toạ độ hiển thị ở cấp xã/huyện nhằm bảo vệ bí mật nông hộ và quyền riêng tư thửa đất.",
+        description="Ghi chú về tính ẩn danh và bảo vệ vị trí chính xác của thửa đất.",
+    )
+
+

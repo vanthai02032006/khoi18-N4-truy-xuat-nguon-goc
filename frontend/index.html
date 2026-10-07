@@ -427,6 +427,10 @@
             <div class="filter-controls" style="display: flex; gap: 8px; align-items: center;">
               <input id="batch-filter-search" type="text" placeholder="Tìm theo tên nông sản / mã lô..."
                      style="padding: 6px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px; min-width: 240px;" />
+              <button id="btn-open-public-map" class="btn-action-primary" type="button" style="background: #0284c7; padding: 6px 14px; font-size: 13px;" title="Tra cứu bản đồ hành trình công khai">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                <span>Bản đồ hành trình</span>
+              </button>
             </div>
           </div>
           <div class="responsive-table">
@@ -880,11 +884,17 @@
         </div>
       </div>
 
-      <footer class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
-        <button id="btn-export-pdf" type="button" class="btn-action-primary" style="background: linear-gradient(135deg, #059669 0%, #047857 100%);">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span>Xuất Hồ Sơ PDF (Đính Kèm Biên Bản)</span>
-        </button>
+      <footer class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button id="btn-export-pdf" type="button" class="btn-action-primary" style="background: linear-gradient(135deg, #059669 0%, #047857 100%);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Xuất Hồ Sơ PDF (Đính Kèm Biên Bản)</span>
+          </button>
+          <button id="btn-open-map-from-timeline" type="button" class="btn-action-primary" style="background: #0284c7;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+            <span>Bản Đồ Hành Trình (S-06)</span>
+          </button>
+        </div>
         <button id="btn-close-timeline" type="button" class="btn-action-ghost">Đóng cửa sổ</button>
       </footer>
     </div>
@@ -951,6 +961,48 @@
 
       <footer class="modal-footer">
         <button id="btn-close-order" type="button" class="btn-action-ghost">Đóng cửa sổ</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Modal Bản Đồ Hành Trình Công Khai (S-06) -->
+  <div id="action-modal-public-map" class="modal-backdrop" hidden>
+    <div class="modal-container" style="max-width: 850px;">
+      <header class="modal-header" style="background: #f0fdf4; border-bottom: 1px solid #bbf7d0;">
+        <div class="modal-header-left">
+          <div class="modal-icon-badge" style="background: #dcfce7; color: #16a34a;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+          </div>
+          <div>
+            <h3 class="modal-title" style="color: #166534;">Bản Đồ Hành Trình Chuỗi Cung Ứng Công Khai (S-06)</h3>
+            <p class="modal-subtitle">Truy vết toạ độ các trạm trung chuyển & điểm dừng chân của nông sản.</p>
+          </div>
+        </div>
+        <button id="btn-close-public-map" class="modal-close-btn" type="button" aria-label="Đóng">&times;</button>
+      </header>
+      <div class="modal-body" style="padding: 20px;">
+        <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+          <input id="public-map-search-code" type="text" placeholder="Nhập mã lô hoặc ID lô nông sản..." style="flex: 1; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 6px; font-family: monospace; font-weight: 600;" />
+          <button id="btn-search-public-map" class="btn-action-primary" type="button" style="background: #0284c7;">Xem bản đồ</button>
+        </div>
+
+        <!-- Thông báo bảo vệ quyền riêng tư thửa đất -->
+        <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span style="font-size: 13px; color: #065f46; font-weight: 500;">
+            <strong>Chính sách bảo mật:</strong> Điểm vùng trồng và các điểm dừng được hiển thị ở <strong>cấp Xã hoặc Huyện</strong> nhằm bảo vệ quyền riêng tư & vị trí chính xác của thửa đất nông hộ.
+          </span>
+        </div>
+
+        <!-- Vùng vẽ bản đồ trực quan hành trình -->
+        <div id="public-map-render-area" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; min-height: 250px;">
+          <div style="text-align: center; color: #64748b; padding: 40px 0;">
+            Nhập mã lô nông sản và bấm "Xem bản đồ" để hiển thị hành trình điểm dừng.
+          </div>
+        </div>
+      </div>
+      <footer class="modal-footer">
+        <button id="btn-close-public-map-footer" type="button" class="btn-action-ghost">Đóng cửa sổ</button>
       </footer>
     </div>
   </div>
