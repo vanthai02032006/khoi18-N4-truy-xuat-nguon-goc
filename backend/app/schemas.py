@@ -7,10 +7,12 @@ Tách riêng schemas (Pydantic) khỏi models (SQLAlchemy) giúp:
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.models import ProductUnit
 
 
 class HealthResponse(BaseModel):
@@ -720,5 +722,261 @@ class PublicTrackingMapResponse(BaseModel):
         default="Toạ độ hiển thị ở cấp xã/huyện nhằm bảo vệ bí mật nông hộ và quyền riêng tư thửa đất.",
         description="Ghi chú về tính ẩn danh và bảo vệ vị trí chính xác của thửa đất.",
     )
+
+
+# ----------------------------------------------------------- Products (S-16) ---
+_PRODUCT_EXAMPLE = {
+    "id": 1,
+    "name": "Xoài Cát Chu",
+    "unit": "kg",
+    "description": "Xoài cát chu loại 1 thu hoạch tại Cao Lãnh, Đồng Tháp.",
+}
+
+
+class ProductCreate(BaseModel):
+    """Dữ liệu client gửi lên khi thêm sản phẩm (POST /products) - chỉ admin."""
+
+    model_config = ConfigDict(
+        use_enum_values=True,
+        json_schema_extra={
+            "example": {
+                "name": "Xoài Cát Chu",
+                "unit": "kg",
+                "description": "Xoài cát chu loại 1 thu hoạch tại Cao Lãnh, Đồng Tháp.",
+            }
+        },
+    )
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Tên sản phẩm - duy nhất trên toàn hệ thống.",
+        examples=["Xoài Cát Chu"],
+    )
+    unit: ProductUnit = Field(
+        ...,
+        description="Đơn vị tính chuẩn: kg, g, ton, liter, box, bottle, piece, bundle.",
+        examples=["kg"],
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Mô tả ngắn về sản phẩm (không bắt buộc).",
+        examples=["Xoài cát chu loại 1 thu hoạch tại Cao Lãnh, Đồng Tháp."],
+    )
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Tên sản phẩm không được để trống.")
+        return cleaned
+
+    @field_validator("description")
+    @classmethod
+    def _normalize_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned if cleaned else None
+
+
+class ProductUpdate(ProductCreate):
+    """Dữ liệu client gửi lên khi sửa sản phẩm (PUT /products/{product_id}) - chỉ admin."""
+
+    model_config = ConfigDict(
+        use_enum_values=True,
+        json_schema_extra={
+            "example": {
+                "name": "Xoài Cát Chu",
+                "unit": "kg",
+                "description": "Cập nhật: xoài cát chu loại 1, đóng thùng 10kg.",
+            }
+        },
+    )
+
+
+class ProductResponse(BaseModel):
+    """Dữ liệu API trả về cho một sản phẩm trong danh mục."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"example": _PRODUCT_EXAMPLE},
+    )
+
+    id: int = Field(..., description="Mã định danh sản phẩm.", examples=[1])
+    name: str = Field(..., description="Tên sản phẩm (duy nhất toàn hệ thống).")
+    unit: ProductUnit = Field(
+        ...,
+        description="Đơn vị tính chuẩn của sản phẩm.",
+        examples=["kg"],
+    )
+    description: str | None = Field(
+        default=None,
+        description="Mô tả ngắn về sản phẩm (có thể là null).",
+    )
+
+
+# ----------------------------------------------------------- Handovers (S-35) ---
+_HANDOVER_EXAMPLE = {
+    "id": 1,
+    "batch_id": 1,
+    "sender_id": 1,
+    "sender_name": "Vùng trồng xoài Cao Lãnh",
+    "receiver_id": 2,
+    "receiver_name": "Công ty Thu mua Xuất khẩu Mekong",
+    "status": "pending",
+    "notes": "Bàn giao lô xoài sang kho đóng gói xuất khẩu.",
+    "created_at": "2026-10-06T10:00:00",
+    "updated_at": None,
+    "current_batch_owner": "Vùng trồng xoài Cao Lãnh",
+}
+
+
+class HandoverCreate(BaseModel):
+    """Dữ liệu client gửi lên khi tạo phiếu bàn giao (POST /handovers)."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "batch_id": 1,
+                "receiver_id": 2,
+                "receiver_name": "Công ty Thu mua Xuất khẩu Mekong",
+                "notes": "Bàn giao lô xoài sang kho đóng gói xuất khẩu.",
+            }
+        },
+    )
+
+    batch_id: int = Field(
+        ...,
+        gt=0,
+        description="ID lô nông sản cần bàn giao (phải tồn tại).",
+        examples=[1],
+    )
+    receiver_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="ID tài khoản bên nhận.",
+        examples=[2],
+    )
+    receiver_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Tên hiển thị của bên nhận; khi xác nhận sẽ thành chủ sở hữu lô.",
+        examples=["Công ty Thu mua Xuất khẩu Mekong"],
+    )
+    notes: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Ghi chú kèm theo khi tạo phiếu (không bắt buộc).",
+        examples=["Bàn giao lô xoài sang kho đóng gói xuất khẩu."],
+    )
+
+
+class HandoverAccept(BaseModel):
+    """Dữ liệu client gửi lên khi xác nhận bàn giao (POST /handovers/{id}/accept)."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"notes": "Đã kiểm tra chất lượng và nhận đủ số lượng."}
+        },
+    )
+
+    notes: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Ghi chú khi tiếp nhận (không bắt buộc).",
+        examples=["Đã kiểm tra chất lượng và nhận đủ số lượng."],
+    )
+
+
+class HandoverReject(BaseModel):
+    """Dữ liệu client gửi lên khi từ chối bàn giao (POST /handovers/{id}/reject)."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"reason": "Lô bị dập trong quá trình vận chuyển, không đạt chuẩn."}
+        },
+    )
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Lý do từ chối (bắt buộc, không được rỗng).",
+        examples=["Lô bị dập trong quá trình vận chuyển, không đạt chuẩn."],
+    )
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Lý do từ chối không được để trống.")
+        return cleaned
+
+
+class HandoverResponse(BaseModel):
+    """Thông tin một phiếu bàn giao."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"example": _HANDOVER_EXAMPLE},
+    )
+
+    id: int = Field(..., description="Mã phiếu bàn giao.", examples=[1])
+    batch_id: int = Field(..., description="ID lô nông sản được bàn giao.", examples=[1])
+    sender_id: int | None = Field(default=None, description="ID tài khoản bên giao.")
+    sender_name: str = Field(..., description="Tên bên giao.")
+    receiver_id: int | None = Field(
+        default=None,
+        description="ID tài khoản bên nhận.",
+    )
+    receiver_name: str = Field(..., description="Tên bên nhận.")
+    status: str = Field(
+        ...,
+        description="Trạng thái: pending, accepted, rejected.",
+        examples=["pending"],
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Ghi chú của phiếu; khi từ chối chứa lý do từ chối.",
+    )
+    created_at: datetime = Field(..., description="Thời điểm tạo phiếu.")
+    updated_at: datetime | None = Field(
+        default=None,
+        description="Thời điểm xác nhận hoặc từ chối.",
+    )
+    current_batch_owner: str | None = Field(
+        default=None,
+        description="Tổ chức/đơn vị hiện đang giữ quyền quản lý lô.",
+    )
+
+
+class HandoverWorkflowResponse(HandoverResponse):
+    """Kết quả thao tác xác nhận/từ chối kèm danh sách sự kiện đã ghi."""
+
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                **_HANDOVER_EXAMPLE,
+                "status": "accepted",
+                "current_batch_owner": "Công ty Thu mua Xuất khẩu Mekong",
+                "recorded_events": ["HANDOVER_ACCEPTED", "OWNER_CHANGED"],
+            }
+        },
+    )
+
+    recorded_events: list[str] = Field(
+        default_factory=list,
+        description="Các loại sự kiện đã ghi vào nhật ký lô trong cùng transaction.",
+        examples=[["HANDOVER_ACCEPTED", "OWNER_CHANGED"]],
+    )
+
 
 

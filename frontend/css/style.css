@@ -1646,3 +1646,303 @@ tr.is-editing {
   background: #c7d2fe;
   color: #3730a3;
 }
+
+/* =========================================================================
+   MODULAR NAVIGATION TABS (Tab Shell Navigation)
+   ========================================================================= */
+.module-nav-tabs {
+  position: sticky;
+  top: 64px;
+  z-index: 40;
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: var(--radius-lg, 16px);
+  margin-bottom: 24px;
+  overflow-x: auto;
+  box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.06);
+}
+
+.nav-tab-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--slate-600, #475569);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.nav-tab-pill:hover {
+  background: var(--slate-100, #f1f5f9);
+  color: var(--slate-900, #0f172a);
+}
+
+.nav-tab-pill.active {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.28);
+  border-color: rgba(5, 150, 105, 0.2);
+}
+
+.nav-tab-pill .tab-icon {
+  font-size: 1rem;
+}
+
+/* =========================================================================
+   T-35 / S-35: HANDOVERS & ORGANIZATIONS
+   ========================================================================= */
+.module-avatar--handover {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+.module-avatar--product {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.handover-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.handover-badge--completed,
+.handover-badge--accepted {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.handover-badge--pending {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.handover-badge--rejected {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.handover-badge--overdue {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+  animation: pulse-border 2s infinite;
+}
+
+.row-overdue {
+  background-color: rgba(254, 242, 242, 0.5) !important;
+}
+
+@keyframes pulse-border {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2); }
+}
+
+.org-privacy-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: var(--slate-500);
+  background: var(--slate-100);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* =========================================================================
+   T-45: BATCH MERGE STYLES
+   ========================================================================= */
+.merge-action-bar {
+  background: #f8fafc;
+  border: 1.5px dashed #94a3b8;
+  border-radius: var(--radius-md, 12px);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.merge-action-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.badge-count {
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--emerald-100, #d1fae5);
+  color: var(--emerald-800, #065f46);
+}
+
+.merge-status-box {
+  font-size: 0.84rem;
+  color: var(--slate-600, #475569);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.merge-status-box.valid {
+  color: #059669;
+  font-weight: 600;
+}
+
+.merge-status-box.invalid {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.merge-items-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  margin-bottom: 18px;
+  font-size: 0.86rem;
+}
+
+.merge-items-table th {
+  background: var(--slate-100);
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--slate-600);
+}
+
+.merge-items-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--slate-200);
+}
+
+.input-extract-qty {
+  width: 110px;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  border: 1px solid var(--slate-300);
+  border-radius: var(--radius-sm);
+  text-align: right;
+}
+
+.merge-total-card {
+  background: var(--emerald-50);
+  border: 1px solid var(--emerald-200);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.merge-total-label {
+  font-weight: 700;
+  color: var(--emerald-900);
+}
+
+.merge-total-value {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--emerald-700);
+  font-family: var(--font-mono);
+}
+
+.merge-success-banner {
+  background: linear-gradient(135deg, var(--emerald-50) 0%, #f0fdf4 100%);
+  border: 2px solid var(--emerald-500);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.merge-success-code {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--emerald-800);
+  font-family: var(--font-mono);
+  background: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  display: inline-block;
+  margin: 10px 0;
+  border: 1px dashed var(--emerald-500);
+  letter-spacing: 0.05em;
+}
+
+/* =========================================================================
+   TIMELINE MODAL EVENT STYLES (No Raw JSON)
+   ========================================================================= */
+.event-desc {
+  font-size: 0.88rem;
+  color: var(--slate-700, #334155);
+  margin-bottom: 6px;
+}
+
+.event-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.event-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  background: var(--slate-100, #f1f5f9);
+  color: var(--slate-700, #334155);
+  border: 1px solid var(--slate-200, #e2e8f0);
+}
+
+.event-chip--child {
+  background: #fff7ed;
+  color: #9a3412;
+  border-color: #fdba74;
+  font-family: var(--font-mono);
+}
+
+.event-chip--parent {
+  background: #f0f9ff;
+  color: #0369a1;
+  border-color: #bae6fd;
+  font-family: var(--font-mono);
+}
+
+.event-chip--danger {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.event-subnote {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: var(--slate-500, #64748b);
+}

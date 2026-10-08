@@ -16,15 +16,38 @@ Mọi model đều kế thừa ``Base`` và bảng sẽ được ``init_db()`` t
 ở ``app/main.py``) - không cần chạy script SQL thủ công.
 """
 
-from __future__ import annotations
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from enum import Enum
+from typing import Any, Optional
 
-from datetime import date
-from typing import Optional
 
-from sqlalchemy import Date, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+
 from app.database import Base
+
+
+def _utcnow() -> datetime:
+    """Giờ UTC dạng naive để lưu vào cột TIMESTAMP WITHOUT TIME ZONE."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 
 class Farm(Base):
@@ -101,6 +124,10 @@ class Batch(Base):
         default="HTX Nông Nghiệp Số 4",
         index=True,
     )
+    current_owner: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
     pending_receiver_org: Mapped[Optional[str]] = mapped_column(
         String(100),
         nullable=True,
@@ -108,8 +135,43 @@ class Batch(Base):
         index=True,
     )
 
+    # Phả hệ lô nông sản mẹ - con (T-39 / T-40 / T-41 / SCRUM-57)
+    parent_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("batches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        default=None,
+    )
+    is_restricted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
     # Quan hệ N-1: nhiều lô có thể thuộc về một vùng trồng.
     farm: Mapped["Farm"] = relationship(back_populates="batches")
+
+    # Quan hệ tự tham chiếu (self-referential) cho phả hệ mẹ - con:
+    parent: Mapped[Any] = relationship(
+        "Batch",
+        remote_side="Batch.id",
+        foreign_keys=[parent_id],
+        backref="children",
+    )
+
+    # Quan hệ phả hệ gộp lô (nhiều cha - nhiều con) - T-44 / T-46 / SCRUM-60 / SCRUM-62:
+    parent_relations: Mapped[list["BatchRelation"]] = relationship(
+        "BatchRelation",
+        foreign_keys="[BatchRelation.child_batch_id]",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    child_relations: Mapped[list["BatchRelation"]] = relationship(
+        "BatchRelation",
+        foreign_keys="[BatchRelation.parent_batch_id]",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
     # Quan hệ 1-N: một lô có chuỗi sự kiện lịch sử (SCRUM-39).
     events: Mapped[list["BatchEvent"]] = relationship(
@@ -117,11 +179,63 @@ class Batch(Base):
         cascade="all, delete-orphan",
     )
 
+    @property
+    def owner(self) -> Optional[str]:
+        return self.current_owner or self.current_holder_org
+
+    @owner.setter
+    def owner(self, value: Optional[str]) -> None:
+        self.current_owner = value
+        if value:
+            self.current_holder_org = value
+
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return (
             f"<Batch id={self.id} farm_id={self.farm_id} "
             f"product_name={self.product_name!r}>"
         )
+
+
+class BatchRelation(Base):
+    """Bảng quan hệ cha - con nhiều-nhiều (Genealogy / Phả hệ gộp lô) - T-44 / T-46 / SCRUM-60 / SCRUM-62.
+
+    Lưu vết các lô mẹ (parent) gộp thành lô con (child) và khối lượng lấy từ mỗi lô mẹ.
+    Sử dụng Decimal (Numeric(12, 4)) để bảo toàn khối lượng chính xác tuyệt đối.
+    """
+
+    __tablename__ = "batch_relations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    parent_batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    child_batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    used_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4, asdecimal=True),
+        nullable=False,
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("parent_batch_id", "child_batch_id", name="uq_parent_child_batch"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<BatchRelation id={self.id} parent_id={self.parent_batch_id} -> "
+            f"child_id={self.child_batch_id} used={self.used_quantity}kg>"
+        )
+
 
 
 class Organization(Base):
@@ -341,10 +455,133 @@ class User(Base):
         return f"<User id={self.id} username={self.username!r} role={self.role}>"
 
 
+
+# ----------------------------------------------------------------- Products (S-16) ---
+class ProductUnit(str, Enum):
+    """Đơn vị tính chuẩn của danh mục sản phẩm."""
+    KG = "kg"
+    G = "g"
+    TON = "ton"
+    LITER = "liter"
+    BOX = "box"
+    BOTTLE = "bottle"
+    PIECE = "piece"
+    BUNDLE = "bundle"
+
+
+PRODUCT_UNITS: tuple[str, ...] = tuple(unit.value for unit in ProductUnit)
+DEFAULT_PRODUCT_UNIT: str = ProductUnit.KG.value
+
+
+class Product(Base):
+    """Sản phẩm trong danh mục dùng chung cho mọi tổ chức - bảng ``products``."""
+
+    __tablename__ = "products"
+    __table_args__ = (
+        CheckConstraint(
+            "unit IN (" + ", ".join(f"'{unit}'" for unit in PRODUCT_UNITS) + ")",
+            name="chk_products_unit",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    unit: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=DEFAULT_PRODUCT_UNIT,
+    )
+    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Product id={self.id} name={self.name!r} unit={self.unit!r}>"
+
+
+# ----------------------------------------------------------------- Handovers (S-35) ---
+HANDOVER_STATUS_PENDING: str = "pending"
+HANDOVER_STATUS_ACCEPTED: str = "accepted"
+HANDOVER_STATUS_REJECTED: str = "rejected"
+HANDOVER_STATUSES: tuple[str, ...] = (
+    HANDOVER_STATUS_PENDING,
+    HANDOVER_STATUS_ACCEPTED,
+    HANDOVER_STATUS_REJECTED,
+)
+
+EVENT_TYPE_BATCH_CREATED: str = "BATCH_CREATED"
+EVENT_TYPE_HANDOVER_PENDING: str = "HANDOVER_PENDING"
+EVENT_TYPE_HANDOVER_ACCEPTED: str = "HANDOVER_ACCEPTED"
+EVENT_TYPE_HANDOVER_REJECTED: str = "HANDOVER_REJECTED"
+EVENT_TYPE_OWNER_CHANGED: str = "OWNER_CHANGED"
+
+
+class Handover(Base):
+    """Phiếu bàn giao quyền giữ lô nông sản giữa bên giao và bên nhận - bảng ``handovers``."""
+
+    __tablename__ = "handovers"
+    __table_args__ = (
+        Index(
+            "uq_handovers_one_pending_per_batch",
+            "batch_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id"),
+        nullable=False,
+        index=True,
+    )
+    sender_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    sender_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    receiver_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    receiver_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=HANDOVER_STATUS_PENDING,
+        index=True,
+    )
+    notes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=_utcnow,
+        nullable=False,
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        default=None,
+        onupdate=_utcnow,
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<Handover id={self.id} batch_id={self.batch_id} "
+            f"sender={self.sender_name!r} receiver={self.receiver_name!r} "
+            f"status={self.status!r}>"
+        )
+
+
 __all__ = [
     "Base",
     "Batch",
     "BatchEvent",
+    "BatchRelation",
     "ColdChainThreshold",
     "ColdChainViolation",
     "Farm",
@@ -356,4 +593,19 @@ __all__ = [
     "ROLE_INSPECTOR",
     "ROLES",
     "User",
+    "Product",
+    "ProductUnit",
+    "PRODUCT_UNITS",
+    "DEFAULT_PRODUCT_UNIT",
+    "Handover",
+    "HANDOVER_STATUS_PENDING",
+    "HANDOVER_STATUS_ACCEPTED",
+    "HANDOVER_STATUS_REJECTED",
+    "HANDOVER_STATUSES",
+    "EVENT_TYPE_BATCH_CREATED",
+    "EVENT_TYPE_HANDOVER_PENDING",
+    "EVENT_TYPE_HANDOVER_ACCEPTED",
+    "EVENT_TYPE_HANDOVER_REJECTED",
+    "EVENT_TYPE_OWNER_CHANGED",
 ]
+

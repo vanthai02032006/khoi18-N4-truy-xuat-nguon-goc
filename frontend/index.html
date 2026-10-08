@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.2" />
+  <link rel="stylesheet" href="css/style.css?v=2.3" />
 </head>
 <body>
   <!-- Ambient Backdrop -->
@@ -243,8 +243,44 @@
         </article>
       </section>
 
+      <!-- Modular Tab Navigation Bar (Liquid Modern Shell) -->
+      <nav class="module-nav-tabs" aria-label="Điều hướng phân hệ">
+        <button type="button" class="nav-tab-pill active" data-tab="all">
+          <span class="tab-icon">📑</span>
+          <span>Tất cả</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="farms">
+          <span class="tab-icon">🌾</span>
+          <span>Thửa đất</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="batches">
+          <span class="tab-icon">📦</span>
+          <span>Lô nông sản</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="products">
+          <span class="tab-icon">🏷️</span>
+          <span>Danh mục SP</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="handovers">
+          <span class="tab-icon">🤝</span>
+          <span>Bàn giao</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="coldchain">
+          <span class="tab-icon">❄️</span>
+          <span>Chuỗi lạnh</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="orders">
+          <span class="tab-icon">🚨</span>
+          <span>Kiểm tra & Thu hồi</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="users" id="tab-users-btn" hidden>
+          <span class="tab-icon">👥</span>
+          <span>Thành viên</span>
+        </button>
+      </nav>
+
       <!-- Section 1: Quản lý Thửa Đất Canh Tác -->
-      <section class="content-card">
+      <section id="farms-card" class="content-card">
         <header class="card-header">
           <div class="header-left">
             <div class="module-avatar module-avatar--farm">
@@ -343,7 +379,7 @@
       </section>
 
       <!-- Section 2: Quản lý Lô Nông Sản / Cây Trồng Thu Hoạch -->
-      <section class="content-card">
+      <section id="batches-card" class="content-card">
         <header class="card-header">
           <div class="header-left">
             <div class="module-avatar module-avatar--batch">
@@ -377,8 +413,9 @@
               <label for="batch-product-name" class="input-label">
                 Loại cây trồng / Nông sản <span class="required">*</span>
               </label>
-              <input id="batch-product-name" type="text" maxlength="255" required
-                     placeholder="Ví dụ: Xoài Cát Chu Loại 1 (VietGAP) / Sầu Riêng Ri6" />
+              <input id="batch-product-name" list="products-datalist" type="text" maxlength="255" required
+                     placeholder="Ví dụ: Xoài Cát Chu / Sầu Riêng Ri6..." />
+              <datalist id="products-datalist"></datalist>
             </div>
 
             <div class="form-group">
@@ -434,14 +471,39 @@
               <span class="table-heading">Danh sách các lô cây trồng & nông sản thu hoạch</span>
               <span class="table-tag" style="margin-left: 8px;">Gắn nhãn truy xuất</span>
             </div>
-            <div class="filter-controls" style="display: flex; gap: 8px; align-items: center;">
-              <input id="batch-filter-search" type="text" placeholder="Tìm theo tên nông sản / mã lô..."
-                     style="padding: 6px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px; min-width: 240px;" />
-              <button id="btn-open-public-map" class="btn-action-primary" type="button" style="background: #0284c7; padding: 6px 14px; font-size: 13px;" title="Tra cứu bản đồ hành trình công khai">
+            <div class="filter-controls" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <div class="search-input-wrap" style="position: relative; display: flex; align-items: center;">
+                <input id="batch-filter-search" type="text" placeholder="Tìm theo tên nông sản / mã lô (VD: LOT-0001)..."
+                       style="padding: 7px 30px 7px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px; min-width: 250px;" />
+                <button id="btn-batch-search-clear" type="button" style="position: absolute; right: 8px; background: none; border: none; cursor: pointer; color: #94a3b8; font-size: 16px; line-height: 1;" title="Xoá tìm kiếm" hidden>×</button>
+              </div>
+              <button id="btn-batch-search" class="btn-action-primary" type="button" style="background: #059669; padding: 7px 14px; font-size: 13px;" title="Tìm kiếm">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <span>Tìm</span>
+              </button>
+              <button id="btn-toggle-merge-mode" class="btn-action-ghost" type="button" style="padding: 7px 14px; font-size: 13px;" title="Gộp nhiều lô nông sản">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+                <span id="btn-toggle-merge-text">Bật chế độ gộp lô</span>
+              </button>
+              <button id="btn-open-public-map" class="btn-action-primary" type="button" style="background: #0284c7; padding: 7px 14px; font-size: 13px;" title="Tra cứu bản đồ hành trình công khai">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
                 <span>Bản đồ hành trình</span>
               </button>
             </div>
+          </div>
+
+          <!-- Thanh công cụ kiểm tra điều kiện gộp lô (T-45 / SCRUM-61) -->
+          <div id="merge-action-bar" class="merge-action-bar" hidden>
+            <div class="merge-action-left">
+              <span id="merge-selected-count" class="badge-count">Đã chọn: 0 lô</span>
+              <div id="merge-validation-status" class="merge-status-box">
+                Tích chọn các lô cần gộp vào cùng một mẻ.
+              </div>
+            </div>
+            <button id="btn-open-merge-modal" class="btn-action-primary" type="button" disabled>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <span>Tiến hành gộp lô</span>
+            </button>
           </div>
           <div class="responsive-table">
             <table class="data-table">
@@ -469,7 +531,199 @@
         </div>
       </section>
 
-      <!-- Section 3: Giám Sát Lệnh Kiểm Tra & Thu Hồi Khẩn Cấp (Cán bộ kiểm tra / Inspector) -->
+      <!-- Section 3: Danh Mục Sản Phẩm Chuẩn Toàn Hệ Thống (S-16) -->
+      <section id="products-card" class="content-card">
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar module-avatar--product">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">3. Danh mục sản phẩm chuẩn toàn hệ thống</h3>
+              <p class="card-subtitle">
+                Danh mục nông sản chuẩn dùng chung cho tất cả tổ chức. Quản trị viên (Admin) có quyền thêm mới hoặc chỉnh sửa.
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <form id="product-form" class="form-wrapper" novalidate>
+          <input type="hidden" id="product-id" />
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="product-name" class="input-label">
+                Tên sản phẩm nông sản <span class="required">*</span>
+              </label>
+              <input id="product-name" type="text" required maxlength="120"
+                     placeholder="Ví dụ: Xoài Cát Chu Cao Lãnh, Dưa lưới Huỳnh Long..." />
+              <span id="product-name-error" class="field-error-msg" hidden></span>
+            </div>
+
+            <div class="form-group">
+              <label for="product-unit" class="input-label">
+                Đơn vị tính tiêu chuẩn <span class="required">*</span>
+              </label>
+              <select id="product-unit" required>
+                <option value="kg">kg (Kilogram)</option>
+                <option value="gram">gram (Gam)</option>
+                <option value="ton">ton (Tấn)</option>
+                <option value="box">box (Thùng / Hộp)</option>
+                <option value="bag">bag (Bao / Túi)</option>
+                <option value="crate">crate (Két / Sọt)</option>
+                <option value="tray">tray (Khay / Vỉ)</option>
+                <option value="bunch">bunch (Nải / Chùm)</option>
+                <option value="piece">piece (Cái / Quả)</option>
+                <option value="bundle">bundle (Bó / Bộ)</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label for="product-description" class="input-label">
+                Mô tả / Tiêu chuẩn chất lượng
+              </label>
+              <input id="product-description" type="text" maxlength="500"
+                     placeholder="Ví dụ: Tiêu chuẩn VietGAP / GlobalGAP, bảo quản lạnh 4-8°C..." />
+            </div>
+          </div>
+
+          <div class="form-buttons">
+            <button id="product-submit" class="btn-action-primary" type="submit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+              <span id="product-submit-label">Thêm sản phẩm</span>
+            </button>
+            <button id="product-cancel" class="btn-action-ghost" type="button" hidden>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <span>Huỷ sửa</span>
+            </button>
+          </div>
+        </form>
+
+        <div class="table-container">
+          <div class="table-subhead">
+            <span class="table-heading">Danh mục nông sản chuẩn (Dùng chung toàn hệ thống)</span>
+            <span class="table-tag">Global Catalog</span>
+          </div>
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 80px;">MÃ SP</th>
+                  <th>TÊN SẢN PHẨM</th>
+                  <th style="width: 130px;">ĐƠN VỊ TÍNH</th>
+                  <th>MÔ TẢ / TIÊU CHUẨN</th>
+                  <th class="is-center" style="width: 140px;">THAO TÁC</th>
+                </tr>
+              </thead>
+              <tbody id="product-table-body"></tbody>
+            </table>
+          </div>
+          <div id="product-empty" class="empty-placeholder" hidden>
+            <div class="empty-icon-wrap">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            </div>
+            <h4>Chưa có sản phẩm nào trong danh mục</h4>
+            <p>Vui lòng thêm sản phẩm bằng biểu mẫu phía trên.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 4: Quản Lý Phiếu Bàn Giao & Chuỗi Cung Ứng (S-35) -->
+      <section id="handovers-card" class="content-card">
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar module-avatar--handover">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 16l4-4-4-4"/><path d="M20 12H8"/><path d="M4 4v16"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">4. Tạo phiếu bàn giao & Xác nhận chuyển giao lô</h3>
+              <p class="card-subtitle">
+                Thiết lập đợt bàn giao cho đối tác chuỗi cung ứng. Bên nhận có quyền Tiếp nhận hoặc Từ chối kèm lý do. Giao dịch ghi nhận chuỗi hash bất biến.
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <form id="handover-form" class="form-wrapper" novalidate>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="handover-batch-id" class="input-label">
+                Lô nông sản cần bàn giao <span class="required">*</span>
+              </label>
+              <select id="handover-batch-id" required>
+                <option value="">-- Chọn lô nông sản bàn giao --</option>
+              </select>
+              <span id="handover-batch-error" class="field-error-msg" hidden></span>
+            </div>
+
+            <div class="form-group">
+              <label for="handover-recipient-org" class="input-label">
+                Tổ chức / Đối tác nhận <span class="required">*</span>
+                <span class="org-privacy-pill" title="Thông tin hiển thị công khai">Công khai</span>
+              </label>
+              <select id="handover-recipient-org" required>
+                <option value="">-- Chọn tổ chức đối tác nhận --</option>
+              </select>
+              <span id="handover-org-error" class="field-error-msg" hidden></span>
+            </div>
+
+            <div class="form-group">
+              <label for="handover-date" class="input-label">
+                Ngày thực hiện bàn giao <span class="required">*</span>
+              </label>
+              <input id="handover-date" type="date" required />
+              <span id="handover-date-error" class="field-error-msg" hidden></span>
+            </div>
+
+            <div class="form-group">
+              <label for="handover-notes" class="input-label">
+                Ghi chú đợt bàn giao
+              </label>
+              <input id="handover-notes" type="text" maxlength="500"
+                     placeholder="Ví dụ: Bàn giao xe container lạnh kiểm soát nhiệt độ 2-6°C..." />
+            </div>
+          </div>
+
+          <div class="form-buttons">
+            <button id="handover-submit" class="btn-action-primary" type="submit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <span>Xác nhận & Gửi phiếu bàn giao</span>
+            </button>
+          </div>
+        </form>
+
+        <div class="table-container">
+          <div class="table-subhead">
+            <span class="table-heading">Lịch sử các đợt bàn giao trong chuỗi cung ứng</span>
+            <span class="table-tag">Bàn giao & Chuyển quyền</span>
+          </div>
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 80px;">MÃ PHIẾU</th>
+                  <th>LÔ BÀN GIAO</th>
+                  <th>BÊN GIAO</th>
+                  <th>BÊN NHẬN</th>
+                  <th>NGÀY GỬI</th>
+                  <th>GHI CHÚ</th>
+                  <th class="is-center" style="width: 130px;">TRẠNG THÁI</th>
+                  <th class="is-center" style="width: 170px;">THAO TÁC</th>
+                </tr>
+              </thead>
+              <tbody id="handover-table-body"></tbody>
+            </table>
+          </div>
+          <div id="handover-empty" class="empty-placeholder" hidden>
+            <div class="empty-icon-wrap">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8"><path d="M16 16l4-4-4-4"/><path d="M20 12H8"/></svg>
+            </div>
+            <h4>Chưa có phiếu bàn giao nào</h4>
+            <p>Vui lòng tạo phiếu bàn giao nông sản bằng biểu mẫu phía trên.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 5: Giám Sát Lệnh Kiểm Tra & Thu Hồi Khẩn Cấp (Cán bộ kiểm tra / Inspector) -->
       <section id="orders-card" class="content-card">
         <header class="card-header">
           <div class="header-left">
@@ -1022,6 +1276,129 @@
     </div>
   </div>
 
+  <!-- ==================== T-45: MODAL GỘP LÔ NÔNG SẢN ==================== -->
+  <div id="merge-modal" class="modal-backdrop" hidden>
+    <div class="modal-card" style="max-width: 720px;">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title">Gộp nhiều lô nông sản (Batch Merge)</h3>
+          <p class="card-subtitle">Trích xuất sản lượng từ các lô đã chọn để hình thành lô thành phẩm mới.</p>
+        </div>
+        <button id="btn-close-merge-modal" class="modal-close" type="button" aria-label="Đóng modal">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="modal-body" style="padding: 20px;">
+        <div style="margin-bottom: 14px;">
+          <strong style="color: var(--slate-700); font-size: 0.88rem;">Sản phẩm gộp chung: </strong>
+          <span id="merge-modal-product-name" class="meta-tag font-mono">—</span>
+        </div>
+
+        <table class="merge-items-table">
+          <thead>
+            <tr>
+              <th style="width: 100px;">MÃ LÔ</th>
+              <th>THỬA ĐẤT XUẤT XỨ</th>
+              <th class="is-right" style="width: 130px;">KHỐI LƯỢNG GỐC</th>
+              <th class="is-right" style="width: 160px;">KHỐI LƯỢNG LẤY (KG)</th>
+            </tr>
+          </thead>
+          <tbody id="merge-modal-items-body"></tbody>
+        </table>
+
+        <div class="merge-total-card">
+          <span class="merge-total-label">Tổng khối lượng gộp thu được:</span>
+          <span class="merge-total-value"><span id="merge-modal-total-qty">0</span> kg</span>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="merge-modal-dest-farm" class="input-label">
+              Thửa đất / Kho tiếp nhận lô gộp <span class="required">*</span>
+            </label>
+            <select id="merge-modal-dest-farm" required></select>
+          </div>
+
+          <div class="form-group">
+            <label for="merge-modal-notes" class="input-label">
+              Ghi chú đợt gộp lô
+            </label>
+            <input id="merge-modal-notes" type="text" maxlength="255"
+                   placeholder="Ví dụ: Gộp các lô đạt chuẩn xuất khẩu sang thị trường Nhật Bản" />
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button id="btn-cancel-merge-modal" class="btn-action-ghost" type="button">Hủy bỏ</button>
+        <button id="btn-confirm-merge" class="btn-action-primary" type="button">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          <span>Xác nhận tạo lô gộp</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Thông báo kết quả Gộp Lô Thành Công -->
+  <div id="merge-success-modal" class="modal-backdrop" hidden>
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-body" style="text-align: center; padding: 32px 24px;">
+        <div style="width: 54px; height: 54px; background: #dcfce7; color: #16a34a; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--slate-900);">GỘP LÔ NÔNG SẢN THÀNH CÔNG!</h3>
+        <p style="font-size: 0.86rem; color: var(--slate-600); margin-top: 6px;">
+          Hệ thống đã trích xuất khối lượng thành công và cấp mã định danh truy xuất nguồn gốc mới:
+        </p>
+
+        <div class="merge-success-banner" style="margin-top: 18px;">
+          <span style="font-size: 0.76rem; font-weight: 700; color: #065f46; text-transform: uppercase;">Mã lô nông sản mới tạo ra:</span>
+          <div id="merge-new-batch-code" class="merge-success-code">LOT-—</div>
+          <div style="font-size: 0.86rem; color: var(--slate-700);">
+            Tổng sản lượng lô: <strong id="merge-new-batch-qty">0 kg</strong>
+          </div>
+        </div>
+
+        <button id="btn-close-merge-success" class="btn-action-primary" type="button" style="margin-top: 14px; width: 100%;">
+          Đồng ý & Xem danh sách lô
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Nhập Lý Do Từ Chối Bàn Giao (S-35) -->
+  <div id="reject-handover-modal" class="modal-backdrop" hidden>
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title" style="color: #dc2626;">Từ chối tiếp nhận bàn giao</h3>
+          <p class="card-subtitle">Vui lòng nêu rõ lý do từ chối (yêu cầu bắt buộc để ghi nhận vào chuỗi hash).</p>
+        </div>
+        <button id="btn-close-reject-modal" class="modal-close" type="button" aria-label="Đóng modal">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 20px;">
+        <input type="hidden" id="reject-handover-id" />
+        <div class="form-group">
+          <label for="reject-handover-reason" class="input-label">
+            Lý do từ chối bàn giao <span class="required">*</span>
+          </label>
+          <textarea id="reject-handover-reason" rows="3" required maxlength="500"
+                    placeholder="Ví dụ: Nhiệt độ bảo quản xe lạnh vượt ngưỡng 10°C, bao bì bị rách hỏng..."
+                    style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 14px; resize: vertical;"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-reject-modal" class="btn-action-ghost" type="button">Hủy bỏ</button>
+        <button id="btn-confirm-reject" class="btn-action-primary" type="button" style="background: #dc2626;">
+          Xác nhận từ chối
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Page Footer -->
   <footer class="site-footer">
     <div class="footer-container">
@@ -1067,6 +1444,6 @@
       }
     }
   </script>
-  <script src="js/app.js?v=2.2"></script>
+  <script src="js/app.js?v=2.3"></script>
 </body>
 </html>

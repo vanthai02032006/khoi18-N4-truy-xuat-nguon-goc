@@ -5,6 +5,7 @@ Quy ước: mỗi file trong package này là một `APIRouter` cho một nhóm 
 `cold_chain.py`...). Tất cả router được đăng ký tập trung tại `app/main.py`.
 """
 
-from app.routers import auth, batches, cold_chain, events, farms, health, orders, users
+from app.routers import auth, batches, cold_chain, events, farms, handovers, health, orders, products, users
 
-__all__ = ["auth", "batches", "cold_chain", "events", "farms", "health", "orders", "users"]
+__all__ = ["auth", "batches", "cold_chain", "events", "farms", "handovers", "health", "orders", "products", "users"]
+
