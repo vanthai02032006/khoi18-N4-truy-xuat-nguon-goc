@@ -3,52 +3,81 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AGRI-TRACE · Hệ Thống Truy Xuất Nguồn Gốc & Chuỗi Lạnh Nông Sản</title>
+  <title>AGRI-TRACE · Earthy Editorial Cold-Chain Traceability</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.4" />
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css?v=3.0" />
 </head>
 <body>
-  <!-- Ambient Backdrop -->
-  <div class="ambient-layer" aria-hidden="true">
-    <div class="ambient-gradient ambient-gradient-1"></div>
-    <div class="ambient-gradient ambient-gradient-2"></div>
+  <!-- Persistent SVG Fractal Noise Overlay (4% opacity) -->
+  <div class="editorial-noise-overlay" aria-hidden="true">
+    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+      <filter id="noiseFilter">
+        <feTurbulence type="fractalNoise" baseFrequency="0.75" numOctaves="3" stitchTiles="stitch" />
+      </filter>
+      <rect width="100%" height="100%" filter="url(#noiseFilter)" />
+    </svg>
   </div>
 
-  <!-- Top Navigation Bar -->
+  <!-- Fixed Top Navigation (Hyphen-prefixed Logo, Frosted Pill Tabs, White Pill Badge) -->
   <header class="navbar">
     <div class="navbar__inner">
       <div class="navbar__brand">
-        <div class="brand-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10S2 17.523 2 12c0-2.5 1-5 3-7"/>
-            <path d="M12 6v6l4 2"/>
-            <circle cx="12" cy="12" r="2.5" fill="#10b981" stroke="none"/>
-          </svg>
-        </div>
-        <div class="brand-info">
-          <div class="brand-title-wrap">
-            <span class="brand-title">AGRI-TRACE</span>
-          </div>
-          <span class="brand-subtitle">Truy xuất nguồn gốc VietGAP & Giám sát chuỗi lạnh nông sản</span>
-        </div>
+        <span class="brand-title">- AGRI-TRACE</span>
       </div>
 
+      <!-- Center Pill Navigation Bar (backdrop-filter: blur(20px), uppercase 10px bold) -->
+      <nav class="module-nav-tabs" aria-label="Điều hướng phân hệ">
+        <button type="button" class="nav-tab-pill active" data-tab="all">
+          <span class="tab-icon">📑</span>
+          <span>TẤT CẢ</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="farms">
+          <span class="tab-icon">🌾</span>
+          <span>THỬA ĐẤT</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="batches">
+          <span class="tab-icon">📦</span>
+          <span>LÔ HÀNG</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="products">
+          <span class="tab-icon">🏷️</span>
+          <span>DANH MỤC</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="handovers">
+          <span class="tab-icon">🤝</span>
+          <span>BÀN GIAO</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="coldchain">
+          <span class="tab-icon">❄️</span>
+          <span>CHUỖI LẠNH</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="orders">
+          <span class="tab-icon">🚨</span>
+          <span>THU HỒI</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="users" id="tab-users-btn" hidden>
+          <span class="tab-icon">👥</span>
+          <span>THÀNH VIÊN</span>
+        </button>
+      </nav>
+
+      <!-- Right Controls in White Pill -->
       <div class="navbar__controls">
         <div id="user-badge" class="user-pill" hidden>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          <span id="user-badge-text">Chưa xác thực</span>
+          <span id="user-badge-text">KHÁCH</span>
         </div>
 
         <button id="btn-reload" class="action-btn" type="button" title="Tải lại dữ liệu" hidden>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-          <span>Làm mới</span>
+          <span>LÀM MỚI</span>
         </button>
 
         <button id="btn-logout" class="action-btn action-btn--danger" type="button" title="Đăng xuất" hidden>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-          <span>Đăng xuất</span>
+          <span>ĐĂNG XUẤT</span>
         </button>
       </div>
     </div>
@@ -61,12 +90,12 @@
         <!-- Visual Telemetry Sidebar -->
         <div class="login-sidebar">
           <div class="login-badge-group">
-            <span class="chip-glow">
+            <span class="editorial-chip">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-              Tiêu Chuẩn VietGAP & Chuỗi Lạnh
+              TIÊU CHUẨN VIETGAP & CHUỖI LẠNH
             </span>
           </div>
-          <h2 class="sidebar-heading">Minh Bạch Nguồn Gốc<br><span class="text-highlight">Bảo Toàn Chất Lượng</span></h2>
+          <h2 class="sidebar-heading">MINH BẠCH NGUỒN GỐC<br><span class="text-highlight">BẢO TOÀN CHẤT LƯỢNG</span></h2>
           <p class="sidebar-desc">
             Nền tảng kiểm định nguồn gốc nông sản theo từng mẻ thu hoạch, gắn kết chặt chẽ phả hệ thửa đất và dữ liệu giám sát hành trình.
           </p>
@@ -82,15 +111,15 @@
             </div>
             <div class="telemetry-grid">
               <div class="telemetry-row">
-                <span class="t-label">Vùng canh tác:</span>
+                <span class="t-label">VÙNG CANH TÁC:</span>
                 <span class="t-value">Mỹ Xương, Cao Lãnh (Đồng Tháp)</span>
               </div>
               <div class="telemetry-row">
-                <span class="t-label">Mã truy xuất:</span>
+                <span class="t-label">MÃ TRUY XUẤT:</span>
                 <span class="t-value font-mono">BATCH-VN-2026</span>
               </div>
               <div class="telemetry-row">
-                <span class="t-label">Ngưỡng lạnh:</span>
+                <span class="t-label">NGƯỠNG LẠNH:</span>
                 <span class="t-value text-safe">Chuẩn tối ưu (2°C - 8°C)</span>
               </div>
             </div>
@@ -115,8 +144,8 @@
         <!-- Form Panel -->
         <div class="login-panel">
           <div class="panel-header">
-            <span class="tag-section">Xác thực người dùng</span>
-            <h1 class="panel-title">Đăng nhập tài khoản</h1>
+            <span class="tag-section">XÁC THỰC NGƯỜI DÙNG</span>
+            <h1 class="panel-title">ĐĂNG NHẬP TÀI KHOẢN</h1>
             <p class="panel-subtitle">Điền thông tin tài khoản được cấp để truy cập không gian làm việc.</p>
           </div>
 
@@ -133,7 +162,7 @@
                 <span class="role-creds">farmer / 123456</span>
               </button>
               <button type="button" class="btn-quick" onclick="quickFill('inspector', '123456')">
-                <span class="role-pill" style="background: #e0e7ff; color: #4338ca; border: 1px solid #c7d2fe;">Inspector</span>
+                <span class="role-pill" style="background: var(--forest); color: var(--cream);">Inspector</span>
                 <span class="role-creds">inspector / 123456</span>
               </button>
             </div>
@@ -143,7 +172,7 @@
             <div class="form-group">
               <label for="login-username" class="input-label">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                Tên đăng nhập <span class="required">*</span>
+                TÊN ĐĂNG NHẬP <span class="required">*</span>
               </label>
               <div class="input-wrapper">
                 <input id="login-username" type="text" maxlength="50" required
@@ -154,7 +183,7 @@
             <div class="form-group">
               <label for="login-password" class="input-label">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                Mật khẩu <span class="required">*</span>
+                MẬT KHẨU <span class="required">*</span>
               </label>
               <div class="input-wrapper">
                 <input id="login-password" type="password" maxlength="128" required
@@ -162,8 +191,8 @@
               </div>
             </div>
 
-            <button id="login-submit" class="submit-btn" type="submit">
-              <span>Đăng nhập hệ thống</span>
+            <button id="login-submit" class="submit-btn" type="submit" style="margin-top: 14px;">
+              <span>ĐĂNG NHẬP HỆ THỐNG</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             </button>
           </form>
@@ -173,111 +202,121 @@
 
     <!-- ===================== KHÔNG GIAN LÀM VIỆC CHÍNH ===================== -->
     <div id="app-view" class="app-workspace" hidden>
-      <!-- Hero Banner -->
-      <section class="workspace-hero">
-        <div class="workspace-hero__text">
-          <div class="tag-section">Bảng điều khiển trung tâm</div>
-          <h2 class="workspace-hero__title">Giám Sát Chuỗi Cung Ứng & Vùng Trồng</h2>
-          <p class="workspace-hero__subtitle">
-            Hệ thống quản lý dữ liệu gốc phục vụ truy xuất nguồn gốc nông sản theo từng đợt thu hoạch.
+      <!-- Editorial Hero Section (Sage #ccd5ae, 23vw Anton Display, Staggered Letters, Floating Organic Cards) -->
+      <section class="editorial-hero">
+        <!-- Floating Organic Visual Cards with 3rem corners & parallax float -->
+        <div class="editorial-float-card editorial-float-card--top-left">
+          <span class="editorial-chip">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            VIETGAP CERTIFIED
+          </span>
+          <div class="float-card-title">CHUỖI CUNG ỨNG NÔNG SẢN</div>
+          <div class="float-card-meta">100% TRACEABLE ORIGIN</div>
+        </div>
+
+        <div class="editorial-float-card editorial-float-card--top-right">
+          <span class="editorial-chip editorial-chip--cold">
+            <span class="live-dot" style="width: 7px; height: 7px; background: #ccd5ae; border-radius: 50%; display: inline-block;"></span>
+            COLD-CHAIN IOT
+          </span>
+          <div class="float-card-title">4.5°C OPTIMAL</div>
+          <div class="float-card-meta">TELEMETRY SECURED</div>
+        </div>
+
+        <!-- Centerpiece: Massive 'Anton' text (23vw), leading: 0.75, letter-spacing: -0.05em, Staggered 0.05s -->
+        <div class="editorial-hero__headline-wrap">
+          <h1 class="editorial-hero__massive-title" aria-label="AGRI-TRACE">
+            <span class="hero-char" style="--i: 0;">A</span><span class="hero-char" style="--i: 1;">G</span><span class="hero-char" style="--i: 2;">R</span><span class="hero-char" style="--i: 3;">I</span><span class="hero-char" style="--i: 4;">-</span><span class="hero-char" style="--i: 5;">T</span><span class="hero-char" style="--i: 6;">R</span><span class="hero-char" style="--i: 7;">A</span><span class="hero-char" style="--i: 8;">C</span><span class="hero-char" style="--i: 9;">E</span>
+          </h1>
+          <p class="editorial-hero__tagline">
+            HỆ THỐNG TRUY XUẤT NGUỒN GỐC & GIÁM SÁT CHUỖI LẠNH NÔNG SẢN TOÀN DIỆN
           </p>
+        </div>
+
+        <!-- Floating Ledger Card Bottom -->
+        <div class="editorial-float-card editorial-float-card--bottom-badge">
+          <span class="editorial-chip editorial-chip--hash">SHA-256 HASH CHAIN</span>
+          <span class="float-card-meta">SỔ CÁI BẤT BIẾN APPEND-ONLY</span>
+        </div>
+
+        <!-- Bottom: Dual-column descriptive text and location/origin labels -->
+        <div class="editorial-hero__footer-row">
+          <div class="editorial-hero__col-left">
+            <span>ĐỒNG THÁP · MEKONG DELTA ORIGIN</span>
+            <p>QUY CHUẨN NÔNG NGHIỆP TUẦN HOÀN & BẢO TOÀN ĐỘ TƯƠI MÁT NÔNG SẢN XUẤT KHẨU</p>
+          </div>
+          <div class="editorial-hero__col-right">
+            <span>VIETNAM AGRICULTURAL LEDGER</span>
+            <p>GIÁM SÁT THỜI GIAN THỰC TỪ NÔNG HỘ ĐẾN ĐIỂM BÁN LẺ</p>
+          </div>
         </div>
       </section>
 
-      <!-- Stat Metrics (4 Cards) -->
-      <section class="metrics-grid" aria-label="Chỉ số tổng hợp">
-        <article class="metric-card metric-card--farms">
-          <div class="metric-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-          </div>
-          <div class="metric-body">
-            <span class="metric-label">Thửa Đất Canh Tác</span>
-            <div class="metric-number-wrap">
-              <strong id="stat-farms" class="metric-number">0</strong>
-              <span class="metric-unit">thửa</span>
-            </div>
-            <span class="metric-note">Khai báo địa lý VietGAP</span>
-          </div>
-        </article>
+      <!-- Section: Chỉ số tổng hợp (Olive #e9edc9, 5rem Rounded Corners, Anton Headline) -->
+      <section class="editorial-section editorial-section--metrics" aria-label="Chỉ số tổng hợp">
+        <div class="editorial-section__header">
+          <span class="editorial-eyebrow">DỮ LIỆU ĐIỀU HÀNH TRUNG TÂM</span>
+          <h2 class="editorial-section__title">TỔNG QUAN CHUỖI CUNG ỨNG</h2>
+        </div>
 
-        <article class="metric-card metric-card--batches">
-          <div class="metric-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-          </div>
-          <div class="metric-body">
-            <span class="metric-label">Lô Hàng Đã Ghi Nhận</span>
-            <div class="metric-number-wrap">
-              <strong id="stat-batches" class="metric-number">0</strong>
-              <span class="metric-unit">lô</span>
+        <div class="metrics-grid">
+          <article class="metric-card metric-card--farms">
+            <div class="metric-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
             </div>
-            <span class="metric-note">Sẵn sàng dán nhãn truy xuất</span>
-          </div>
-        </article>
+            <div class="metric-body">
+              <span class="metric-label">THỬA ĐẤT CANH TÁC</span>
+              <div class="metric-number-wrap">
+                <strong id="stat-farms" class="metric-number">0</strong>
+                <span class="metric-unit">THỬA</span>
+              </div>
+              <span class="metric-note">ĐỊNH VỊ TOÀ ĐỘ VIETGAP</span>
+            </div>
+          </article>
 
-        <article class="metric-card metric-card--yield">
-          <div class="metric-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
-          </div>
-          <div class="metric-body">
-            <span class="metric-label">Tổng Sản Lượng Thu Hoạch</span>
-            <div class="metric-number-wrap">
-              <strong id="stat-yield" class="metric-number">0</strong>
-              <span class="metric-unit">kg</span>
+          <article class="metric-card metric-card--batches">
+            <div class="metric-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
             </div>
-            <span class="metric-note">Kiểm soát theo định lượng</span>
-          </div>
-        </article>
+            <div class="metric-body">
+              <span class="metric-label">LÔ HÀNG ĐÃ GHI NHẬN</span>
+              <div class="metric-number-wrap">
+                <strong id="stat-batches" class="metric-number">0</strong>
+                <span class="metric-unit">LÔ</span>
+              </div>
+              <span class="metric-note">SẴN SÀNG DÁN NHÃN QR</span>
+            </div>
+          </article>
 
-        <article class="metric-card metric-card--standards">
-          <div class="metric-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          </div>
-          <div class="metric-body">
-            <span class="metric-label">Tiêu Chuẩn Canh Tác</span>
-            <div class="metric-number-wrap">
-              <strong class="metric-number" style="color: #10b981;">100%</strong>
-              <span class="metric-unit">VietGAP</span>
+          <article class="metric-card metric-card--yield">
+            <div class="metric-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
             </div>
-            <span class="metric-note text-safe">Kiểm định nguồn gốc</span>
-          </div>
-        </article>
+            <div class="metric-body">
+              <span class="metric-label">TỔNG SẢN LƯỢNG THU HOẠCH</span>
+              <div class="metric-number-wrap">
+                <strong id="stat-yield" class="metric-number">0</strong>
+                <span class="metric-unit">KG</span>
+              </div>
+              <span class="metric-note">KIỂM SOÁT ĐỊNH LƯỢNG</span>
+            </div>
+          </article>
+
+          <article class="metric-card metric-card--standards">
+            <div class="metric-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <div class="metric-body">
+              <span class="metric-label">TIÊU CHUẨN CANH TÁC</span>
+              <div class="metric-number-wrap">
+                <strong class="metric-number">100%</strong>
+                <span class="metric-unit">VIETGAP</span>
+              </div>
+              <span class="metric-note text-safe">KIỂM ĐỊNH NGUỒN GỐC</span>
+            </div>
+          </article>
+        </div>
       </section>
-
-      <!-- Modular Tab Navigation Bar (Liquid Modern Shell) -->
-      <nav class="module-nav-tabs" aria-label="Điều hướng phân hệ">
-        <button type="button" class="nav-tab-pill active" data-tab="all">
-          <span class="tab-icon">📑</span>
-          <span>Tất cả</span>
-        </button>
-        <button type="button" class="nav-tab-pill" data-tab="farms">
-          <span class="tab-icon">🌾</span>
-          <span>Thửa đất</span>
-        </button>
-        <button type="button" class="nav-tab-pill" data-tab="batches">
-          <span class="tab-icon">📦</span>
-          <span>Lô nông sản</span>
-        </button>
-        <button type="button" class="nav-tab-pill" data-tab="products">
-          <span class="tab-icon">🏷️</span>
-          <span>Danh mục SP</span>
-        </button>
-        <button type="button" class="nav-tab-pill" data-tab="handovers">
-          <span class="tab-icon">🤝</span>
-          <span>Bàn giao</span>
-        </button>
-        <button type="button" class="nav-tab-pill" data-tab="coldchain">
-          <span class="tab-icon">❄️</span>
-          <span>Chuỗi lạnh</span>
-        </button>
-        <button type="button" class="nav-tab-pill" data-tab="orders">
-          <span class="tab-icon">🚨</span>
-          <span>Kiểm tra & Thu hồi</span>
-        </button>
-        <button type="button" class="nav-tab-pill" data-tab="users" id="tab-users-btn" hidden>
-          <span class="tab-icon">👥</span>
-          <span>Thành viên</span>
-        </button>
-      </nav>
 
       <!-- Section 1: Quản lý Thửa Đất Canh Tác -->
       <section id="farms-card" class="content-card">
@@ -1418,24 +1457,49 @@
     </div>
   </div>
 
-  <!-- Page Footer -->
-  <footer class="site-footer">
-    <div class="footer-container">
-      <div class="footer-column">
-        <h5>AGRI-TRACE TRACEABILITY</h5>
-        <p>Hệ thống truy xuất nguồn gốc nông sản và giám sát chuỗi cung ứng lạnh tiêu chuẩn VietGAP.</p>
+  <!-- Editorial Footer (Forest #01472e, Text #ccd5ae, 12-Column Grid) -->
+  <footer class="editorial-footer">
+    <div class="editorial-footer__grid">
+      <!-- Left 6 Columns: Newsletter / Updates with Underline-only input -->
+      <div class="editorial-footer__col-newsletter">
+        <span class="editorial-footer__eyebrow">BẢN TIN NÔNG NGHIỆP THÔNG MINH</span>
+        <h4 class="editorial-footer__heading">AGRI-TRACE NEWSLETTER</h4>
+        <p class="editorial-footer__desc">
+          Nhận thông tin cập nhật về quy chuẩn chuỗi lạnh, tiêu chuẩn VietGAP và công nghệ truy xuất nguồn gốc nông sản mới nhất.
+        </p>
+        <form class="editorial-newsletter-form" onsubmit="event.preventDefault(); alert('Cảm ơn bạn đã đăng ký nhận bản tin AGRI-TRACE!');">
+          <input type="email" required placeholder="NHẬP ĐỊA CHỈ EMAIL CỦA BẠN..." class="editorial-underline-input" />
+          <button type="submit" class="editorial-pill-btn">ĐĂNG KÝ NGAY</button>
+        </form>
       </div>
-      <div class="footer-column">
-        <h5>TIÊU CHUẨN NÔNG SẢN</h5>
-        <p>• Chứng nhận tiêu chuẩn VietGAP & GlobalGAP</p>
-        <p>• Giám sát chuỗi cung ứng lạnh xuyên suốt</p>
-        <p>• Cổng kết nối dữ liệu: <a href="/docs" target="_blank" rel="noopener">Tài liệu API RESTful</a></p>
+
+      <!-- Right 6 Columns: Two columns of tracked-out links -->
+      <div class="editorial-footer__col-links">
+        <div class="editorial-links-group">
+          <h5 class="editorial-links-title">HỆ THỐNG TRUY XUẤT</h5>
+          <ul class="editorial-links-list">
+            <li><a href="#farms-card" onclick="if(window.switchTab) switchTab('farms')">THỬA ĐẤT CANH TÁC</a></li>
+            <li><a href="#batches-card" onclick="if(window.switchTab) switchTab('batches')">LÔ HÀNG THU HOẠCH</a></li>
+            <li><a href="#products-card" onclick="if(window.switchTab) switchTab('products')">DANH MỤC NÔNG SẢN</a></li>
+            <li><a href="#handovers-card" onclick="if(window.switchTab) switchTab('handovers')">BÀN GIAO SỞ HỮU</a></li>
+          </ul>
+        </div>
+
+        <div class="editorial-links-group">
+          <h5 class="editorial-links-title">QUY CHUẨN KỸ THUẬT</h5>
+          <ul class="editorial-links-list">
+            <li><a href="#coldchain-card" onclick="if(window.switchTab) switchTab('coldchain')">GIÁM SÁT CHUỖI LẠNH</a></li>
+            <li><a href="#orders-card" onclick="if(window.switchTab) switchTab('orders')">LỆNH THU HỒI KHẨN CẤP</a></li>
+            <li><a href="/docs" target="_blank" rel="noopener">TÀI LIỆU API RESTFUL</a></li>
+            <li><a href="javascript:void(0)" onclick="if(window.openPublicMapModal) openPublicMapModal()">BẢN ĐỒ HÀNH TRÌNH</a></li>
+          </ul>
+        </div>
       </div>
-      <div class="footer-column">
-        <h5>HỖ TRỢ CANH TÁC</h5>
-        <p>✓ Khai báo toạ độ và diện tích thửa đất canh tác</p>
-        <p>✓ Cấp mã truy xuất nguồn gốc từng mẻ thu hoạch</p>
-        <p>✓ Phân quyền bảo mật dữ liệu theo từng hợp tác xã</p>
+
+      <!-- Bottom: Copyright and legal links (30% opacity) -->
+      <div class="editorial-footer__bottom">
+        <div>© 2026 AGRI-TRACE TRACEABILITY SYSTEM · ALL RIGHTS RESERVED.</div>
+        <div>TIÊU CHUẨN NÔNG NGHIỆP VIETGAP & GLOBALGAP · CHUỖI KHỐI BẤT BIẾN</div>
       </div>
     </div>
   </footer>
@@ -1463,6 +1527,6 @@
       }
     }
   </script>
-  <script src="js/app.js?v=2.4"></script>
+  <script src="js/app.js?v=3.0"></script>
 </body>
 </html>
