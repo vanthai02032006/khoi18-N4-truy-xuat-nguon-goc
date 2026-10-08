@@ -572,7 +572,8 @@ body {
 
 .input-wrapper input,
 .form-group input,
-.form-group select {
+.form-group select,
+.form-group textarea {
   width: 100%;
   font-family: var(--font-sans);
   font-size: 0.92rem;
@@ -587,7 +588,8 @@ body {
 
 .input-wrapper input:focus,
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
   border-color: var(--emerald-600);
   box-shadow: 0 0 0 3px var(--color-ring);
 }
@@ -1204,7 +1206,9 @@ tr.is-editing {
   to { opacity: 1; }
 }
 
-.modal-dialog {
+.modal-dialog,
+.modal-card,
+.modal-container {
   background: #fff;
   border-radius: var(--radius-lg);
   border: 1px solid var(--slate-200);
@@ -1946,3 +1950,64 @@ tr.is-editing {
   font-size: 0.8rem;
   color: var(--slate-500, #64748b);
 }
+
+/* ==========================================================================
+   Entity Form & Grid Fallbacks (For dynamic and legacy inspector forms)
+   ========================================================================== */
+.entity-form {
+  background: var(--slate-50);
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius-md);
+  padding: 22px;
+  margin-bottom: 24px;
+}
+
+.form-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.form-field--grow {
+  flex: 1 1 260px;
+}
+
+.form-field label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--slate-700);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 0.92rem;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--slate-200);
+  background: #fff;
+  color: var(--slate-850);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  outline: none;
+}
+
+.form-field input:focus,
+.form-field select:focus,
+.form-field textarea:focus {
+  border-color: var(--emerald-600);
+  box-shadow: 0 0 0 3px var(--color-ring);
+}
+
