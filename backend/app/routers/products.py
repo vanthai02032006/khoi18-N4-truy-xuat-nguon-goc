@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Product, User
 from app.schemas import ProductCreate, ProductResponse, ProductUpdate
-from app.security import require_admin, require_farmer
+from app.security import get_current_user, require_admin, require_farmer
 
 router = APIRouter(
     prefix="/products",
@@ -70,16 +70,14 @@ def _ensure_name_available(
         "Trả về toàn bộ sản phẩm trong **danh mục dùng chung toàn hệ thống**, "
         "sắp xếp theo tên (A→Z). Danh mục không phân biệt tổ chức: mọi tổ chức "
         "nhìn thấy cùng một danh sách.\n\n"
-        "**Phân quyền:** đăng nhập với role `farmer` hoặc `admin` - `farmer` chỉ "
-        "xem danh mục để chọn sản phẩm, không có quyền ghi."
+        "**Phân quyền:** bất kỳ tài khoản hợp lệ nào đã đăng nhập đều xem được."
     ),
     responses={
         status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
-        status.HTTP_403_FORBIDDEN: {"description": "Vai trò không được phép."},
     },
 )
 def list_products(
-    current_user: User = Depends(require_farmer),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[Product]:
     """Lấy danh mục sản phẩm dùng chung (không lọc theo tổ chức).
