@@ -205,7 +205,7 @@ def test_search_by_batch_code_case_insensitive(harvest_env):
 
     # 2. Tìm kiếm với mã viết chữ thường (lowercase)
     lower_query = batch_code.lower()
-    res_lower = client.get(f"/batches?search={lower_query}")
+    res_lower = client.get(f"/batches?search={lower_query}", headers={"X-Organization-Id": "HTX Xoai My Xuong"})
     assert res_lower.status_code == 200
     items_lower = res_lower.json()
     assert len(items_lower) == 1
@@ -214,7 +214,7 @@ def test_search_by_batch_code_case_insensitive(harvest_env):
 
     # 3. Tìm kiếm với mã viết chữ hoa (uppercase)
     upper_query = batch_code.upper()
-    res_upper = client.get(f"/batches?search={upper_query}")
+    res_upper = client.get(f"/batches?search={upper_query}", headers={"X-Organization-Id": "HTX Xoai My Xuong"})
     assert res_upper.status_code == 200
     items_upper = res_upper.json()
     assert len(items_upper) == 1
@@ -223,7 +223,7 @@ def test_search_by_batch_code_case_insensitive(harvest_env):
 
     # 4. Tìm kiếm với một phần của mã lô (substring)
     part_query = batch_code[4:10].lower()
-    res_part = client.get(f"/batches?search={part_query}")
+    res_part = client.get(f"/batches?search={part_query}", headers={"X-Organization-Id": "HTX Xoai My Xuong"})
     assert res_part.status_code == 200
     items_part = res_part.json()
     assert any(b["id"] == created_batch["id"] for b in items_part)

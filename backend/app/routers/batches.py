@@ -158,11 +158,16 @@ def list_batches(
     product: str | None = Query(None, description="Lọc chính xác hoặc tương đối theo tên sản phẩm."),
     search: str | None = Query(None, description="Tìm kiếm mã lô hoặc tên sản phẩm không phân biệt hoa thường."),
     cursor: int | None = Query(None, ge=1, description="ID con trỏ cho trang kế tiếp (Keyset pagination)."),
-    limit: int = Query(50, ge=1, le=100, description="Số lượng bản ghi tối đa trả về."),
+    limit: int = Query(20, ge=1, le=100, description="Số lượng bản ghi tối đa trả về (mặc định 20)."),
     db: Session = Depends(get_db),
+    current_org: str = Depends(require_tenant_context),
 ) -> list[Batch]:
-    """Lấy danh sách lô nông sản có hỗ trợ bộ lọc và phân trang con trỏ (SCRUM-49)."""
-    stmt = select(Batch)
+    """Lấy danh sách lô tổ chức đang giữ, mới nhất trước, phân trang con trỏ (SCRUM-49).
+
+    Chỉ trả về lô có ``current_holder_org`` trùng tổ chức của request, nên lô đã
+    bàn giao sang tổ chức khác sẽ tự biến mất khỏi danh sách này.
+    """
+    stmt = select(Batch).where(Batch.current_holder_org == current_org)
 
     # Lọc theo sản phẩm
     if product:
@@ -187,11 +192,11 @@ def list_batches(
                 pass
         stmt = stmt.where(or_(*conditions))
 
-    # Phân trang con trỏ (keyset cursor)
+    # Phân trang con trỏ (keyset cursor), mới nhất trước: trang sau có id nhỏ hơn cursor
     if cursor:
-        stmt = stmt.where(Batch.id > cursor)
+        stmt = stmt.where(Batch.id < cursor)
 
-    stmt = stmt.order_by(Batch.id.asc()).limit(limit)
+    stmt = stmt.order_by(Batch.id.desc()).limit(limit)
     batches_list = list(db.scalars(stmt).all())
     # Backfill batch_code nếu có bản ghi cũ chưa có mã
     for b in batches_list:
