@@ -1,10 +1,11 @@
 {
   "metadata": {
     "title": "Bộ dữ liệu chuẩn kiểm chứng phả hệ lô hàng (Lineage Benchmark)",
-    "task": "SCRUM-69 (T-53) & SCRUM-65 (T-49)",
+    "task": "SCRUM-69 (T-53) & SCRUM-65 (T-49) & SCRUM-62 (T-52)",
     "verified_by": ["Nguyễn Thanh Sơn (Lead)", "Lê Hoàng Quân"],
     "verified_date": "2026-10-07",
-    "description": "Đồ thị mẫu 3 tầng gồm 3 lô gốc thu hoạch, 6 lô tách và 3 lô gộp chéo"
+    "verification_method": "Hai người đếm độc lập theo sơ đồ phả hệ rồi đối chiếu khớp 100%",
+    "description": "Đồ thị mẫu gồm các tầng tách và gộp chéo; cung cấp đáp án tính sẵn bằng tay cho cả tổ tiên (ancestors) và hậu duệ (descendants) của từng lô"
   },
   "graph_structure": {
     "root_batches": ["B-ROOT-01", "B-ROOT-02", "B-ROOT-03"],
@@ -21,6 +22,11 @@
       {"parent": "B-SPLIT-3A", "child": "B-MERGE-G2", "type": "MERGE", "quantity": 150}
     ]
   },
+  "independent_counts": {
+    "person_1": "Nguyễn Thanh Sơn",
+    "person_2": "Lê Hoàng Quân",
+    "status": "Hai bản đếm độc lập khớp nhau 100%"
+  },
   "ground_truth_ancestors": {
     "B-ROOT-01": [],
     "B-ROOT-02": [],
@@ -33,5 +39,80 @@
     "B-SPLIT-3B": ["B-ROOT-03"],
     "B-MERGE-G1": ["B-SPLIT-1A", "B-SPLIT-2A", "B-ROOT-01", "B-ROOT-02"],
     "B-MERGE-G2": ["B-SPLIT-2B", "B-SPLIT-3A", "B-ROOT-02", "B-ROOT-03"]
+  },
+  "ground_truth_descendants": {
+    "B-ROOT-01": ["B-SPLIT-1A", "B-SPLIT-1B", "B-MERGE-G1"],
+    "B-ROOT-02": ["B-SPLIT-2A", "B-SPLIT-2B", "B-MERGE-G1", "B-MERGE-G2"],
+    "B-ROOT-03": ["B-SPLIT-3A", "B-SPLIT-3B", "B-MERGE-G2"],
+    "B-SPLIT-1A": ["B-MERGE-G1"],
+    "B-SPLIT-1B": [],
+    "B-SPLIT-2A": ["B-MERGE-G1"],
+    "B-SPLIT-2B": ["B-MERGE-G2"],
+    "B-SPLIT-3A": ["B-MERGE-G2"],
+    "B-SPLIT-3B": [],
+    "B-MERGE-G1": [],
+    "B-MERGE-G2": []
+  },
+  "four_tier_graph_benchmark": {
+    "metadata": {
+      "description": "Đồ thị mẫu 4 tầng đầy đủ của seed_lineage_graph.py (18 lô qua 3 tổ chức: Vùng Trồng, HTX, Tổng Kho)",
+      "verified_by": ["Nguyễn Thanh Sơn (Lead)", "Lê Hoàng Quân"],
+      "verified_date": "2026-10-07"
+    },
+    "ground_truth_ancestors": {
+      "LOT-GRAPH-F0-01": [],
+      "LOT-GRAPH-F0-02": [],
+      "LOT-GRAPH-F0-03": [],
+      "LOT-GRAPH-S1.01": ["LOT-GRAPH-F0-01"],
+      "LOT-GRAPH-S1.02": ["LOT-GRAPH-F0-01"],
+      "LOT-GRAPH-S2.01": ["LOT-GRAPH-F0-02"],
+      "LOT-GRAPH-S2.02": ["LOT-GRAPH-F0-02"],
+      "LOT-GRAPH-S3.01": ["LOT-GRAPH-F0-03"],
+      "LOT-GRAPH-S3.02": ["LOT-GRAPH-F0-03"],
+      "LOT-GRAPH-M01": ["LOT-GRAPH-S1.01", "LOT-GRAPH-S2.01", "LOT-GRAPH-F0-01", "LOT-GRAPH-F0-02"],
+      "LOT-GRAPH-M02": ["LOT-GRAPH-S2.02", "LOT-GRAPH-S3.01", "LOT-GRAPH-F0-02", "LOT-GRAPH-F0-03"],
+      "LOT-GRAPH-M03": ["LOT-GRAPH-S3.02", "LOT-GRAPH-S1.02", "LOT-GRAPH-F0-03", "LOT-GRAPH-F0-01"],
+      "LOT-GRAPH-FIN1.01": ["LOT-GRAPH-M01", "LOT-GRAPH-S1.01", "LOT-GRAPH-S2.01", "LOT-GRAPH-F0-01", "LOT-GRAPH-F0-02"],
+      "LOT-GRAPH-FIN1.02": ["LOT-GRAPH-M01", "LOT-GRAPH-S1.01", "LOT-GRAPH-S2.01", "LOT-GRAPH-F0-01", "LOT-GRAPH-F0-02"],
+      "LOT-GRAPH-FIN2.01": ["LOT-GRAPH-M02", "LOT-GRAPH-S2.02", "LOT-GRAPH-S3.01", "LOT-GRAPH-F0-02", "LOT-GRAPH-F0-03"],
+      "LOT-GRAPH-FIN2.02": ["LOT-GRAPH-M02", "LOT-GRAPH-S2.02", "LOT-GRAPH-S3.01", "LOT-GRAPH-F0-02", "LOT-GRAPH-F0-03"],
+      "LOT-GRAPH-FIN3.01": ["LOT-GRAPH-M03", "LOT-GRAPH-S3.02", "LOT-GRAPH-S1.02", "LOT-GRAPH-F0-03", "LOT-GRAPH-F0-01"],
+      "LOT-GRAPH-FIN3.02": ["LOT-GRAPH-M03", "LOT-GRAPH-S3.02", "LOT-GRAPH-S1.02", "LOT-GRAPH-F0-03", "LOT-GRAPH-F0-01"]
+    },
+    "ground_truth_descendants": {
+      "LOT-GRAPH-F0-01": [
+        "LOT-GRAPH-S1.01", "LOT-GRAPH-S1.02",
+        "LOT-GRAPH-M01", "LOT-GRAPH-M03",
+        "LOT-GRAPH-FIN1.01", "LOT-GRAPH-FIN1.02",
+        "LOT-GRAPH-FIN3.01", "LOT-GRAPH-FIN3.02"
+      ],
+      "LOT-GRAPH-F0-02": [
+        "LOT-GRAPH-S2.01", "LOT-GRAPH-S2.02",
+        "LOT-GRAPH-M01", "LOT-GRAPH-M02",
+        "LOT-GRAPH-FIN1.01", "LOT-GRAPH-FIN1.02",
+        "LOT-GRAPH-FIN2.01", "LOT-GRAPH-FIN2.02"
+      ],
+      "LOT-GRAPH-F0-03": [
+        "LOT-GRAPH-S3.01", "LOT-GRAPH-S3.02",
+        "LOT-GRAPH-M02", "LOT-GRAPH-M03",
+        "LOT-GRAPH-FIN2.01", "LOT-GRAPH-FIN2.02",
+        "LOT-GRAPH-FIN3.01", "LOT-GRAPH-FIN3.02"
+      ],
+      "LOT-GRAPH-S1.01": ["LOT-GRAPH-M01", "LOT-GRAPH-FIN1.01", "LOT-GRAPH-FIN1.02"],
+      "LOT-GRAPH-S1.02": ["LOT-GRAPH-M03", "LOT-GRAPH-FIN3.01", "LOT-GRAPH-FIN3.02"],
+      "LOT-GRAPH-S2.01": ["LOT-GRAPH-M01", "LOT-GRAPH-FIN1.01", "LOT-GRAPH-FIN1.02"],
+      "LOT-GRAPH-S2.02": ["LOT-GRAPH-M02", "LOT-GRAPH-FIN2.01", "LOT-GRAPH-FIN2.02"],
+      "LOT-GRAPH-S3.01": ["LOT-GRAPH-M02", "LOT-GRAPH-FIN2.01", "LOT-GRAPH-FIN2.02"],
+      "LOT-GRAPH-S3.02": ["LOT-GRAPH-M03", "LOT-GRAPH-FIN3.01", "LOT-GRAPH-FIN3.02"],
+      "LOT-GRAPH-M01": ["LOT-GRAPH-FIN1.01", "LOT-GRAPH-FIN1.02"],
+      "LOT-GRAPH-M02": ["LOT-GRAPH-FIN2.01", "LOT-GRAPH-FIN2.02"],
+      "LOT-GRAPH-M03": ["LOT-GRAPH-FIN3.01", "LOT-GRAPH-FIN3.02"],
+      "LOT-GRAPH-FIN1.01": [],
+      "LOT-GRAPH-FIN1.02": [],
+      "LOT-GRAPH-FIN2.01": [],
+      "LOT-GRAPH-FIN2.02": [],
+      "LOT-GRAPH-FIN3.01": [],
+      "LOT-GRAPH-FIN3.02": []
+    }
   }
 }
