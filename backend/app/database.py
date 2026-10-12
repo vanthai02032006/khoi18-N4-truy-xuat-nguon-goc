@@ -312,8 +312,65 @@ def run_schema_migrations() -> None:
                 conn.execute(text("ALTER TABLE users ADD COLUMN organization_id VARCHAR(50)"))
                 conn.execute(text("UPDATE users SET organization_id = 'ORG_ADMIN' WHERE username = 'admin'"))
                 conn.execute(text("UPDATE users SET organization_id = 'ORG_MY_XUONG' WHERE username = 'farmer'"))
+            if "email" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
+                conn.execute(text("UPDATE users SET email = 'admin@agritrace.vn' WHERE username = 'admin'"))
+                conn.execute(text("UPDATE users SET email = 'farmer@agritrace.vn' WHERE username = 'farmer'"))
+            if "is_active" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+                conn.execute(text("UPDATE users SET is_active = 1 WHERE is_active IS NULL"))
+            if "created_at" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"))
 
         conn.commit()
+
+
+def seed_cold_chain_thresholds() -> None:
+    """Tạo cấu hình ngưỡng nhiệt độ bảo quản lạnh tiêu chuẩn VietGAP cho các loại nông sản."""
+    from app.models import TemperatureThresholdConfig
+
+    db: Session = SessionLocal()
+    try:
+        count = db.scalar(select(func.count()).select_from(TemperatureThresholdConfig)) or 0
+        if count == 0:
+            thresholds = [
+                TemperatureThresholdConfig(
+                    product_name="DEFAULT",
+                    min_temp=2.0,
+                    max_temp=8.0,
+                    description="Ngưỡng chuỗi lạnh chuẩn bảo quản nông sản chung (2.0°C - 8.0°C)",
+                ),
+                TemperatureThresholdConfig(
+                    product_name="Xoài Cát Chu",
+                    min_temp=10.0,
+                    max_temp=13.0,
+                    description="Xoài Cát Chu bảo quản mát tránh tổn thương lạnh chilling injury (10.0°C - 13.0°C)",
+                ),
+                TemperatureThresholdConfig(
+                    product_name="Sầu Riêng Ri6",
+                    min_temp=13.0,
+                    max_temp=16.0,
+                    description="Sầu Riêng Ri6 giữ tươi nguyên quả ở nhiệt độ ổn định (13.0°C - 16.0°C)",
+                ),
+                TemperatureThresholdConfig(
+                    product_name="Bưởi Da Xanh",
+                    min_temp=8.0,
+                    max_temp=12.0,
+                    description="Bưởi Da Xanh tiêu chuẩn GlobalGAP bảo quản kho lạnh (8.0°C - 12.0°C)",
+                ),
+                TemperatureThresholdConfig(
+                    product_name="Thanh Long Ruột Đỏ",
+                    min_temp=3.0,
+                    max_temp=6.0,
+                    description="Thanh Long ruột đỏ xuất khẩu nhiệt độ tối ưu (3.0°C - 6.0°C)",
+                ),
+            ]
+            db.add_all(thresholds)
+            db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+    finally:
+        db.close()
 
 
 def init_db() -> None:
@@ -327,6 +384,7 @@ def init_db() -> None:
     - ``seed_default_users()``: tạo 2 tài khoản mặc định cho chức năng đăng nhập
       + phân quyền (Sprint 4).
     - ``seed_sample_agricultural_data()``: nạp dữ liệu mẫu về thửa đất và lô nông sản.
+    - ``seed_cold_chain_thresholds()``: nạp ngưỡng nhiệt độ bảo quản chuỗi lạnh.
     """
     from app import models  # noqa: F401  (import để đăng ký metadata)
 
@@ -334,3 +392,5 @@ def init_db() -> None:
     run_schema_migrations()
     seed_default_users()
     seed_sample_agricultural_data()
+    seed_cold_chain_thresholds()
+

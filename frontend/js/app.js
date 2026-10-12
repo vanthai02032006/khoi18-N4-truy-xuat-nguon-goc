@@ -235,7 +235,18 @@ function applySessionToUi() {
   }
 
   $("users-card").hidden = !isAdmin;
+  $("cold-chain-card").hidden = !isLoggedIn;
+  $("integrity-card").hidden = !isLoggedIn;
+  $("backup-card").hidden = !isAdmin;
+  $("invitation-card").hidden = !isAdmin;
+
+  const coldChainAdmin = $("coldchain-admin-actions");
+  if (coldChainAdmin) coldChainAdmin.hidden = !isAdmin;
+
+  const integrityAdmin = $("integrity-admin-actions");
+  if (integrityAdmin) integrityAdmin.hidden = !isAdmin;
 }
+
 
 /**
  * Quyền xoá dữ liệu ở giao diện: **chỉ admin** (Sprint 5).
@@ -800,21 +811,34 @@ async function loadUsers() {
   }
 }
 
-/** Vẽ bảng tài khoản (chỉ username + role; backend không trả mật khẩu). */
+/** Vẽ bảng tài khoản (SCRUM-91: username, email, role, org, trạng thái & thao tác). */
 function renderUsers() {
   $("user-table-body").innerHTML = users
-    .map(
-      (user) => `
+    .map((user) => {
+      const isActive = user.is_active !== false;
+      const statusBadge = isActive
+        ? `<span class="badge-pill badge-pill--safe">Đang hoạt động</span>`
+        : `<span class="badge-pill badge-pill--danger">Đã vô hiệu</span>`;
+      const actionBtn = isActive
+        ? `<button class="action-btn-sm action-btn-sm--danger" onclick="toggleMemberStatus(${user.id}, true)">Vô hiệu hoá</button>`
+        : `<button class="action-btn-sm action-btn-sm--success" onclick="toggleMemberStatus(${user.id}, false)">Kích hoạt lại</button>`;
+
+      return `
       <tr>
         <td class="id-cell">${escapeHtml(user.id)}</td>
-        <td>${escapeHtml(user.username)}</td>
+        <td><strong>${escapeHtml(user.username)}</strong></td>
+        <td>${escapeHtml(user.email || "—")}</td>
         <td><code>${escapeHtml(user.role)}</code></td>
-      </tr>`
-    )
+        <td><span class="badge-pill badge-pill--mono">${escapeHtml(user.organization_id || "—")}</span></td>
+        <td>${statusBadge}</td>
+        <td>${actionBtn}</td>
+      </tr>`;
+    })
     .join("");
 
   $("user-empty").hidden = users.length > 0;
 }
+
 
 /* ------------------------------------- 8b. Chi tiết lô & Phả hệ (SCRUM-50 / SCRUM-70) --- */
 /** Tính toán hash SHA-256 canonical của lô nông sản (SCRUM-40). */
@@ -1019,6 +1043,33 @@ function bindEvents() {
       closeBatchDetail();
     }
   });
+
+  // SCRUM-126: Form nhiệt độ & Job tổng hợp
+  const tempForm = $("temp-reading-form");
+  if (tempForm) tempForm.addEventListener("submit", handleTempSubmit);
+  const btnAgg = $("btn-run-aggregate");
+  if (btnAgg) btnAgg.addEventListener("click", handleRunAggregate);
+
+  // SCRUM-136: Job S-12
+  const btnInteg = $("btn-run-integrity");
+  if (btnInteg) btnInteg.addEventListener("click", handleRunIntegrity);
+
+  // SCRUM-138: Backup & Diễn tập
+  const btnBk = $("btn-run-backup");
+  if (btnBk) btnBk.addEventListener("click", handleRunBackup);
+  const btnReh = $("btn-run-rehearsal");
+  if (btnReh) btnReh.addEventListener("click", () => runRehearsalForBackup(null));
+
+  // SCRUM-91: Mời & Modal chấp nhận
+  const inviteForm = $("invite-form");
+  if (inviteForm) inviteForm.addEventListener("submit", handleInviteSubmit);
+
+  const btnOpenAccept = $("btn-open-accept-modal");
+  if (btnOpenAccept) btnOpenAccept.addEventListener("click", () => openAcceptModal());
+  const btnCloseAccept = $("modal-invite-close");
+  if (btnCloseAccept) btnCloseAccept.addEventListener("click", closeAcceptModal);
+  const formAccept = $("invite-accept-form");
+  if (formAccept) formAccept.addEventListener("submit", handleAcceptSubmit);
 }
 
 /** Huỷ chế độ sửa của form vùng trồng / lô nông sản (nút "Huỷ sửa"). */
@@ -1076,13 +1127,475 @@ function handleTableAction(event) {
 }
 
 
+/* ------------------------------------- 13. Chuỗi lạnh & Nhiệt độ (SCRUM-126) --- */
+let tempViolations = [];
+let tempSummaries = [];
+
+async function loadColdChainData() {
+  try {
+    const [violations, summaries] = await Promise.all([
+      apiRequest("/cold-chain/readings/violations"),
+      apiRequest("/cold-chain/summaries"),
+    ]);
+    tempViolations = Array.isArray(violations) ? violations : [];
+    tempSummaries = Array.isArray(summaries) ? summaries : [];
+    renderViolations();
+    renderSummaries();
+    populateBatchSelectForTemp();
+  } catch (error) {
+    console.error("Lỗi tải dữ liệu chuỗi lạnh:", error);
+  }
+}
+
+function populateBatchSelectForTemp() {
+  const select = $("temp-batch-id");
+  if (!select) return;
+  const currentVal = select.value;
+  select.innerHTML = '<option value="">-- Cảm biến kho chung (không gắn lô) --</option>' +
+    batches
+      .map((b) => `<option value="${b.id}" ${String(b.id) === currentVal ? "selected" : ""}>#${b.id} — ${escapeHtml(b.product_name)} (${b.quantity}kg)</option>`)
+      .join("");
+}
+
+function renderViolations() {
+  const tbody = $("violation-table-body");
+  const empty = $("violation-empty");
+  if (!tbody) return;
+
+  tbody.innerHTML = tempViolations
+    .map(
+      (v) => `
+      <tr>
+        <td class="font-mono" style="font-size: 13px;">${escapeHtml(formatDate(v.recorded_at.split("T")[0]))} ${v.recorded_at.split("T")[1]?.slice(0, 5) || ""}</td>
+        <td><code>${escapeHtml(v.sensor_id)}</code></td>
+        <td>${v.batch_id ? `#${v.batch_id}` : "Kho chung"}</td>
+        <td><strong style="color: #dc2626; font-size: 14px;">${v.temperature}°C</strong></td>
+        <td><span class="badge-pill badge-pill--danger">${escapeHtml(v.violation_reason || "Vi phạm ngưỡng")}</span></td>
+      </tr>`
+    )
+    .join("");
+
+  if (empty) empty.hidden = tempViolations.length > 0;
+}
+
+function renderSummaries() {
+  const tbody = $("summary-table-body");
+  const empty = $("summary-empty");
+  if (!tbody) return;
+
+  tbody.innerHTML = tempSummaries
+    .map(
+      (s) => `
+      <tr>
+        <td class="font-mono">${escapeHtml(s.hour_bucket.replace("T", " ").slice(0, 16))}</td>
+        <td><code>${escapeHtml(s.sensor_id)}</code></td>
+        <td>${s.batch_id ? `#${s.batch_id}` : "Kho chung"}</td>
+        <td><strong>${s.min_temp}°C</strong></td>
+        <td><strong>${s.max_temp}°C</strong></td>
+        <td style="color: #059669;"><strong>${s.avg_temp}°C</strong></td>
+        <td>${s.sample_count}</td>
+        <td>${s.violation_count > 0 ? `<span class="badge-pill badge-pill--danger">${s.violation_count}</span>` : `<span class="badge-pill badge-pill--safe">0</span>`}</td>
+      </tr>`
+    )
+    .join("");
+
+  if (empty) empty.hidden = tempSummaries.length > 0;
+}
+
+async function handleTempSubmit(e) {
+  e.preventDefault();
+  const sensorId = $("temp-sensor-id").value.trim();
+  const tempVal = parseFloat($("temp-value").value);
+  const batchIdVal = $("temp-batch-id").value ? parseInt($("temp-batch-id").value) : null;
+
+  if (!sensorId || isNaN(tempVal)) {
+    toast("Vui lòng nhập đầy đủ mã cảm biến và nhiệt độ.", "error");
+    return;
+  }
+
+  const btn = $("btn-submit-reading");
+  setButtonLoading(btn, true, "Đang gửi…", "Ghi nhận số đo cảm biến");
+
+  try {
+    const result = await apiRequest("/cold-chain/readings", {
+      method: "POST",
+      body: { sensor_id: sensorId, temperature: tempVal, batch_id: batchIdVal },
+    });
+    if (result.is_violation) {
+      toast(`⚠️ CẢNH BÁO VI PHẠM: ${result.violation_reason}`, "error");
+    } else {
+      toast(`✓ Đã ghi nhận số đo ${tempVal}°C từ cảm biến ${sensorId} (Chuẩn an toàn).`, "success");
+    }
+    $("temp-value").value = "";
+    await loadColdChainData();
+  } catch (err) {
+    toast(`Lỗi ghi nhận nhiệt độ: ${err.message}`, "error");
+  } finally {
+    setButtonLoading(btn, false, "Đang gửi…", "Ghi nhận số đo cảm biến");
+  }
+}
+
+async function handleRunAggregate() {
+  if (!window.confirm("Kích hoạt job tổng hợp các số đo nhiệt độ cũ hơn 30 ngày theo từng giờ?\nSố đo bình thường sẽ được tổng hợp, các số đo vi phạm sẽ được bảo lưu nguyên vẹn.")) {
+    return;
+  }
+  const btn = $("btn-run-aggregate");
+  setButtonLoading(btn, true, "Đang tổng hợp…", "Tổng hợp dữ liệu cũ (>30 ngày)");
+  try {
+    const res = await apiRequest("/cold-chain/aggregate?days_threshold=30", { method: "POST" });
+    toast(`Tổng hợp thành công ${res.aggregated_buckets} khung giờ. Đã dọn ${res.purged_raw_readings} số đo an toàn, bảo lưu ${res.retained_violation_readings} số đo vi phạm.`, "success");
+    await loadColdChainData();
+  } catch (err) {
+    toast(`Lỗi tổng hợp: ${err.message}`, "error");
+  } finally {
+    setButtonLoading(btn, false, "Đang tổng hợp…", "Tổng hợp dữ liệu cũ (>30 ngày)");
+  }
+}
+
+/* ------------------------------------- 14. Toàn vẹn dữ liệu S-12 (SCRUM-136) --- */
+async function loadIntegrityData() {
+  try {
+    const data = await apiRequest("/integrity-check/latest");
+    renderIntegrityStatus(data);
+  } catch (err) {
+    console.error("Lỗi tải kiểm định toàn vẹn:", err);
+  }
+}
+
+function renderIntegrityStatus(data) {
+  if (!data) return;
+  const badge = $("integrity-status-badge");
+  const ts = $("integrity-timestamp");
+  const scanned = $("integrity-scanned");
+  const errs = $("integrity-errors");
+  const tbody = $("integrity-table-body");
+  const empty = $("integrity-empty");
+
+  if (badge) {
+    if (data.status === "PASSED") {
+      badge.textContent = "PASSED (ĐẠT CHUẨN)";
+      badge.className = "badge-pill badge-pill--safe";
+    } else {
+      badge.textContent = "FAILED (PHÁT HIỆN LỖI)";
+      badge.className = "badge-pill badge-pill--danger";
+    }
+  }
+
+  if (ts) ts.textContent = data.timestamp ? data.timestamp.replace("T", " ").slice(0, 19) : "—";
+  if (scanned) scanned.textContent = data.scanned_records || 0;
+  if (errs) errs.textContent = data.error_count || 0;
+
+  let violations = [];
+  try {
+    violations = JSON.parse(data.details || "[]");
+  } catch (e) {
+    violations = [];
+  }
+
+  if (tbody) {
+    tbody.innerHTML = violations
+      .map(
+        (v) => `
+        <tr>
+          <td><span class="badge-pill badge-pill--danger">${escapeHtml(v.category)}</span></td>
+          <td><code>${escapeHtml(v.table)}</code></td>
+          <td class="font-mono">#${escapeHtml(v.record_id)}</td>
+          <td style="color: #b91c1c;">${escapeHtml(v.message)}</td>
+        </tr>`
+      )
+      .join("");
+  }
+  if (empty) empty.hidden = violations.length > 0;
+}
+
+async function handleRunIntegrity() {
+  const btn = $("btn-run-integrity");
+  setButtonLoading(btn, true, "Đang quét…", "Chạy kiểm định S-12");
+  try {
+    const res = await apiRequest("/integrity-check/run", { method: "POST" });
+    renderIntegrityStatus(res.result);
+    if (res.result.status === "PASSED") {
+      toast("✓ Kiểm định Job S-12 thành công: Toàn bộ dữ liệu nhất quán 100%.", "success");
+    } else {
+      toast(`⚠️ Phát hiện ${res.result.error_count} lỗi toàn vẹn dữ liệu! Hãy kiểm tra bảng chi tiết.`, "error");
+    }
+  } catch (err) {
+    toast(`Lỗi chạy kiểm định: ${err.message}`, "error");
+  } finally {
+    setButtonLoading(btn, false, "Đang quét…", "Chạy kiểm định S-12");
+  }
+}
+
+/* ------------------------------------- 15. Sao lưu & Diễn tập khôi phục (SCRUM-138) --- */
+let backupsList = [];
+
+async function loadBackups() {
+  try {
+    const data = await apiRequest("/backups");
+    backupsList = Array.isArray(data) ? data : [];
+    renderBackups();
+  } catch (err) {
+    console.error("Lỗi tải danh sách sao lưu:", err);
+  }
+}
+
+function renderBackups() {
+  const tbody = $("backup-table-body");
+  const empty = $("backup-empty");
+  if (!tbody) return;
+
+  tbody.innerHTML = backupsList
+    .map(
+      (b) => `
+      <tr>
+        <td class="id-cell">${b.id}</td>
+        <td class="font-mono" style="font-size: 13px;">${b.timestamp ? b.timestamp.replace("T", " ").slice(0, 19) : "—"}</td>
+        <td>${b.status === "SUCCESS" ? `<span class="badge-pill badge-pill--safe">SUCCESS</span>` : `<span class="badge-pill badge-pill--danger">FAILED</span>`}</td>
+        <td>${formatNumber(Math.round(b.file_size_bytes / 1024))} KB</td>
+        <td><code class="font-mono" style="font-size: 11px;">${escapeHtml(b.sha256_checksum.slice(0, 16))}...</code></td>
+        <td>${b.rehearsal_verified ? `<span class="badge-pill badge-pill--safe">Đã xác minh</span>` : `<span class="badge-pill badge-pill--warning">Chưa thử</span>`}</td>
+        <td>
+          <button class="action-btn-sm action-btn-sm--success" onclick="runRehearsalForBackup(${b.id})">Thử khôi phục</button>
+        </td>
+      </tr>`
+    )
+    .join("");
+
+  if (empty) empty.hidden = backupsList.length > 0;
+}
+
+async function handleRunBackup() {
+  const btn = $("btn-run-backup");
+  setButtonLoading(btn, true, "Đang sao lưu…", "Sao lưu Online ngay");
+  try {
+    const res = await apiRequest("/backups/run", { method: "POST" });
+    toast(`✓ ${res.message} (Đang giữ ${res.retained_backups_count} bản sao lưu).`, "success");
+    await loadBackups();
+  } catch (err) {
+    toast(`Lỗi sao lưu: ${err.message}`, "error");
+  } finally {
+    setButtonLoading(btn, false, "Đang sao lưu…", "Sao lưu Online ngay");
+  }
+}
+
+async function runRehearsalForBackup(backupId = null) {
+  try {
+    const res = await apiRequest("/backups/rehearsal", {
+      method: "POST",
+      body: { backup_id: backupId },
+    });
+    alert(`[DIỄN TẬP KHÔI PHỤC THÀNH CÔNG]\nFile thử nghiệm: ${res.tested_file}\nKết quả PRAGMA integrity_check: ${res.integrity_check_output}\nSố lượng bản ghi các bảng: ${JSON.stringify(res.tables_checked, null, 2)}\n\nChi tiết: ${res.details}`);
+    toast("✓ Diễn tập khôi phục trên CSDL tạm thành công!", "success");
+    await loadBackups();
+  } catch (err) {
+    toast(`Lỗi diễn tập khôi phục: ${err.message}`, "error");
+  }
+}
+
+/* ------------------------------------- 16. Mời thành viên & Phân quyền (SCRUM-91) --- */
+let invitationsList = [];
+let auditsList = [];
+
+async function loadInvitations() {
+  try {
+    const data = await apiRequest("/invitations");
+    invitationsList = Array.isArray(data) ? data : [];
+    renderInvitations();
+  } catch (err) {
+    console.error("Lỗi tải lời mời:", err);
+  }
+}
+
+function renderInvitations() {
+  const tbody = $("invite-table-body");
+  const empty = $("invite-empty");
+  if (!tbody) return;
+
+  tbody.innerHTML = invitationsList
+    .map(
+      (inv) => {
+        let statusBadge = `<span class="badge-pill badge-pill--warning">Đang chờ</span>`;
+        let actionBtn = `<button class="action-btn-sm action-btn-sm--danger" onclick="revokeInvitationAction(${inv.id})">Thu hồi</button>`;
+        if (inv.is_used) {
+          statusBadge = `<span class="badge-pill badge-pill--safe">Đã sử dụng</span>`;
+          actionBtn = `<span class="text-muted">Đã tham gia</span>`;
+        } else if (inv.is_revoked) {
+          statusBadge = `<span class="badge-pill badge-pill--danger">Đã thu hồi</span>`;
+          actionBtn = `<span class="text-muted">—</span>`;
+        }
+
+        return `
+        <tr>
+          <td><strong>${escapeHtml(inv.email)}</strong></td>
+          <td><code>${escapeHtml(inv.role)}</code></td>
+          <td><span class="badge-pill">${escapeHtml(inv.organization_id)}</span></td>
+          <td class="font-mono" style="font-size: 13px;">${inv.expires_at ? inv.expires_at.replace("T", " ").slice(0, 16) : "—"}</td>
+          <td>${statusBadge}</td>
+          <td>${actionBtn}</td>
+        </tr>`;
+      }
+    )
+    .join("");
+
+  if (empty) empty.hidden = invitationsList.length > 0;
+}
+
+async function loadAudits() {
+  try {
+    const data = await apiRequest("/invitations/audits");
+    auditsList = Array.isArray(data) ? data : [];
+    renderAudits();
+  } catch (err) {
+    console.error("Lỗi tải nhật ký kiểm toán:", err);
+  }
+}
+
+function renderAudits() {
+  const tbody = $("audit-table-body");
+  const empty = $("audit-empty");
+  if (!tbody) return;
+
+  tbody.innerHTML = auditsList
+    .map(
+      (a) => `
+      <tr>
+        <td class="font-mono" style="font-size: 12px;">${a.created_at ? a.created_at.replace("T", " ").slice(0, 19) : "—"}</td>
+        <td><strong>${escapeHtml(a.operator_username)}</strong></td>
+        <td><code>${escapeHtml(a.action)}</code></td>
+        <td>${escapeHtml(a.target_email_or_user || "—")}</td>
+        <td style="font-size: 13px;">${escapeHtml(a.details || "—")}</td>
+      </tr>`
+    )
+    .join("");
+
+  if (empty) empty.hidden = auditsList.length > 0;
+}
+
+async function handleInviteSubmit(e) {
+  e.preventDefault();
+  const email = $("invite-email").value.trim();
+  const role = $("invite-role").value;
+  const hours = parseInt($("invite-expires").value) || 48;
+
+  if (!email) {
+    toast("Vui lòng nhập địa chỉ email người nhận.", "error");
+    return;
+  }
+
+  const btn = $("btn-submit-invite");
+  setButtonLoading(btn, true, "Đang gửi…", "Gửi lời mời tham gia");
+
+  try {
+    const res = await apiRequest("/invitations", {
+      method: "POST",
+      body: { email, role, expires_in_hours: hours },
+    });
+    alert(`[ĐÃ GỬI LỜI MỜI THÀNH CÔNG]\nEmail: ${res.email}\nVai trò: ${res.role}\nTổ chức: ${res.organization_id}\n\nĐường link kích hoạt tài khoản:\n${res.invite_link}\n(Token bí mật một lần: ${res.invite_token})`);
+    toast(`Đã gửi lời mời tới ${email}.`, "success");
+    $("invite-email").value = "";
+    await loadInvitations();
+    await loadAudits();
+  } catch (err) {
+    toast(`Lỗi gửi lời mời: ${err.message}`, "error");
+  } finally {
+    setButtonLoading(btn, false, "Đang gửi…", "Gửi lời mời tham gia");
+  }
+}
+
+async function revokeInvitationAction(invId) {
+  if (!window.confirm("Bạn có chắc chắn muốn thu hồi lời mời này? Người nhận sẽ không thể kích hoạt tài khoản nữa.")) {
+    return;
+  }
+  try {
+    await apiRequest(`/invitations/${invId}/revoke`, { method: "POST" });
+    toast("Đã thu hồi lời mời thành công.", "success");
+    await loadInvitations();
+    await loadAudits();
+  } catch (err) {
+    toast(`Lỗi thu hồi lời mời: ${err.message}`, "error");
+  }
+}
+
+async function toggleMemberStatus(userId, isCurrentlyActive) {
+  const actionText = isCurrentlyActive ? "VÔ HIỆU HOÁ" : "KÍCH HOẠT LẠI";
+  if (!window.confirm(`Xác nhận ${actionText} tài khoản ID #${userId}?`)) {
+    return;
+  }
+  try {
+    await apiRequest("/invitations/members/status", {
+      method: "POST",
+      body: { user_id: userId, active: !isCurrentlyActive, reason: `Thao tác bởi quản trị viên` },
+    });
+    toast(`Đã cập nhật trạng thái tài khoản #${userId}.`, "success");
+    await loadUsers();
+    await loadAudits();
+  } catch (err) {
+    toast(`Lỗi cập nhật trạng thái: ${err.message}`, "error");
+  }
+}
+
+function openAcceptModal(token = "") {
+  const modal = $("invite-modal");
+  if (!modal) return;
+  modal.hidden = false;
+  modal.setAttribute("aria-hidden", "false");
+  if (token) {
+    $("accept-token").value = token;
+  }
+  $("accept-username").focus();
+}
+
+function closeAcceptModal() {
+  const modal = $("invite-modal");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.setAttribute("aria-hidden", "true");
+}
+
+async function handleAcceptSubmit(e) {
+  e.preventDefault();
+  const token = $("accept-token").value.trim();
+  const username = $("accept-username").value.trim();
+  const password = $("accept-password").value;
+
+  if (!token || !username || !password) {
+    toast("Vui lòng điền đầy đủ token, username và mật khẩu.", "error");
+    return;
+  }
+
+  const btn = $("btn-submit-accept");
+  setButtonLoading(btn, true, "Đang kích hoạt…", "Xác nhận & Kích hoạt tài khoản");
+
+  try {
+    const res = await apiRequest("/invitations/accept", {
+      method: "POST",
+      body: { token, username, password },
+      auth: false,
+    });
+    toast(`✓ Kích hoạt tài khoản '${res.username}' thành công! Vui lòng đăng nhập.`, "success");
+    closeAcceptModal();
+    $("login-username").value = res.username;
+    $("login-password").value = password;
+  } catch (err) {
+    toast(`Kích hoạt thất bại: ${err.message}`, "error");
+  } finally {
+    setButtonLoading(btn, false, "Đang kích hoạt…", "Xác nhận & Kích hoạt tài khoản");
+  }
+}
+
+
 /** Tải dữ liệu dùng chung cho giao diện sau khi đăng nhập (theo phân quyền). */
 async function loadAllData() {
   await checkHealth();
   await loadFarms(); // phải chạy trước để bảng lô hiển thị được tên vùng trồng
   await loadBatches();
+  await loadColdChainData();
+  await loadIntegrityData();
   if (session !== null && session.role === ROLE_ADMIN) {
     await loadUsers(); // chỉ admin gọi được GET /users
+    await loadBackups();
+    await loadInvitations();
+    await loadAudits();
   }
 }
 
@@ -1116,6 +1629,15 @@ async function init() {
   resetBatchForm();
   await checkHealth(); // báo ngay nếu uvicorn chưa chạy
 
+  // Kiểm tra URL hash (nếu có token lời mời: #accept-invite?token=xyz)
+  if (window.location.hash.includes("accept-invite")) {
+    const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
+    const token = hashParams.get("token");
+    if (token) {
+      openAcceptModal(token);
+    }
+  }
+
   const saved = restoreSession();
   if (saved !== null) {
     try {
@@ -1135,3 +1657,4 @@ async function init() {
 }
 
 document.addEventListener("DOMContentLoaded", init);
+

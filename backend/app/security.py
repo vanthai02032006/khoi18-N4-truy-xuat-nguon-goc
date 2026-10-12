@@ -83,6 +83,8 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
     user = db.scalar(select(User).where(User.username == username))
     if user is None or not verify_password(password, user.password):
         return None
+    if not getattr(user, "is_active", True):
+        return None
     return user
 
 
