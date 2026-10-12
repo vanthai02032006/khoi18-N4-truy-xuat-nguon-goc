@@ -25,11 +25,14 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import cast, func, or_, select, String
 
+from decimal import Decimal
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.batch_split import to_fixed_decimal
+from app.cache import trace_cache
 from app.database import get_db
-from app.models import Batch, BatchEvent, Farm, User
+from app.models import Batch, BatchEvent, BatchRelation, Farm, User
 from app.schemas import (
     BatchCreate,
     BatchMergeRequest,
@@ -399,154 +402,172 @@ def split_batch(
     batch_id: int = Path(..., ge=1, description="ID lô nông sản mẹ cần tách."),
     payload: BatchSplitRequest = ...,
     current_user: User = Depends(require_farmer),
+    current_org: str = Depends(require_tenant_context),
     db: Session = Depends(get_db),
 ) -> BatchSplitResponse:
     """Tách một lô nông sản mẹ thành danh sách các lô con (T-40)."""
-    batch = db.get(Batch, batch_id)
+    # 1. Đọc lô mẹ với khóa dòng bi quan
+    stmt = select(Batch).where(Batch.id == batch_id).with_for_update()
+    batch = db.scalar(stmt)
     if batch is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy lô nông sản mẹ có id={batch_id}.",
         )
 
-    # 1. Tính tổng khối lượng các dòng lô con yêu cầu
-    total_requested = round(sum(item.quantity for item in payload.items), 4)
+    # 2. Kiểm tra quyền nắm giữ: lô phải do tổ chức của người gọi nắm giữ (AC 4: 403 Forbidden)
+    effective_holder = batch.current_holder_org or "HTX Nông Nghiệp Số 4"
+    if current_user.role != "admin" and current_org != effective_holder:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Lô nông sản #{batch_id} do '{effective_holder}' nắm giữ, bạn không có quyền tách lô này.",
+        )
 
-    # 2. Kiểm tra nếu tổng vượt quá số dư của lô mẹ -> 400 Bad Request
-    if total_requested > batch.quantity:
+    # 3. Tính tổng khối lượng các dòng lô con yêu cầu bằng Decimal cố định
+    from app.batch_split import to_fixed_decimal
+    parent_qty = to_fixed_decimal(batch.quantity)
+    child_quantities = [to_fixed_decimal(item.quantity) for item in payload.items]
+    total_requested = sum(child_quantities)
+
+    # 4. Kiểm tra nếu tổng vượt quá số dư của lô mẹ -> 400 Bad Request
+    if total_requested > parent_qty:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"Tổng khối lượng các lô con ({total_requested} kg) vượt quá "
-                f"khối lượng còn lại của lô mẹ ({batch.quantity} kg)."
+                f"khối lượng còn lại của lô mẹ ({parent_qty} kg)."
             ),
         )
 
-    # 3. Trừ khối lượng của lô mẹ
-    batch.quantity = round(batch.quantity - total_requested, 4)
-
-    # 4. Tạo các lô con
-    child_batches: list[Batch] = []
-    for item in payload.items:
-        child_code = generate_unique_batch_code(db)
-        child = Batch(
-            farm_id=batch.farm_id,
-            product_name=batch.product_name,
-            quantity=item.quantity,
-            harvest_date=batch.harvest_date,
-            batch_code=child_code,
-            current_holder_org=batch.current_holder_org,
-        )
-        db.add(child)
-        child_batches.append(child)
-
-    # Commit tạm để lấy ID tự tăng của các lô con
+    # 5. Thực thi trong giao dịch nguyên tử, rollback hoàn toàn nếu có lỗi
     try:
+        # Trừ khối lượng của lô mẹ
+        remaining_qty = parent_qty - total_requested
+        batch.quantity = float(remaining_qty)
+
+        # Tạo các lô con với mã riêng và ghi rõ parent_id
+        child_batches: list[Batch] = []
+        for idx, (item, qty_dec) in enumerate(zip(payload.items, child_quantities), start=1):
+            if payload.simulate_error_at_index is not None and idx == payload.simulate_error_at_index:
+                raise RuntimeError(
+                    f"Giả lập lỗi tại lô con thứ {idx} để kiểm tra cơ chế rollback sạch sẽ."
+                )
+
+            child_code = generate_unique_batch_code(db)
+            child = Batch(
+                farm_id=batch.farm_id,
+                product_name=batch.product_name,
+                quantity=float(qty_dec),
+                harvest_date=batch.harvest_date,
+                batch_code=child_code,
+                parent_id=batch.id,  # Ghi rõ lô mẹ (T-39 / AC 1)
+                current_holder_org=batch.current_holder_org,
+                current_owner=batch.current_owner,
+                is_restricted=batch.is_restricted,
+            )
+            db.add(child)
+            child_batches.append(child)
+
+        # Flush tạm để gán ID tự tăng cho các lô con
         db.flush()
-    except SQLAlchemyError as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Không thể tạo các lô con trong cơ sở dữ liệu.",
-        ) from exc
 
-    # 5. Ghi nhận sự kiện SPLIT vào chuỗi sự kiện bất biến của lô mẹ (SCRUM-39 / T-23 / T-40)
-    # Lấy previous_hash của lô mẹ
-    last_event_stmt = (
-        select(BatchEvent)
-        .where(BatchEvent.batch_id == batch_id)
-        .order_by(BatchEvent.id.desc())
-        .limit(1)
-    )
-    last_event = db.scalars(last_event_stmt).first()
-    prev_hash = last_event.hash if last_event else "0" * 64
+        # Ghi nhận sự kiện SPLIT vào chuỗi sự kiện bất biến của lô mẹ (SCRUM-39 / T-23 / T-40)
+        last_event_stmt = (
+            select(BatchEvent)
+            .where(BatchEvent.batch_id == batch_id)
+            .order_by(BatchEvent.id.desc())
+            .limit(1)
+        )
+        last_event = db.scalars(last_event_stmt).first()
+        prev_hash = last_event.hash if last_event else "0" * 64
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    org_name = get_tenant_org()
-    actor_name = current_user.username
+        now_iso = datetime.now(timezone.utc).isoformat()
+        org_name = current_org or get_tenant_org()
+        actor_name = current_user.username
 
-    child_details = [
-        {
-            "id": c.id,
-            "batch_code": c.batch_code or f"LOT-{c.id:04d}",
-            "quantity": c.quantity,
+        child_details = [
+            {
+                "id": c.id,
+                "batch_code": c.batch_code or f"LOT-{c.id:04d}",
+                "quantity": c.quantity,
+            }
+            for c in child_batches
+        ]
+        child_codes = [c["batch_code"] for c in child_details]
+
+        event_payload_dict = {
+            "action": "SPLIT",
+            "parent_batch_id": batch_id,
+            "parent_batch_code": batch.batch_code or f"LOT-{batch.id:04d}",
+            "total_split_quantity": float(total_requested),
+            "remaining_quantity": batch.quantity,
+            "child_batch_codes": child_codes,
+            "children": child_details,
         }
-        for c in child_batches
-    ]
-    child_codes = [c["batch_code"] for c in child_details]
+        event_payload_str = json.dumps(event_payload_dict, ensure_ascii=False)
 
-    event_payload_dict = {
-        "action": "SPLIT",
-        "parent_batch_id": batch_id,
-        "parent_batch_code": batch.batch_code or f"LOT-{batch.id:04d}",
-        "total_split_quantity": total_requested,
-        "remaining_quantity": batch.quantity,
-        "child_batch_codes": child_codes,
-        "children": child_details,
-    }
-    event_payload_str = json.dumps(event_payload_dict, ensure_ascii=False)
-
-    h = compute_event_hash(
-        event_type="SPLIT",
-        payload=event_payload_str,
-        actor=actor_name,
-        organization=org_name,
-        timestamp=now_iso,
-        previous_hash=prev_hash,
-    )
-    split_event = BatchEvent(
-        batch_id=batch_id,
-        event_type="SPLIT",
-        payload=event_payload_str,
-        actor=actor_name,
-        organization=org_name,
-        timestamp=now_iso,
-        hash=h,
-        previous_hash=prev_hash,
-    )
-    db.add(split_event)
-
-    # 6. Ghi nhận sự kiện khai sinh (BIRTH / SPLIT_CHILD) trên dòng thời gian của TỪNG lô con nêu mã lô mẹ
-    parent_code = batch.batch_code or f"LOT-{batch.id:04d}"
-    for child in child_batches:
-        birth_payload_dict = {
-            "action": "BIRTH",
-            "birth_type": "SPLIT_CHILD",
-            "batch_id": child.id,
-            "batch_code": child.batch_code or f"LOT-{child.id:04d}",
-            "parent_batch_id": batch.id,
-            "parent_batch_code": parent_code,
-            "initial_quantity": child.quantity,
-        }
-        birth_payload_str = json.dumps(birth_payload_dict, ensure_ascii=False)
-        birth_prev_hash = "0" * 64
-        birth_hash = compute_event_hash(
-            event_type="BIRTH",
-            payload=birth_payload_str,
+        h = compute_event_hash(
+            event_type="SPLIT",
+            payload=event_payload_str,
             actor=actor_name,
             organization=org_name,
             timestamp=now_iso,
-            previous_hash=birth_prev_hash,
+            previous_hash=prev_hash,
         )
-        child_birth_event = BatchEvent(
-            batch_id=child.id,
-            event_type="BIRTH",
-            payload=birth_payload_str,
+        split_event = BatchEvent(
+            batch_id=batch_id,
+            event_type="SPLIT",
+            payload=event_payload_str,
             actor=actor_name,
             organization=org_name,
             timestamp=now_iso,
-            hash=birth_hash,
-            previous_hash=birth_prev_hash,
+            hash=h,
+            previous_hash=prev_hash,
         )
-        db.add(child_birth_event)
+        db.add(split_event)
 
-    try:
+        # Ghi nhận sự kiện khai sinh (BIRTH / SPLIT_CHILD) trên dòng thời gian của TỪNG lô con nêu mã lô mẹ
+        parent_code = batch.batch_code or f"LOT-{batch.id:04d}"
+        for child in child_batches:
+            birth_payload_dict = {
+                "action": "BIRTH",
+                "birth_type": "SPLIT_CHILD",
+                "batch_id": child.id,
+                "batch_code": child.batch_code or f"LOT-{child.id:04d}",
+                "parent_batch_id": batch.id,
+                "parent_batch_code": parent_code,
+                "initial_quantity": child.quantity,
+            }
+            birth_payload_str = json.dumps(birth_payload_dict, ensure_ascii=False)
+            birth_prev_hash = "0" * 64
+            birth_hash = compute_event_hash(
+                event_type="BIRTH",
+                payload=birth_payload_str,
+                actor=actor_name,
+                organization=org_name,
+                timestamp=now_iso,
+                previous_hash=birth_prev_hash,
+            )
+            child_birth_event = BatchEvent(
+                batch_id=child.id,
+                event_type="BIRTH",
+                payload=birth_payload_str,
+                actor=actor_name,
+                organization=org_name,
+                timestamp=now_iso,
+                hash=birth_hash,
+                previous_hash=birth_prev_hash,
+            )
+            db.add(child_birth_event)
+
         db.commit()
-    except SQLAlchemyError as exc:
+    except Exception as exc:
         db.rollback()
+        if isinstance(exc, HTTPException):
+            raise exc
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Lỗi khi lưu giao dịch tách lô.",
+            detail=f"Lỗi khi lưu giao dịch tách lô: {exc}",
         ) from exc
 
     for c in child_batches:
@@ -589,168 +610,221 @@ def merge_batches(
             detail="Cần ít nhất 2 lô để thực hiện thao tác gộp.",
         )
 
-    # 1. Thu thập và kiểm tra tính hợp lệ của từng lô mẹ
-    parent_batches: list[Batch] = []
-    parent_contributions: list[dict] = []
-    total_merged_qty = 0.0
+    # Kiểm tra trùng lặp lô mẹ trong cùng yêu cầu
+    raw_batch_ids = [item.batch_id for item in payload.items]
+    if len(raw_batch_ids) != len(set(raw_batch_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Danh sách lô mẹ bị trùng lặp trong cùng yêu cầu gộp.",
+        )
 
-    for item in payload.items:
-        p_batch = db.get(Batch, item.batch_id)
+    # 1. Khóa dòng chống deadlock theo thứ tự ID tăng dần (Global Lock Ordering)
+    sorted_items = sorted(payload.items, key=lambda x: x.batch_id)
+    parents_map: dict[int, Batch] = {}
+    for item in sorted_items:
+        stmt = select(Batch).where(Batch.id == item.batch_id).with_for_update()
+        p_batch = db.scalar(stmt)
         if not p_batch:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Không tìm thấy lô mẹ có ID #{item.batch_id}.",
             )
+        parents_map[item.batch_id] = p_batch
 
-        # Kiểm tra khối lượng đóng góp
-        if item.quantity <= 0:
+    # 2. Kiểm tra thẩm quyền tổ chức (Kịch bản 4: 403 Forbidden nếu không do tổ chức giữ)
+    for item in payload.items:
+        p_batch = parents_map[item.batch_id]
+        effective_holder = p_batch.current_holder_org or "HTX Nông Nghiệp Số 4"
+        if current_user.role != "admin" and current_org != effective_holder:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Khối lượng gộp từ lô #{item.batch_id} phải lớn hơn 0.",
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Lô nông sản #{p_batch.id} do '{effective_holder}' nắm giữ, bạn không có quyền gộp lô này.",
             )
 
-        if item.quantity > p_batch.quantity:
+    # 3. Kiểm tra tính đồng nhất của sản phẩm (Kịch bản 3: 400 Bad Request nếu khác loại sản phẩm)
+    primary_parent = parents_map[payload.items[0].batch_id]
+    base_product = primary_parent.product_name.strip()
+    for item in payload.items:
+        p_batch = parents_map[item.batch_id]
+        if p_batch.product_name.strip().lower() != base_product.lower():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    f"Khối lượng yêu cầu lấy từ lô #{item.batch_id} ({item.quantity} kg) "
-                    f"vượt quá khối lượng còn lại của lô ({p_batch.quantity} kg)."
+                    f"Không thể gộp các lô khác loại sản phẩm: phát hiện '{p_batch.product_name}' "
+                    f"và '{base_product}'. Chỉ được gộp các lô cùng loại sản phẩm."
+                ),
+            )
+
+    # 4. Kiểm tra khối lượng và trừ kho bằng Decimal bảo toàn tuyệt đối (Kịch bản 1 & 2)
+    zero_decimal = Decimal("0.0000")
+    parent_batches: list[Batch] = []
+    parent_contributions: list[dict] = []
+    total_merged_dec = zero_decimal
+
+    for item in payload.items:
+        p_batch = parents_map[item.batch_id]
+        needed_dec = to_fixed_decimal(item.quantity)
+        current_dec = to_fixed_decimal(p_batch.quantity)
+
+        if needed_dec <= zero_decimal:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Khối lượng gộp từ lô #{p_batch.id} phải lớn hơn 0.",
+            )
+
+        if needed_dec > current_dec:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Khối lượng yêu cầu lấy từ lô #{p_batch.id} ({needed_dec} kg) "
+                    f"vượt quá khối lượng còn lại của lô ({current_dec} kg)."
                 ),
             )
 
         # Trừ khối lượng của lô mẹ
-        p_batch.quantity = round(p_batch.quantity - item.quantity, 4)
+        rem_dec = current_dec - needed_dec
+        p_batch.quantity = float(rem_dec)
         parent_batches.append(p_batch)
-        total_merged_qty = round(total_merged_qty + item.quantity, 4)
+        total_merged_dec += needed_dec
 
         p_code = p_batch.batch_code or f"LOT-{p_batch.id:04d}"
         parent_contributions.append({
             "id": p_batch.id,
             "batch_code": p_code,
-            "quantity": item.quantity,
-            "remaining_quantity": p_batch.quantity,
+            "quantity": float(needed_dec),
+            "remaining_quantity": float(rem_dec),
         })
 
-    # 2. Tạo lô gộp mới
-    primary_parent = parent_batches[0]
+    # 5. Tạo lô gộp mới
     new_product_name = payload.product_name or primary_parent.product_name
     new_batch_code = generate_unique_batch_code(db, prefix="LOT-MERGE")
 
     merged_batch = Batch(
         farm_id=primary_parent.farm_id,
         product_name=new_product_name,
-        quantity=total_merged_qty,
+        quantity=float(total_merged_dec),
         harvest_date=primary_parent.harvest_date,
         batch_code=new_batch_code,
         current_holder_org=primary_parent.current_holder_org,
+        current_owner=primary_parent.current_owner,
+        is_restricted=any(pb.is_restricted for pb in parent_batches),
     )
     db.add(merged_batch)
 
     try:
         db.flush()
-    except SQLAlchemyError as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Không thể tạo lô gộp mới trong cơ sở dữ liệu.",
-        ) from exc
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    org_name = get_tenant_org()
-    actor_name = current_user.username
+        # 6. Ghi nhận quan hệ phả hệ cha - con nhiều-nhiều qua BatchRelation
+        for item in payload.items:
+            p_batch = parents_map[item.batch_id]
+            used_dec = to_fixed_decimal(item.quantity)
+            rel = BatchRelation(
+                parent_batch_id=p_batch.id,
+                child_batch_id=merged_batch.id,
+                used_quantity=used_dec,
+            )
+            db.add(rel)
 
-    # 3. Ghi nhận sự kiện MERGE trên lô gộp mới (nêu đầy đủ các lô mẹ và khối lượng lấy từ mỗi lô)
-    parent_codes_list = [pc["batch_code"] for pc in parent_contributions]
-    merged_event_payload = {
-        "action": "MERGE",
-        "batch_id": merged_batch.id,
-        "batch_code": new_batch_code,
-        "total_merged_quantity": total_merged_qty,
-        "parent_batches": parent_contributions,
-        "parent_batch_codes": parent_codes_list,
-        "note": payload.note,
-    }
-    merged_payload_str = json.dumps(merged_event_payload, ensure_ascii=False)
-    merged_prev_hash = "0" * 64
-    merged_h = compute_event_hash(
-        event_type="MERGE",
-        payload=merged_payload_str,
-        actor=actor_name,
-        organization=org_name,
-        timestamp=now_iso,
-        previous_hash=merged_prev_hash,
-    )
-    merged_event = BatchEvent(
-        batch_id=merged_batch.id,
-        event_type="MERGE",
-        payload=merged_payload_str,
-        actor=actor_name,
-        organization=org_name,
-        timestamp=now_iso,
-        hash=merged_h,
-        previous_hash=merged_prev_hash,
-    )
-    db.add(merged_event)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        org_name = current_org or get_tenant_org()
+        actor_name = current_user.username
 
-    # 4. Ghi nhận sự kiện MERGE_PARENT vào dòng thời gian của TỪNG lô mẹ
-    for contrib, p_batch in zip(parent_contributions, parent_batches):
-        last_ev_stmt = (
-            select(BatchEvent)
-            .where(BatchEvent.batch_id == p_batch.id)
-            .order_by(BatchEvent.id.desc())
-            .limit(1)
-        )
-        last_ev = db.scalars(last_ev_stmt).first()
-        p_prev_hash = last_ev.hash if last_ev else "0" * 64
-
-        p_ev_payload = {
-            "action": "MERGED_INTO",
-            "parent_batch_id": p_batch.id,
-            "parent_batch_code": contrib["batch_code"],
-            "contributed_quantity": contrib["quantity"],
-            "remaining_quantity": p_batch.quantity,
-            "target_merged_batch_id": merged_batch.id,
-            "target_merged_batch_code": new_batch_code,
+        # 7. Ghi nhận sự kiện MERGE trên lô gộp mới (nêu đầy đủ các lô mẹ và khối lượng lấy từ mỗi lô)
+        parent_codes_list = [pc["batch_code"] for pc in parent_contributions]
+        merged_event_payload = {
+            "action": "MERGE",
+            "batch_id": merged_batch.id,
+            "batch_code": new_batch_code,
+            "total_merged_quantity": float(total_merged_dec),
+            "parent_batches": parent_contributions,
+            "parent_batch_codes": parent_codes_list,
+            "note": payload.note,
         }
-        p_ev_payload_str = json.dumps(p_ev_payload, ensure_ascii=False)
-        p_ev_h = compute_event_hash(
-            event_type="MERGE_PARENT",
-            payload=p_ev_payload_str,
+        merged_payload_str = json.dumps(merged_event_payload, ensure_ascii=False)
+        merged_prev_hash = "0" * 64
+        merged_h = compute_event_hash(
+            event_type="MERGE",
+            payload=merged_payload_str,
             actor=actor_name,
             organization=org_name,
             timestamp=now_iso,
-            previous_hash=p_prev_hash,
+            previous_hash=merged_prev_hash,
         )
-        p_event = BatchEvent(
-            batch_id=p_batch.id,
-            event_type="MERGE_PARENT",
-            payload=p_ev_payload_str,
+        merged_event = BatchEvent(
+            batch_id=merged_batch.id,
+            event_type="MERGE",
+            payload=merged_payload_str,
             actor=actor_name,
             organization=org_name,
             timestamp=now_iso,
-            hash=p_ev_h,
-            previous_hash=p_prev_hash,
+            hash=merged_h,
+            previous_hash=merged_prev_hash,
         )
-        db.add(p_event)
+        db.add(merged_event)
 
-    try:
+        # 8. Ghi nhận sự kiện MERGE_PARENT vào dòng thời gian của TỪNG lô mẹ
+        for contrib, p_batch in zip(parent_contributions, parent_batches):
+            last_ev_stmt = (
+                select(BatchEvent)
+                .where(BatchEvent.batch_id == p_batch.id)
+                .order_by(BatchEvent.id.desc())
+                .limit(1)
+            )
+            last_ev = db.scalars(last_ev_stmt).first()
+            p_prev_hash = last_ev.hash if last_ev else "0" * 64
+
+            p_ev_payload = {
+                "action": "MERGED_INTO",
+                "parent_batch_id": p_batch.id,
+                "parent_batch_code": contrib["batch_code"],
+                "contributed_quantity": contrib["quantity"],
+                "remaining_quantity": p_batch.quantity,
+                "target_merged_batch_id": merged_batch.id,
+                "target_merged_batch_code": new_batch_code,
+            }
+            p_ev_payload_str = json.dumps(p_ev_payload, ensure_ascii=False)
+            p_ev_h = compute_event_hash(
+                event_type="MERGE_PARENT",
+                payload=p_ev_payload_str,
+                actor=actor_name,
+                organization=org_name,
+                timestamp=now_iso,
+                previous_hash=p_prev_hash,
+            )
+            p_event = BatchEvent(
+                batch_id=p_batch.id,
+                event_type="MERGE_PARENT",
+                payload=p_ev_payload_str,
+                actor=actor_name,
+                organization=org_name,
+                timestamp=now_iso,
+                hash=p_ev_h,
+                previous_hash=p_prev_hash,
+            )
+            db.add(p_event)
+
         db.commit()
-    except SQLAlchemyError as exc:
+    except Exception as exc:
         db.rollback()
+        if isinstance(exc, HTTPException):
+            raise exc
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Lỗi khi lưu giao dịch gộp lô.",
+            detail=f"Lỗi khi lưu giao dịch gộp lô: {exc}",
         ) from exc
 
     db.refresh(merged_batch)
     for pb in parent_batches:
         db.refresh(pb)
+        trace_cache.invalidate(pb.id)
+    trace_cache.invalidate(merged_batch.id)
 
     return BatchMergeResponse(
         merged_batch=BatchResponse.model_validate(merged_batch),
         parent_batches=[BatchResponse.model_validate(pb) for pb in parent_batches],
         message=f"Đã gộp thành công {len(parent_batches)} lô mẹ vào lô mới #{merged_batch.id} ({new_batch_code}).",
     )
+
 
 
 # =========================================================================
