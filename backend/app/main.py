@@ -24,8 +24,21 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.database import init_db
-from app.routers import auth, batches, cold_chain, events, farms, handovers, health, orders, products, users
-
+from app.routers import (
+    auth,
+    backups,
+    batches,
+    cold_chain,
+    events,
+    farms,
+    handovers,
+    health,
+    integrity,
+    invitations,
+    orders,
+    products,
+    users,
+)
 
 # ------------------------------------------------------------------ Lifespan ---
 @asynccontextmanager
@@ -41,23 +54,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 # ----------------------------------------------------------- Khởi tạo FastAPI ---
 app = FastAPI(
-    title="TTCS K18C4 - Truy xuất nguồn gốc và giám sát chuỗi lạnh nông sản",
+    title="AGRI-TRACE - Truy xuất nguồn gốc và giám sát chuỗi lạnh nông sản",
     description=(
         "Backend API cho hệ thống truy xuất nguồn gốc và giám sát chuỗi lạnh "
-        "nông sản.\n\n"
-        "- **Sprint 1**: khung dự án + `GET /health`.\n"
-        "- **Sprint 2**: module Farm (`POST /farms`, `GET /farms`, "
-        "`PUT /farms/{farm_id}`, `DELETE /farms/{farm_id}`).\n"
-        "- **Sprint 3**: module Batch - lô nông sản (`POST /batches`, "
-        "`GET /batches`, `GET /batches/{batch_id}`, `PUT /batches/{batch_id}`, "
-        "`DELETE /batches/{batch_id}`).\n"
-        "- **Sprint 4**: đăng nhập + phân quyền cơ bản (`POST /auth/login`, "
-        "`GET /users`). **Không dùng JWT**: các API cần quyền dùng HTTP Basic - "
-        "bấm nút **Authorize** ở trên rồi nhập `admin` / `123456` (hoặc "
-        "`farmer` / `123456`) để test.\n"
-        "- **Sprint 5**: hoàn thiện CRUD (`PUT`/`DELETE` cho `/farms` và "
-        "`/batches`) + dashboard thống kê trên giao diện. Nhóm `DELETE` yêu cầu "
-        "role `admin` (farmer nhận `403`), các API còn lại cho cả `farmer`."
+        "nông sản tiêu chuẩn VietGAP.\n\n"
+        "- **SCRUM-138**: Sao lưu dữ liệu SQLite Online Backup & Diễn tập khôi phục DB tạm (`/backups`).\n"
+        "- **SCRUM-136**: Job S-12 kiểm tra tính toàn vẹn chuỗi dữ liệu hằng đêm (`/integrity-check`).\n"
+        "- **SCRUM-126**: Giám sát nhiệt độ chuỗi lạnh & Tổng hợp số đo theo giờ (`/cold-chain`).\n"
+        "- **SCRUM-91**: Mời nhân viên qua email, token một lần, đặt mật khẩu & phân quyền (`/invitations`)."
     ),
     version=__version__,
     docs_url="/docs",
@@ -88,4 +92,7 @@ app.include_router(events.router)
 app.include_router(orders.router)
 app.include_router(cold_chain.router)
 app.include_router(users.router)
+app.include_router(backups.router)
+app.include_router(integrity.router)
+app.include_router(invitations.router)
 

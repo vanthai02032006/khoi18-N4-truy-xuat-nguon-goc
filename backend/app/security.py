@@ -110,6 +110,8 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
     user = db.scalar(select(User).where(User.username == username))
     if user is None or not verify_password(password, user.password):
         return None
+    if not getattr(user, "is_active", True):
+        return None
     return user
 
 
@@ -139,6 +141,16 @@ def get_current_user(
         raise unauthorized
 
     return user
+
+
+def get_optional_current_user(
+    credentials: HTTPBasicCredentials | None = Depends(basic_scheme),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """Dependency: lấy tài khoản nếu có gửi credentials hợp lệ, ngược lại trả None (không raise 401)."""
+    if credentials is None:
+        return None
+    return authenticate_user(db, credentials.username, credentials.password)
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:

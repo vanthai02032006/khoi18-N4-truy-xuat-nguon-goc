@@ -21,12 +21,10 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Optional
 
-
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
-
     DateTime,
     Float,
     ForeignKey,
@@ -34,6 +32,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
     text,
@@ -71,9 +70,6 @@ class Farm(Base):
     owner: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Quan hệ 1-N: một vùng trồng có nhiều lô nông sản.
-    # `cascade="all, delete-orphan"`: khi Farm bị xoá thì các Batch của nó cũng
-    # bị xoá theo -> không để lại dữ liệu mồ côi. Hành vi này được dùng bởi
-    # `DELETE /farms/{farm_id}` (xem `app/routers/farms.py`).
     batches: Mapped[list["Batch"]] = relationship(
         back_populates="farm",
         cascade="all, delete-orphan",
@@ -84,23 +80,14 @@ class Farm(Base):
 
 
 class Batch(Base):
-    """Lô nông sản thu hoạch từ một vùng trồng.
+    """Lô nông sản thu hoạch từ một vùng trồng hoặc tạo từ giao dịch gộp (SCRUM-60).
 
     Quan hệ: ``Farm 1 ---- N Batch``.
-
-    Attributes:
-        id: Khoá chính, tự tăng.
-        farm_id: Khoá ngoại trỏ tới ``farms.id`` (vùng trồng xuất xứ).
-        product_name: Tên sản phẩm của lô (ví dụ: "Xoài cát Chu").
-        quantity: Số lượng / khối lượng của lô, đơn vị kg.
-        harvest_date: Ngày thu hoạch.
-        farm: Đối tượng ``Farm`` tương ứng (chiều N-1 của quan hệ).
     """
 
     __tablename__ = "batches"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # `index=True` để tra cứu "các lô của một vùng trồng" nhanh hơn.
     farm_id: Mapped[int] = mapped_column(
         ForeignKey("farms.id"),
         nullable=False,
@@ -115,7 +102,9 @@ class Batch(Base):
     )
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    remaining_quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     harvest_date: Mapped[date] = mapped_column(Date, nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None, index=True)
 
     # Quyền giữ lô thực tế và tổ chức nhận đang chờ xác nhận bàn giao (Handover Workflow)
     current_holder_org: Mapped[str] = mapped_column(
@@ -159,7 +148,7 @@ class Batch(Base):
         backref="children",
     )
 
-    # Quan hệ phả hệ gộp lô (nhiều cha - nhiều con) - T-44 / T-46 / SCRUM-60 / SCRUM-62:
+    # Quan hệ phả hệ gộp lô (nhiều cha - nhiều con) - SCRUM-60
     parent_relations: Mapped[list["BatchRelation"]] = relationship(
         "BatchRelation",
         foreign_keys="[BatchRelation.child_batch_id]",
@@ -192,16 +181,12 @@ class Batch(Base):
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return (
             f"<Batch id={self.id} farm_id={self.farm_id} "
-            f"product_name={self.product_name!r}>"
+            f"product_name={self.product_name!r} remaining={self.remaining_quantity}>"
         )
 
 
 class BatchRelation(Base):
-    """Bảng quan hệ cha - con nhiều-nhiều (Genealogy / Phả hệ gộp lô) - T-44 / T-46 / SCRUM-60 / SCRUM-62.
-
-    Lưu vết các lô mẹ (parent) gộp thành lô con (child) và khối lượng lấy từ mỗi lô mẹ.
-    Sử dụng Decimal (Numeric(12, 4)) để bảo toàn khối lượng chính xác tuyệt đối.
-    """
+    """Bảng quan hệ cha - con nhiều-nhiều (Genealogy / Phả hệ gộp lô) - SCRUM-60."""
 
     __tablename__ = "batch_relations"
 
@@ -216,10 +201,7 @@ class BatchRelation(Base):
         nullable=False,
         index=True,
     )
-    used_quantity: Mapped[Decimal] = mapped_column(
-        Numeric(12, 4, asdecimal=True),
-        nullable=False,
-    )
+    used_quantity: Mapped[float] = mapped_column(Float, nullable=False)
     created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
         server_default=func.now(),
@@ -235,7 +217,6 @@ class BatchRelation(Base):
             f"<BatchRelation id={self.id} parent_id={self.parent_batch_id} -> "
             f"child_id={self.child_batch_id} used={self.used_quantity}kg>"
         )
-
 
 
 class Organization(Base):
@@ -303,9 +284,25 @@ class BatchEvent(Base):
         return f"<BatchEvent id={self.id} batch_id={self.batch_id} type={self.event_type!r} hash={self.hash[:8]}>"
 
 
+class BatchCustodyHistory(Base):
+    """Lịch sử nắm giữ lô của tổ chức (Custody / Ownership History) - SCRUM-70."""
+
+    __tablename__ = "batch_custody_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<BatchCustodyHistory batch_id={self.batch_id} org={self.organization_id}>"
+
+
 # ------------------------------------------------------------- Vai trò ---
-# Khai báo thành hằng số để không phải gõ chuỗi "admin"/"farmer"/"inspector" rải rác
-# trong code.
 ROLE_ADMIN: str = "admin"
 ROLE_FARMER: str = "farmer"
 ROLE_INSPECTOR: str = "inspector"
@@ -421,21 +418,7 @@ class ColdChainViolation(Base):
 
 
 class User(Base):
-    """Tài khoản đăng nhập của hệ thống - bảng ``users``.
-
-    Sprint 4 dùng bảng này cho chức năng **đăng nhập + phân quyền cơ bản**.
-    Hệ thống **không dùng JWT**, không token/session phía server: client gửi
-    kèm `username`/`password` (HTTP Basic) ở mỗi request, backend tra bảng này
-    để biết người gọi là ai (xem ``app/security.py``).
-
-    Attributes:
-        id: Khoá chính, tự tăng.
-        username: Tên đăng nhập, **duy nhất** (có index để tra cứu nhanh).
-        password: Mật khẩu **đã băm** (SHA-256 hex = 64 ký tự) - không bao giờ
-            lưu mật khẩu dạng thô, và API cũng không bao giờ trả cột này ra.
-        role: Vai trò của tài khoản: ``"admin"`` (quản trị - toàn quyền),
-            ``"farmer"`` (nông dân - quản lý nông sản), hoặc ``"inspector"`` (cán bộ kiểm tra).
-    """
+    """Tài khoản đăng nhập của hệ thống - bảng ``users``."""
 
     __tablename__ = "users"
 
@@ -446,13 +429,156 @@ class User(Base):
         unique=True,
         index=True,
     )
-    # 64 ký tự là độ dài chuỗi hex của SHA-256 (xem `hash_password`).
     password: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default=ROLE_FARMER)
+    organization_id: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None, index=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
-        # Không in `password` để tránh lộ mật khẩu đã băm ra log.
-        return f"<User id={self.id} username={self.username!r} role={self.role}>"
+        return f"<User id={self.id} username={self.username!r} role={self.role} org={self.organization_id} active={self.is_active}>"
+
+
+# -------------------------------------------------- SCRUM-138: Backup Log ---
+class BackupLog(Base):
+    """Nhật ký sao lưu cơ sở dữ liệu - SCRUM-138."""
+
+    __tablename__ = "backup_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # "SUCCESS", "FAILED"
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sha256_checksum: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rehearsal_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<BackupLog id={self.id} status={self.status} path={self.file_path}>"
+
+
+# --------------------------------------- SCRUM-136: Integrity Check Log ---
+class IntegrityCheckLog(Base):
+    """Nhật ký kiểm tra tính toàn vẹn chuỗi dữ liệu (Job S-12) - SCRUM-136."""
+
+    __tablename__ = "integrity_check_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # "PASSED", "FAILED"
+    scanned_records: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    details: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON chi tiết lỗi
+    triggered_by: Mapped[str] = mapped_column(String(50), nullable=False, default="NIGHTLY_JOB_S12")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<IntegrityCheckLog id={self.id} status={self.status} errors={self.error_count}>"
+
+
+# ------------------------------ SCRUM-126: Cold Chain Temperature Data ---
+class TemperatureThresholdConfig(Base):
+    """Cấu hình ngưỡng nhiệt độ bảo quản theo từng loại nông sản - SCRUM-126."""
+
+    __tablename__ = "temperature_threshold_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    product_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    min_temp: Mapped[float] = mapped_column(Float, nullable=False)
+    max_temp: Mapped[float] = mapped_column(Float, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<TemperatureThresholdConfig product={self.product_name!r} range=[{self.min_temp}, {self.max_temp}]C>"
+
+
+class TemperatureReading(Base):
+    """Số đo nhiệt độ thô từ cảm biến chuỗi lạnh (Raw Telemetry) - SCRUM-126."""
+
+    __tablename__ = "temperature_readings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int | None] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    sensor_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    temperature: Mapped[float] = mapped_column(Float, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    is_violation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    is_aggregated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    violation_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<TemperatureReading id={self.id} sensor={self.sensor_id} temp={self.temperature}C violation={self.is_violation}>"
+
+
+class HourlyTemperatureSummary(Base):
+    """Dữ liệu nhiệt độ tổng hợp theo từng giờ (MIN, MAX, AVG) - SCRUM-126."""
+
+    __tablename__ = "hourly_temperature_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int | None] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    sensor_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    hour_bucket: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    min_temp: Mapped[float] = mapped_column(Float, nullable=False)
+    max_temp: Mapped[float] = mapped_column(Float, nullable=False)
+    avg_temp: Mapped[float] = mapped_column(Float, nullable=False)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    violation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("batch_id", "sensor_id", "hour_bucket", name="uq_batch_sensor_hour"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<HourlyTemperatureSummary sensor={self.sensor_id} bucket={self.hour_bucket} avg={self.avg_temp}C>"
+
+
+# ----------------------------- SCRUM-91: Organization Invitations & Audits ---
+class OrganizationInvitation(Base):
+    """Lời mời tham gia tổ chức qua email - SCRUM-91."""
+
+    __tablename__ = "organization_invitations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    organization_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default=ROLE_FARMER)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    is_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    invited_by_username: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<OrganizationInvitation email={self.email!r} org={self.organization_id} used={self.is_used}>"
+
+
+class OrganizationAuditLog(Base):
+    """Nhật ký kiểm toán hoạt động thành viên & phân quyền - SCRUM-91."""
+
+    __tablename__ = "organization_audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    operator_username: Mapped[str] = mapped_column(String(50), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_email_or_user: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<OrganizationAuditLog org={self.organization_id} action={self.action} by={self.operator_username}>"
 
 
 
@@ -578,20 +704,28 @@ class Handover(Base):
 
 
 __all__ = [
+    "BackupLog",
     "Base",
     "Batch",
     "BatchEvent",
+    "BatchCustodyHistory",
     "BatchRelation",
     "ColdChainThreshold",
     "ColdChainViolation",
     "Farm",
+    "HourlyTemperatureSummary",
+    "IntegrityCheckLog",
     "Organization",
+    "OrganizationAuditLog",
+    "OrganizationInvitation",
     "RecallOrder",
     "RecallOrderTarget",
     "ROLE_ADMIN",
     "ROLE_FARMER",
     "ROLE_INSPECTOR",
     "ROLES",
+    "TemperatureReading",
+    "TemperatureThresholdConfig",
     "User",
     "Product",
     "ProductUnit",

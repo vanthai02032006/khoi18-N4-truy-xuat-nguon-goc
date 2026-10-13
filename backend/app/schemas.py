@@ -105,6 +105,21 @@ class UserResponse(BaseModel):
     id: int = Field(..., description="Mã định danh tài khoản.", examples=[1])
     username: str = Field(..., description="Tên đăng nhập.", examples=["admin"])
     role: str = Field(..., description="Vai trò: `admin` hoặc `farmer`.", examples=["admin"])
+    organization_id: str | None = Field(
+        default=None,
+        description="Tổ chức / đơn vị của tài khoản.",
+        examples=["ORG_ADMIN"],
+    )
+    email: str | None = Field(
+        default=None,
+        description="Địa chỉ email tài khoản.",
+        examples=["admin@agritrace.vn"],
+    )
+    is_active: bool = Field(
+        default=True,
+        description="Trạng thái tài khoản (True: đang hoạt động, False: đã vô hiệu hoá).",
+        examples=[True],
+    )
 
 
 # ------------------------------------------------------------------ Farm ---
@@ -313,7 +328,7 @@ class BatchResponse(BaseModel):
     )
 
     id: int = Field(..., description="Mã định danh lô nông sản.", examples=[1])
-    batch_code: str = Field(..., description="Mã lô sinh tự động (Unique Batch Code).", examples=["LOT-20261007-0001"])
+    batch_code: str | None = Field(default=None, description="Mã lô sinh tự động (Unique Batch Code).", examples=["LOT-20261007-0001"])
     farm_id: int = Field(..., description="ID vùng trồng xuất xứ.", examples=[1])
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
     quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
@@ -325,6 +340,14 @@ class BatchResponse(BaseModel):
     pending_receiver_org: str | None = Field(
         default=None,
         description="Tổ chức đang được bàn giao (chờ xác nhận hoặc từ chối).",
+    )
+    remaining_quantity: float = Field(
+        default=0.0,
+        description="Số lượng tồn còn lại sau khi xuất/gộp (kg).",
+    )
+    organization_id: str | None = Field(
+        default=None,
+        description="Tổ chức hiện đang nắm giữ lô nông sản.",
     )
 
 
@@ -434,6 +457,44 @@ class BatchSplitResponse(BaseModel):
 
 
 # ------------------------------------------------------------- Batch Merge ---
+
+# -------------------------------------------------------- Batch Merge & Genealogy (SCRUM-60, SCRUM-70) ---
+class ParentBatchItem(BaseModel):
+    """Một lô mẹ được trích số lượng để gộp vào lô con (SCRUM-60)."""
+    parent_batch_id: int = Field(..., gt=0, description="ID lô mẹ cần lấy số lượng.", examples=[1])
+    used_quantity: float = Field(..., gt=0, description="Số lượng lấy từ lô mẹ (kg).", examples=[50.0])
+
+class ParentRemainingResponse(BaseModel):
+    """Số lượng còn lại của một lô mẹ sau khi trích (SCRUM-60)."""
+    parent_batch_id: int
+    remaining_quantity: float
+    product_name: str | None = None
+
+class BatchRelationResponse(BaseModel):
+    """Thông tin liên kết phả hệ cha - con (SCRUM-60)."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    parent_batch_id: int
+    child_batch_id: int
+    used_quantity: float
+    created_at: datetime | str | None = None
+
+class BatchDetailResponse(BaseModel):
+    """Thông tin chi tiết một lô nông sản kèm phả hệ cha - con (SCRUM-70)."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    batch_code: str | None = None
+    farm_id: int
+    product_name: str
+    quantity: float
+    remaining_quantity: float = 0.0
+    harvest_date: date
+    organization_id: str | None = None
+    current_holder_org: str = "HTX Nông Nghiệp Số 4"
+    pending_receiver_org: str | None = None
+    parents: list[ParentRemainingResponse] = []
+    children: list[BatchRelationResponse] = []
+
 class BatchMergeItem(BaseModel):
     """Dòng đóng góp từ một lô mẹ vào mẻ gộp."""
 
@@ -444,17 +505,24 @@ class BatchMergeItem(BaseModel):
 class BatchMergeRequest(BaseModel):
     """Yêu cầu gộp nhiều lô nông sản thành một lô mới."""
 
-    items: list[BatchMergeItem] = Field(..., min_length=2, description="Danh sách các lô thành phần cần gộp (tối thiểu 2 lô).")
+    items: list[BatchMergeItem] = Field(default_factory=list, description="Danh sách các lô thành phần cần gộp (tối thiểu 2 lô).")
+    parents: list[ParentBatchItem] = Field(default_factory=list, description="Danh sách các lô mẹ (SCRUM-60).")
+    farm_id: int | None = Field(default=None, description="ID vùng trồng cho lô mới.")
+    harvest_date: date | None = Field(default=None, description="Ngày thu hoạch.")
     product_name: str | None = Field(default=None, max_length=255, description="Tên sản phẩm của lô mới (nếu không truyền sẽ lấy theo lô mẹ đầu tiên).")
     note: str | None = Field(default=None, max_length=500, description="Ghi chú mẻ gộp.")
+    organization_id: str | None = Field(default=None, max_length=50, description="Tổ chức nắm giữ lô mới.")
 
 
 class BatchMergeResponse(BaseModel):
-    """Kết quả sau khi gộp lô thành công."""
+    """Kết quả sau khi gộp lô thành công (hỗ trợ cả schema SCRUM-60 và tổng hợp)."""
 
-    merged_batch: BatchResponse
-    parent_batches: list[BatchResponse]
-    message: str
+    merged_batch: BatchResponse | None = None
+    parent_batches: list[BatchResponse] = Field(default_factory=list)
+    message: str = "Gộp lô thành công"
+    new_batch: BatchResponse | None = None
+    relations: list[BatchRelationResponse] = Field(default_factory=list)
+    parent_remainings: list[ParentRemainingResponse] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------- Batch Handover ---
@@ -980,3 +1048,215 @@ class HandoverWorkflowResponse(HandoverResponse):
 
 
 
+
+
+# =========================================================================
+# SCRUM-138: SAO LƯU DỮ LIỆU & DIỄN TẬP KHÔI PHỤC
+# =========================================================================
+class BackupLogResponse(BaseModel):
+    """Thông tin chi tiết một bản sao lưu CSDL."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    timestamp: datetime
+    status: str
+    file_path: str
+    file_size_bytes: int
+    sha256_checksum: str
+    details: str | None = None
+    rehearsal_verified: bool = False
+
+
+class BackupRunResponse(BaseModel):
+    """Kết quả kích hoạt tiến trình sao lưu CSDL."""
+
+    message: str
+    backup: BackupLogResponse
+    retained_backups_count: int
+
+
+class BackupRehearsalRequest(BaseModel):
+    """Yêu cầu diễn tập khôi phục CSDL trên database tạm thời."""
+
+    backup_id: int | None = Field(default=None, description="ID của bản backup cần thử khôi phục.")
+    backup_file_path: str | None = Field(default=None, description="Hoặc đường dẫn trực tiếp file backup.")
+
+
+class BackupRehearsalResponse(BaseModel):
+    """Kết quả diễn tập khôi phục trên CSDL tạm (dry-run)."""
+
+    status: str  # "SUCCESS" hoặc "FAILED"
+    tested_file: str
+    integrity_check_output: str
+    tables_checked: dict[str, int]
+    details: str
+
+
+# =========================================================================
+# SCRUM-136: JOB S-12 KIỂM TRA TÍNH TOÀN VẸN CHUỖI DỮ LIỆU
+# =========================================================================
+class IntegrityViolationItem(BaseModel):
+    """Chi tiết một vi phạm tính toàn vẹn phát hiện được."""
+
+    category: str  # "HASH_CHAIN_MISMATCH", "FOREIGN_KEY_VIOLATION", "QUANTITY_ANOMALY", "CYCLE_DETECTED"
+    table: str
+    record_id: int | str
+    message: str
+
+
+class IntegrityCheckLogResponse(BaseModel):
+    """Thông tin lần kiểm tra toàn vẹn chuỗi dữ liệu (Job S-12)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    timestamp: datetime
+    status: str  # "PASSED", "FAILED"
+    scanned_records: int
+    error_count: int
+    details: str
+    triggered_by: str
+
+
+class IntegrityCheckRunResponse(BaseModel):
+    """Kết quả thực thi kiểm tra toàn vẹn dữ liệu."""
+
+    message: str
+    result: IntegrityCheckLogResponse
+    violations: list[IntegrityViolationItem] = []
+
+
+# =========================================================================
+# SCRUM-126: DỮ LIỆU NHIỆT ĐỘ CHUỖI LẠNH & TỔNG HỢP THEO GIỜ
+# =========================================================================
+class TemperatureReadingCreate(BaseModel):
+    """Gửi một số đo nhiệt độ mới từ cảm biến chuỗi lạnh."""
+
+    batch_id: int | None = Field(default=None, description="Mã lô nông sản được giám sát (nếu có).")
+    sensor_id: str = Field(..., min_length=1, max_length=50, description="Mã định danh cảm biến nhiệt độ.")
+    temperature: float = Field(..., description="Nhiệt độ đo được (°C).")
+    recorded_at: datetime | None = Field(default=None, description="Thời điểm đo. Nếu để trống lấy thời điểm hiện tại.")
+
+
+class TemperatureReadingResponse(BaseModel):
+    """Thông tin số đo nhiệt độ thô từ cảm biến."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int | None
+    sensor_id: str
+    temperature: float
+    recorded_at: datetime
+    is_violation: bool
+    is_aggregated: bool
+    violation_reason: str | None = None
+
+
+class HourlyTemperatureSummaryResponse(BaseModel):
+    """Dữ liệu nhiệt độ tổng hợp theo từng giờ (MIN, MAX, AVG)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int | None
+    sensor_id: str
+    hour_bucket: datetime
+    min_temp: float
+    max_temp: float
+    avg_temp: float
+    sample_count: int
+    violation_count: int
+    created_at: datetime
+
+
+class TemperatureThresholdResponse(BaseModel):
+    """Ngưỡng nhiệt độ chuẩn bảo quản nông sản."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    product_name: str
+    min_temp: float
+    max_temp: float
+    description: str | None
+
+
+class ColdChainAggregateRunResponse(BaseModel):
+    """Kết quả tiến trình tổng hợp số đo nhiệt độ cũ hơn 30 ngày."""
+
+    message: str
+    cutoff_time: datetime
+    aggregated_buckets: int
+    purged_raw_readings: int
+    retained_violation_readings: int
+
+
+# =========================================================================
+# SCRUM-91: MỜI THÀNH VIÊN VÀ PHÂN QUYỀN TỔ CHỨC
+# =========================================================================
+class InvitationCreateRequest(BaseModel):
+    """Yêu cầu mời nhân viên mới vào tổ chức."""
+
+    email: str = Field(..., min_length=3, max_length=255, description="Email người nhận lời mời.")
+    role: str = Field(default="farmer", description="Vai trò được chỉ định: `farmer` hoặc `admin`.")
+    organization_id: str | None = Field(
+        default=None,
+        description="Mã tổ chức. Nếu không truyền, hệ thống tự lấy organization của người mời.",
+    )
+    expires_in_hours: int = Field(default=48, ge=1, le=168, description="Thời hạn lời mời tính bằng giờ (mặc định 48h).")
+
+
+class InvitationResponse(BaseModel):
+    """Thông tin lời mời thành viên."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    organization_id: str
+    role: str
+    expires_at: datetime
+    is_used: bool
+    is_revoked: bool
+    invited_by_username: str
+    created_at: datetime
+    invite_token: str | None = Field(
+        default=None,
+        description="Token lời mời (chỉ trả về một lần duy nhất khi tạo mới hoặc trong môi trường test/demo).",
+    )
+    invite_link: str | None = Field(
+        default=None,
+        description="Đường link thiết lập mật khẩu chứa token lời mời.",
+    )
+
+
+class InvitationAcceptRequest(BaseModel):
+    """Thiết lập tài khoản và mật khẩu từ đường link lời mời."""
+
+    token: str = Field(..., min_length=10, description="Token bí mật trong lời mời email.")
+    username: str = Field(..., min_length=3, max_length=50, description="Tên đăng nhập mong muốn.")
+    password: str = Field(..., min_length=6, max_length=128, description="Mật khẩu đăng nhập mới.")
+
+
+class MemberDeactivateRequest(BaseModel):
+    """Vô hiệu hóa hoặc kích hoạt lại tài khoản thành viên."""
+
+    user_id: int = Field(..., description="ID tài khoản cần thay đổi trạng thái.")
+    active: bool = Field(..., description="True để kích hoạt lại, False để vô hiệu hóa.")
+    reason: str | None = Field(default=None, description="Lý do thay đổi trạng thái tài khoản.")
+
+
+class OrganizationAuditLogResponse(BaseModel):
+    """Nhật ký hoạt động quản lý thành viên & phân quyền."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    organization_id: str
+    operator_username: str
+    action: str
+    target_email_or_user: str | None
+    details: str | None
+    created_at: datetime

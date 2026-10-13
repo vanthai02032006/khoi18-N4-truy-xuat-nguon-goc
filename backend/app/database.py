@@ -15,7 +15,7 @@ Sprint 4: thêm `seed_default_users()` - tạo sẵn 2 tài khoản demo
 from collections.abc import Generator
 from pathlib import Path
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -41,8 +41,19 @@ engine = create_engine(
     echo=False,  # đổi thành True nếu muốn xem câu SQL sinh ra khi debug
 )
 
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    """Kích hoạt kiểm tra khoá ngoại, chế độ WAL và timeout chống lock cho SQLite."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.close()
+
+
 # Áp quyền "chỉ SELECT/INSERT" cho mọi kết nối của tài khoản ứng dụng
 install_append_only_authorizer(engine)
+
 
 # Mỗi request sẽ mở một Session riêng, không tự commit/autoflush (an toàn hơn).
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -103,16 +114,18 @@ def seed_default_users() -> None:
     from app.security import hash_password
 
     default_users: tuple[dict[str, str], ...] = (
-        {"username": "admin", "password": "123456", "role": ROLE_ADMIN},
-        {"username": "farmer", "password": "123456", "role": ROLE_FARMER},
-        {"username": "inspector", "password": "123456", "role": ROLE_INSPECTOR},
+        {"username": "admin", "password": "123456", "role": ROLE_ADMIN, "organization_id": "ORG_ADMIN"},
+        {"username": "farmer", "password": "123456", "role": ROLE_FARMER, "organization_id": "ORG_MY_XUONG"},
+        {"username": "inspector", "password": "123456", "role": ROLE_INSPECTOR, "organization_id": "ORG_INSPECTOR"},
     )
 
     db: Session = SessionLocal()
     try:
         for item in default_users:
-            exists = db.scalar(select(User).where(User.username == item["username"]))
-            if exists is not None:
+            user = db.scalar(select(User).where(User.username == item["username"]))
+            if user is not None:
+                if user.organization_id is None:
+                    user.organization_id = item["organization_id"]
                 continue  # tài khoản đã có -> giữ nguyên, không ghi đè
 
             db.add(
@@ -120,6 +133,7 @@ def seed_default_users() -> None:
                     username=item["username"],
                     password=hash_password(item["password"]),
                     role=item["role"],
+                    organization_id=item["organization_id"],
                 )
             )
         db.commit()
@@ -270,7 +284,110 @@ def seed_sample_agricultural_data() -> None:
                     harvest_date=date(2026, 9, 30),
                 ),
             ]
+            for b in batches_data:
+                b.remaining_quantity = b.quantity
+                b.organization_id = "ORG_MY_XUONG"
+
             db.add_all(batches_data)
+            db.commit()
+
+            # Nạp lịch sử nắm giữ ban đầu cho các batch mẫu
+            from app.models import BatchCustodyHistory
+            custody_records = [
+                BatchCustodyHistory(batch_id=b.id, organization_id=b.organization_id or "ORG_MY_XUONG")
+                for b in batches_data
+            ]
+            db.add_all(custody_records)
+            db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def run_schema_migrations() -> None:
+    """Tự động di chuyển (migration) cấu trúc CSDL cho các cột mới nếu đã có file SQLite cũ.
+
+    Không xóa dữ liệu hiện có:
+    - Bảng batches: bổ sung `remaining_quantity` và `organization_id` nếu chưa có.
+    - Bảng users: bổ sung `organization_id` nếu chưa có.
+    """
+    from sqlalchemy import inspect, text
+
+    with engine.connect() as conn:
+        inspector = inspect(conn)
+        existing_tables = inspector.get_table_names()
+
+        if "batches" in existing_tables:
+            batch_cols = [c["name"] for c in inspector.get_columns("batches")]
+            if "remaining_quantity" not in batch_cols:
+                conn.execute(text("ALTER TABLE batches ADD COLUMN remaining_quantity FLOAT DEFAULT 0.0"))
+                conn.execute(text("UPDATE batches SET remaining_quantity = quantity WHERE remaining_quantity IS NULL OR remaining_quantity = 0"))
+            if "organization_id" not in batch_cols:
+                conn.execute(text("ALTER TABLE batches ADD COLUMN organization_id VARCHAR(50)"))
+                conn.execute(text("UPDATE batches SET organization_id = 'ORG_MY_XUONG' WHERE organization_id IS NULL"))
+
+        if "users" in existing_tables:
+            user_cols = [c["name"] for c in inspector.get_columns("users")]
+            if "organization_id" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN organization_id VARCHAR(50)"))
+                conn.execute(text("UPDATE users SET organization_id = 'ORG_ADMIN' WHERE username = 'admin'"))
+                conn.execute(text("UPDATE users SET organization_id = 'ORG_MY_XUONG' WHERE username = 'farmer'"))
+            if "email" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
+                conn.execute(text("UPDATE users SET email = 'admin@agritrace.vn' WHERE username = 'admin'"))
+                conn.execute(text("UPDATE users SET email = 'farmer@agritrace.vn' WHERE username = 'farmer'"))
+            if "is_active" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+                conn.execute(text("UPDATE users SET is_active = 1 WHERE is_active IS NULL"))
+            if "created_at" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN created_at DATETIME"))
+                conn.execute(text("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+
+        conn.commit()
+
+
+def seed_cold_chain_thresholds() -> None:
+    """Tạo cấu hình ngưỡng nhiệt độ bảo quản lạnh tiêu chuẩn VietGAP cho các loại nông sản."""
+    from app.models import TemperatureThresholdConfig
+
+    db: Session = SessionLocal()
+    try:
+        count = db.scalar(select(func.count()).select_from(TemperatureThresholdConfig)) or 0
+        if count == 0:
+            thresholds = [
+                TemperatureThresholdConfig(
+                    product_name="DEFAULT",
+                    min_temp=2.0,
+                    max_temp=8.0,
+                    description="Ngưỡng chuỗi lạnh chuẩn bảo quản nông sản chung (2.0°C - 8.0°C)",
+                ),
+                TemperatureThresholdConfig(
+                    product_name="Xoài Cát Chu",
+                    min_temp=10.0,
+                    max_temp=13.0,
+                    description="Xoài Cát Chu bảo quản mát tránh tổn thương lạnh chilling injury (10.0°C - 13.0°C)",
+                ),
+                TemperatureThresholdConfig(
+                    product_name="Sầu Riêng Ri6",
+                    min_temp=13.0,
+                    max_temp=16.0,
+                    description="Sầu Riêng Ri6 giữ tươi nguyên quả ở nhiệt độ ổn định (13.0°C - 16.0°C)",
+                ),
+                TemperatureThresholdConfig(
+                    product_name="Bưởi Da Xanh",
+                    min_temp=8.0,
+                    max_temp=12.0,
+                    description="Bưởi Da Xanh tiêu chuẩn GlobalGAP bảo quản kho lạnh (8.0°C - 12.0°C)",
+                ),
+                TemperatureThresholdConfig(
+                    product_name="Thanh Long Ruột Đỏ",
+                    min_temp=3.0,
+                    max_temp=6.0,
+                    description="Thanh Long ruột đỏ xuất khẩu nhiệt độ tối ưu (3.0°C - 6.0°C)",
+                ),
+            ]
+            db.add_all(thresholds)
             db.commit()
     except SQLAlchemyError:
         db.rollback()
@@ -430,8 +547,10 @@ def init_db() -> None:
         pass
 
     _migrate_sqlite_schema()
+    run_schema_migrations()
     seed_default_users()
     seed_sample_agricultural_data()
     seed_default_products()
     seed_default_thresholds()
+    seed_cold_chain_thresholds()
 
