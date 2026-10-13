@@ -179,6 +179,12 @@ class Batch(Base):
         cascade="all, delete-orphan",
     )
 
+    # Quan hệ 1-N: các chuyến xe chở lô hàng này (S-42 Cold Chain)
+    consignments: Mapped[list["TripConsignment"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+    )
+
     @property
     def owner(self) -> Optional[str]:
         return self.current_owner or self.current_holder_org
@@ -577,6 +583,135 @@ class Handover(Base):
         )
 
 
+# ------------------------------------------------------------- Cold Chain & Telemetry (S-42) ---
+class Trip(Base):
+    """Chuyến xe vận chuyển chuỗi lạnh (Cold-Chain Trip) - S-42.
+    
+    Quản lý vòng đời vận chuyển:
+    - Trạng thái: IN_TRANSIT (đang chạy), COMPLETED (hoàn tất), CANCELLED (hủy).
+    - Ngưỡng nhiệt độ quy định cho chuyến xe: [temp_min_threshold, temp_max_threshold].
+    - max_allowed_breach_minutes: Cửa sổ thời gian vi phạm tối đa cho phép (chuẩn S-42 là 30 phút).
+    """
+
+    __tablename__ = "trips"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trip_code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    carrier_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    vehicle_plate: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    driver_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    driver_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    start_location: Mapped[str] = mapped_column(String(255), nullable=False)
+    end_location: Mapped[str] = mapped_column(String(255), nullable=False)
+    temp_min_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=2.0)
+    temp_max_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=8.0)
+    max_allowed_breach_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    started_at: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    completed_at: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="IN_TRANSIT", index=True)
+
+    consignments: Mapped[list["TripConsignment"]] = relationship(
+        back_populates="trip",
+        cascade="all, delete-orphan",
+    )
+    telemetry_readings: Mapped[list["TelemetryReading"]] = relationship(
+        back_populates="trip",
+        cascade="all, delete-orphan",
+    )
+    violations: Mapped[list["TripViolation"]] = relationship(
+        back_populates="trip",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Trip code={self.trip_code!r} carrier={self.carrier_name!r} status={self.status!r}>"
+
+
+class TripConsignment(Base):
+    """Lô hàng xếp trên chuyến xe (Consignment) - S-42.
+    
+    Liên kết giữa Trip và Batch kèm khối lượng và thời điểm xếp hàng (ON-BOARD).
+    """
+
+    __tablename__ = "trip_consignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trip_id: Mapped[int] = mapped_column(ForeignKey("trips.id", ondelete="CASCADE"), nullable=False, index=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id", ondelete="CASCADE"), nullable=False, index=True)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    loaded_at: Mapped[str] = mapped_column(String(50), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    trip: Mapped["Trip"] = relationship(back_populates="consignments")
+    batch: Mapped["Batch"] = relationship(back_populates="consignments")
+
+    __table_args__ = (
+        UniqueConstraint("trip_id", "batch_id", name="uq_trip_batch_consignment"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<TripConsignment trip_id={self.trip_id} batch_id={self.batch_id} qty={self.quantity}>"
+
+
+class TelemetryReading(Base):
+    """Bản ghi cảm biến IoT truyền từ xe lạnh (Telemetry Stream) - S-42.
+    
+    Lưu trữ mốc thời gian đo thực tế của cảm biến (recorded_at) và thời gian máy chủ nhận (received_at).
+    """
+
+    __tablename__ = "telemetry_readings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trip_id: Mapped[int] = mapped_column(ForeignKey("trips.id", ondelete="CASCADE"), nullable=False, index=True)
+    device_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    temperature: Mapped[float] = mapped_column(Float, nullable=False)
+    humidity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    recorded_at: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    received_at: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    trip: Mapped["Trip"] = relationship(back_populates="telemetry_readings")
+
+    __table_args__ = (
+        Index("ix_telemetry_trip_recorded", "trip_id", "recorded_at"),
+        UniqueConstraint("trip_id", "recorded_at", "device_id", name="uq_trip_device_recorded"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<TelemetryReading trip_id={self.trip_id} temp={self.temperature}°C at {self.recorded_at}>"
+
+
+class TripViolation(Base):
+    """Vi phạm chuỗi lạnh gắn với chuyến xe phát hiện bởi Core Engine S-42.
+    
+    Đáp ứng chuẩn S-42:
+    - violation_type: HIGH_TEMP_BREACH (vượt ngưỡng trên) hoặc LOW_TEMP_BREACH (vượt ngưỡng dưới).
+    - severity: WARNING (cảnh báo) hoặc CRITICAL (nghiêm trọng).
+    - Cửa sổ vi phạm: started_at đến ended_at, duration_minutes >= 30 phút.
+    - peak_temperature: Nhiệt độ đỉnh điểm trong suốt khoảng thời gian vi phạm.
+    """
+
+    __tablename__ = "trip_violations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trip_id: Mapped[int] = mapped_column(ForeignKey("trips.id", ondelete="CASCADE"), nullable=False, index=True)
+    violation_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    severity: Mapped[str] = mapped_column(String(50), nullable=False, default="WARNING")
+    started_at: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    ended_at: Mapped[str] = mapped_column(String(50), nullable=False)
+    duration_minutes: Mapped[float] = mapped_column(Float, nullable=False)
+    peak_temperature: Mapped[float] = mapped_column(Float, nullable=False)
+    threshold_temp: Mapped[float] = mapped_column(Float, nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    trip: Mapped["Trip"] = relationship(back_populates="violations")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<TripViolation trip_id={self.trip_id} type={self.violation_type} peak={self.peak_temperature}°C duration={self.duration_minutes}m>"
+
+
 __all__ = [
     "Base",
     "Batch",
@@ -607,5 +742,9 @@ __all__ = [
     "EVENT_TYPE_HANDOVER_ACCEPTED",
     "EVENT_TYPE_HANDOVER_REJECTED",
     "EVENT_TYPE_OWNER_CHANGED",
+    "Trip",
+    "TripConsignment",
+    "TelemetryReading",
+    "TripViolation",
 ]
 
