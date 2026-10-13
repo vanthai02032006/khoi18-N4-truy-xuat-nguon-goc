@@ -224,8 +224,14 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | `id` | INTEGER | Khoá chính, tự tăng |
 | `farm_id` | INTEGER | **Khoá ngoại → `farms.id`**, bắt buộc, có index |
 | `product_name` | VARCHAR(255) | Bắt buộc |
-| `quantity` | FLOAT | Bắt buộc, **> 0** (đơn vị kg) |
+| `quantity` | FLOAT | Bắt buộc, **≥ 0** (đơn vị kg; 0 khi đã tiêu thụ) |
+| `status` | VARCHAR(20) | Bắt buộc: `available` (còn hàng) hoặc `consumed` (đã tiêu thụ) |
 | `harvest_date` | DATE | Bắt buộc, định dạng `yyyy-MM-dd` |
+
+`POST /batches/{batch_id}/consume` đánh dấu lô đã bán hết: đặt `quantity` về 0,
+chuyển `status` sang `consumed` và ghi sự kiện `BATCH_CONSUMED` vào chuỗi sự kiện.
+Lô đã tiêu thụ không thể sửa, tách hoặc bàn giao. Lô đang có từ trước được tự
+động bổ sung trạng thái `available` khi khởi động ứng dụng.
 
 **Quan hệ:** `Farm 1 ---- N Batch`, khai báo 2 chiều trong `app/models.py` bằng
 `relationship(back_populates=...)`:
@@ -556,4 +562,3 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 3 | Module **Batch** (quản lý lô nông sản): model `Batch` → bảng `batches` (FK `farm_id` → `farms.id`, quan hệ `Farm 1 ---- N Batch`), schemas `BatchCreate`/`BatchResponse`, router `app/routers/batches.py` với `POST /batches` (**201**, trả **404** nếu `farm_id` không tồn tại), `GET /batches` (**200**) và `GET /batches/{batch_id}` (**200**/**404**). `GET /health`, `POST /farms`, `GET /farms` giữ nguyên. |
 | Sprint 4 | **Đăng nhập + phân quyền cơ bản (không JWT):** model `User` → bảng `users` (`username` unique, mật khẩu băm SHA-256, `role`), `seed_default_users()` tạo sẵn `admin`/`farmer` (mật khẩu `123456`); module `app/security.py` với `hash_password`/`verify_password`/`authenticate_user` và dependency `get_current_user` (**401**), `require_admin` (**403**), `require_farmer`; router `POST /auth/login` (**200**/**401**) và `GET /users` (**200**, chỉ admin); áp `require_farmer` cho `GET /farms`, `POST /farms`, `POST /batches`. Cơ chế xác thực là **HTTP Basic** (Swagger có nút **Authorize**), không token/refresh token. |
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
-

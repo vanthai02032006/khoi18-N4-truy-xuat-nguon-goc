@@ -351,6 +351,10 @@ def _migrate_sqlite_schema() -> None:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN parent_id INTEGER REFERENCES batches(id) ON DELETE SET NULL")
                 if "is_restricted" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN is_restricted BOOLEAN DEFAULT 0")
+                if "status" not in existing_cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE batches ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'available'"
+                    )
             conn.commit()
     except Exception:
         pass
@@ -434,4 +438,3 @@ def init_db() -> None:
     seed_sample_agricultural_data()
     seed_default_products()
     seed_default_thresholds()
-

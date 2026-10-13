@@ -55,7 +55,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.cache import trace_cache
-from app.models import Batch, User
+from app.models import BATCH_STATUS_CONSUMED, Batch, User
 
 # Độ chính xác thập phân cố định cho khối lượng nông sản: 4 chữ số sau dấu phẩy (0.0001 kg = 100 mg)
 QUANTITY_PRECISION = Decimal("0.0001")
@@ -190,6 +190,8 @@ def split_batch(
 
         if parent_batch is None:
             raise ValueError(f"Không tìm thấy lô mẹ với ID #{parent_batch_id}.")
+        if parent_batch.status == BATCH_STATUS_CONSUMED:
+            raise ValueError(f"Lô mẹ #{parent_batch_id} đã tiêu thụ nên không thể tách.")
 
         # Chuyển khối lượng hiện tại của lô mẹ sang Decimal cố định
         parent_qty: Decimal = to_fixed_decimal(parent_batch.quantity)

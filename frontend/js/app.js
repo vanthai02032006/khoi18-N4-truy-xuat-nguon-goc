@@ -630,6 +630,7 @@ function renderBatches() {
         <td>${escapeHtml(farmLabel(batch.farm_id))}</td>
         <td><strong>${escapeHtml(batch.product_name)}</strong></td>
         <td class="is-right font-mono">${formatNumber(batch.quantity)}</td>
+        <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: ${batch.status === "consumed" ? "#f1f5f9" : "#ecfdf5"}; color: ${batch.status === "consumed" ? "#475569" : "#047857"}; border: 1px solid ${batch.status === "consumed" ? "#cbd5e1" : "#a7f3d0"};">${batch.status === "consumed" ? "Đã tiêu thụ" : "Còn hàng"}</span></td>
         <td>${escapeHtml(formatDate(batch.harvest_date))}</td>
         <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;">${escapeHtml(batch.current_holder_org || batch.owner || "HTX Nông Nghiệp Số 4")}</span></td>
         <td>
@@ -639,14 +640,17 @@ function renderBatches() {
                     data-id="${escapeHtml(batch.id)}"
                     title="Xem dòng thời gian lịch sử & tính toàn vẹn chuỗi">Lịch sử</button>
             ${
-              session && session.role !== ROLE_INSPECTOR
+              session && session.role !== ROLE_INSPECTOR && batch.status !== "consumed"
                 ? `<button class="btn btn--sm btn-table-split" type="button"
                     data-action="split" data-entity="batch"
                     data-id="${escapeHtml(batch.id)}"
                     title="Tách nhập nhiều dòng lô con (T-40)">Tách</button>
                    <button class="btn btn--primary btn--sm" type="button"
                     data-action="edit" data-entity="batch"
-                    data-id="${escapeHtml(batch.id)}">Sửa</button>`
+                    data-id="${escapeHtml(batch.id)}">Sửa</button>
+                   <button class="btn btn--sm" style="background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa;"
+                    data-action="consume" data-entity="batch" data-id="${escapeHtml(batch.id)}"
+                    title="Đánh dấu lô đã bán hết">Đã bán hết</button>`
                 : ""
             }
             ${
@@ -789,6 +793,23 @@ async function deleteBatch(batchId) {
     await loadBatches();
   } catch (error) {
     toast(`Xoá lô nông sản thất bại: ${error.message}`, "error");
+  }
+}
+
+/** Đánh dấu lô đã bán hết -> ``POST /batches/{id}/consume``. */
+async function consumeBatch(batchId) {
+  const batch = batches.find((item) => item.id === batchId);
+  const label = batch ? `#${batch.id} — ${batch.product_name}` : `#${batchId}`;
+  if (!window.confirm(`Xác nhận lô ${label} đã bán hết và tới tay người mua? Khối lượng sẽ về 0.`)) {
+    return;
+  }
+
+  try {
+    await apiRequest(`/batches/${batchId}/consume`, { method: "POST" });
+    toast(`Đã đánh dấu lô ${label} là đã tiêu thụ.`, "success");
+    await loadBatches($("batch-filter-search")?.value.trim() || "");
+  } catch (error) {
+    toast(`Không thể đánh dấu lô đã bán hết: ${error.message}`, "error");
   }
 }
 
@@ -1348,6 +1369,7 @@ function populateHandoverBatches() {
   select.innerHTML =
     '<option value="">-- Chọn lô nông sản bàn giao --</option>' +
     batches
+      .filter((batch) => batch.status !== "consumed")
       .map(
         (b) =>
           `<option value="${b.id}">${escapeHtml(b.batch_code || ('LOT-' + b.id))} — ${escapeHtml(b.product_name)} (${formatNumber(b.quantity)} kg)</option>`
@@ -1591,6 +1613,16 @@ function formatEventDetail(ev, payload) {
         ${childDetails.map((c) => `<span class="event-chip event-chip--child">${escapeHtml(c.batch_code)}: <strong>${formatNumber(c.quantity)} kg</strong></span>`).join("")}
       </div>
       <div class="event-subnote">Số dư còn lại của lô mẹ: <strong>${formatNumber(payload.remaining_quantity)} kg</strong></div>`;
+  } else if (t === "BATCH_CONSUMED") {
+    badgeColor = "#c2410c";
+    icon = "🛒";
+    title = "Đã bán hết / tới tay người mua";
+    bodyHtml = `
+      <div class="event-desc">Lô đã rời khỏi kệ phân phối và được chuyển sang trạng thái <strong>đã tiêu thụ</strong>.</div>
+      <div class="event-chips">
+        <span class="event-chip">⚖️ Khối lượng trước khi bán hết: <strong>${formatNumber(payload.previous_quantity)} kg</strong></span>
+        <span class="event-chip">📦 Còn lại: <strong>0 kg</strong></span>
+      </div>`;
   } else if (t === "BIRTH") {
     badgeColor = "#8b5cf6";
     icon = "🐣";
@@ -2609,6 +2641,11 @@ function handleTableAction(event) {
 
   if (action === "split") {
     openSplitModal(id);
+    return;
+  }
+
+  if (action === "consume") {
+    consumeBatch(id);
     return;
   }
 

@@ -218,6 +218,7 @@ _BATCH_EXAMPLE: dict = {
     "farm_id": 1,
     "product_name": "Xoài cát Chu",
     "quantity": 120.5,
+    "status": "available",
     "harvest_date": "2026-01-15",
 }
 
@@ -317,6 +318,7 @@ class BatchResponse(BaseModel):
     farm_id: int = Field(..., description="ID vùng trồng xuất xứ.", examples=[1])
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
     quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
+    status: str = Field(..., description="Trạng thái lô: available (còn hàng) hoặc consumed (đã tiêu thụ).")
     harvest_date: date = Field(..., description="Ngày thu hoạch.")
     current_holder_org: str = Field(
         default="HTX Nông Nghiệp Số 4",
@@ -977,6 +979,4 @@ class HandoverWorkflowResponse(HandoverResponse):
         description="Các loại sự kiện đã ghi vào nhật ký lô trong cùng transaction.",
         examples=[["HANDOVER_ACCEPTED", "OWNER_CHANGED"]],
     )
-
-
 

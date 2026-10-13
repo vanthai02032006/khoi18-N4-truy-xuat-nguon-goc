@@ -29,7 +29,15 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Batch, BatchEvent, Farm, User
+from app.events import record_event
+from app.models import (
+    BATCH_STATUS_CONSUMED,
+    EVENT_TYPE_BATCH_CONSUMED,
+    Batch,
+    BatchEvent,
+    Farm,
+    User,
+)
 from app.schemas import (
     BatchCreate,
     BatchMergeRequest,
@@ -277,6 +285,11 @@ def update_batch(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy lô nông sản có id={batch_id}.",
         )
+    if batch.status == BATCH_STATUS_CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lô nông sản #{batch_id} đã tiêu thụ nên không thể sửa.",
+        )
 
     # Kiểm tra lại toàn vẹn tham chiếu: vùng trồng (mới) phải tồn tại.
     farm = db.get(Farm, payload.farm_id)
@@ -296,6 +309,77 @@ def update_batch(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Không thể cập nhật lô nông sản trong cơ sở dữ liệu.",
+        ) from exc
+
+    db.refresh(batch)
+    return batch
+
+
+@router.post(
+    "/{batch_id}/consume",
+    response_model=BatchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Đánh dấu lô đã bán hết",
+    description=(
+        "Đánh dấu lô đã tới tay người mua: đưa khối lượng còn lại về 0, "
+        "chuyển trạng thái sang `consumed` và ghi sự kiện vào chuỗi bất biến."
+    ),
+)
+def consume_batch(
+    batch_id: int = Path(..., ge=1, description="ID lô đã bán hết."),
+    current_user: User = Depends(require_farmer),
+    current_org: str = Depends(require_tenant_context),
+    db: Session = Depends(get_db),
+) -> Batch:
+    """Đánh dấu lô hiện tại đã bán hết và ghi nhận vào chuỗi sự kiện."""
+    batch = db.scalar(
+        select(Batch).where(Batch.id == batch_id).with_for_update()
+    )
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản có id={batch_id}.",
+        )
+    if batch.status == BATCH_STATUS_CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lô nông sản #{batch_id} đã được đánh dấu tiêu thụ.",
+        )
+
+    effective_holder = batch.current_holder_org or "HTX Nông Nghiệp Số 4"
+    if current_user.role != "admin" and current_org != effective_holder:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Lô hàng đang do '{effective_holder}' nắm giữ, bạn không có quyền cập nhật.",
+        )
+
+    previous_quantity = batch.quantity
+    if not batch.batch_code:
+        batch.batch_code = f"LOT-{batch.id:04d}"
+    batch.quantity = 0
+    batch.status = BATCH_STATUS_CONSUMED
+    record_event(
+        db,
+        batch_id=batch.id,
+        event_type=EVENT_TYPE_BATCH_CONSUMED,
+        actor=current_user.username,
+        organization=current_org,
+        payload={
+            "action": "BATCH_CONSUMED",
+            "previous_quantity": previous_quantity,
+            "remaining_quantity": 0,
+            "status": BATCH_STATUS_CONSUMED,
+            "description": f"Lô #{batch.id} ({batch.product_name}) đã bán hết và tới tay người mua.",
+        },
+    )
+
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Không thể ghi nhận lô đã tiêu thụ.",
         ) from exc
 
     db.refresh(batch)
@@ -402,11 +486,18 @@ def split_batch(
     db: Session = Depends(get_db),
 ) -> BatchSplitResponse:
     """Tách một lô nông sản mẹ thành danh sách các lô con (T-40)."""
-    batch = db.get(Batch, batch_id)
+    batch = db.scalar(
+        select(Batch).where(Batch.id == batch_id).with_for_update()
+    )
     if batch is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy lô nông sản mẹ có id={batch_id}.",
+        )
+    if batch.status == BATCH_STATUS_CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lô nông sản mẹ #{batch_id} đã tiêu thụ nên không thể tách.",
         )
 
     # 1. Tính tổng khối lượng các dòng lô con yêu cầu
@@ -782,6 +873,11 @@ def initiate_handover(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy lô hàng có id={batch_id}.",
         )
+    if batch.status == BATCH_STATUS_CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lô hàng #{batch_id} đã tiêu thụ nên không thể bàn giao.",
+        )
 
     # Kiểm tra quyền: người gọi phải thuộc tổ chức đang nắm giữ lô hàng (trừ admin)
     effective_holder = batch.current_holder_org or "HTX Nông Nghiệp Số 4"
@@ -886,6 +982,11 @@ def accept_handover(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy lô hàng có id={batch_id}.",
+        )
+    if batch.status == BATCH_STATUS_CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lô hàng #{batch_id} đã tiêu thụ nên không thể xác nhận bàn giao.",
         )
 
     # Kiểm tra xem lô có đợt bàn giao nào đang chờ hay không
@@ -1209,4 +1310,3 @@ def get_batch_public_map_by_id(
             detail=f"Không tìm thấy lô nông sản #{batch_id}.",
         )
     return _build_public_tracking_map_response(batch, db)
-

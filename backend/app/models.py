@@ -115,6 +115,13 @@ class Batch(Base):
     )
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="available",
+        server_default="available",
+        index=True,
+    )
     harvest_date: Mapped[date] = mapped_column(Date, nullable=False)
 
     # Quyền giữ lô thực tế và tổ chức nhận đang chờ xác nhận bàn giao (Handover Workflow)
@@ -517,6 +524,10 @@ EVENT_TYPE_HANDOVER_PENDING: str = "HANDOVER_PENDING"
 EVENT_TYPE_HANDOVER_ACCEPTED: str = "HANDOVER_ACCEPTED"
 EVENT_TYPE_HANDOVER_REJECTED: str = "HANDOVER_REJECTED"
 EVENT_TYPE_OWNER_CHANGED: str = "OWNER_CHANGED"
+EVENT_TYPE_BATCH_CONSUMED: str = "BATCH_CONSUMED"
+
+BATCH_STATUS_AVAILABLE: str = "available"
+BATCH_STATUS_CONSUMED: str = "consumed"
 
 
 class Handover(Base):
@@ -607,5 +618,7 @@ __all__ = [
     "EVENT_TYPE_HANDOVER_ACCEPTED",
     "EVENT_TYPE_HANDOVER_REJECTED",
     "EVENT_TYPE_OWNER_CHANGED",
+    "EVENT_TYPE_BATCH_CONSUMED",
+    "BATCH_STATUS_AVAILABLE",
+    "BATCH_STATUS_CONSUMED",
 ]
-
