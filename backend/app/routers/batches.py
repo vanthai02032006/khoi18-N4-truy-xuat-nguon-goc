@@ -24,14 +24,14 @@ import string
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import cast, func, or_, select, String
-
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Batch, BatchEvent, Farm, User
+from app.models import Batch, BatchCustodyHistory, BatchEvent, Farm, User
 from app.schemas import (
     BatchCreate,
+    BatchDetailResponse,
     BatchMergeRequest,
     BatchMergeResponse,
     BatchResponse,
@@ -45,7 +45,9 @@ from app.schemas import (
     MapWaypoint,
     PublicTrackingMapResponse,
 )
-from app.security import compute_event_hash, require_admin, require_farmer
+from app.security import compute_event_hash, get_current_user, require_admin, require_farmer
+from app.services.authorization_service import can_user_view_batch, filter_viewable_batches
+from app.services.batch_service import merge_batches_transaction
 from app.tenant import get_tenant_org, require_tenant_context
 
 router = APIRouter(
@@ -73,6 +75,34 @@ def generate_unique_batch_code(db: Session, prefix: str = "LOT") -> str:
     # Trường hợp hi hữu mở rộng thêm độ dài
     long_suffix = "".join(secrets.choice(alphabet) for _ in range(8))
     return f"{prefix}-{date_part}-{long_suffix}"
+
+
+@router.post(
+    "/merge",
+    response_model=BatchMergeResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Giao dịch gộp lô nông sản (SCRUM-60)",
+    description=(
+        "Thực hiện giao dịch gộp nhiều lô mẹ thành một lô mới trong Database Transaction.\n\n"
+        "- Validate tồn kho, khoá các lô mẹ theo thứ tự tăng dần chống deadlock.\n"
+        "- Trừ tồn kho từng lô mẹ và sinh lô con mới với tổng khối lượng.\n"
+        "- Lưu vết quan hệ phả hệ parent-child.\n"
+        "- Rollback toàn bộ nếu có bất kỳ bước nào thất bại."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Dữ liệu không hợp lệ hoặc vượt tồn kho."},
+        status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
+        status.HTTP_403_FORBIDDEN: {"description": "Vai trò không được phép."},
+        status.HTTP_404_NOT_FOUND: {"description": "Lô mẹ hoặc vùng trồng không tồn tại."},
+    },
+)
+def merge_batches_endpoint(
+    payload: BatchMergeRequest,
+    current_user: User = Depends(require_farmer),
+    db: Session = Depends(get_db),
+) -> BatchMergeResponse:
+    """Gộp nhiều lô mẹ thành một lô mới."""
+    return merge_batches_transaction(db, payload, current_user)
 
 
 @router.post(
@@ -105,7 +135,7 @@ def create_batch(
     db: Session = Depends(get_db),
 ) -> Batch:
     """Tạo lô nông sản mới."""
-    _ = current_user  # bắt buộc khai báo để dependency kiểm tra quyền chạy
+    _ = current_user
 
     # Bước 1: kiểm tra toàn vẹn tham chiếu - vùng trồng phải tồn tại.
     farm = db.get(Farm, payload.farm_id)
@@ -116,7 +146,6 @@ def create_batch(
         )
 
     # Bước 2: kiểm tra thửa đất có thuộc quyền quản lý của tổ chức hiện tại (SCRUM-36 / T-20).
-    # Áp dụng đối với các trường hợp tổ chức cụ thể (trừ admin hệ thống hoặc tổ chức mặc định toàn quyền).
     if current_org and current_org != "HTX Nông Nghiệp Số 4" and current_user.role != "admin":
         farm_org = getattr(farm, "organization", None) or farm.owner
         if farm_org != current_org and current_org not in farm_org:
@@ -131,10 +160,17 @@ def create_batch(
     # Bước 4: lưu lô nông sản.
     batch_data = payload.model_dump()
     holder_org = current_org if (current_org and current_org != "HTX Nông Nghiệp Số 4") else (farm.owner or "HTX Nông Nghiệp Số 4")
+    if "remaining_quantity" not in batch_data or batch_data.get("remaining_quantity") is None:
+        batch_data["remaining_quantity"] = payload.quantity
+    if not batch_data.get("organization_id"):
+        batch_data["organization_id"] = getattr(current_user, "organization_id", None) or "ORG_MY_XUONG"
+
     batch = Batch(**batch_data, batch_code=code, current_holder_org=holder_org)
     db.add(batch)
 
     try:
+        db.flush()
+        db.add(BatchCustodyHistory(batch_id=batch.id, organization_id=batch.organization_id))
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()
@@ -151,27 +187,31 @@ def create_batch(
     "",
     response_model=list[BatchResponse],
     status_code=status.HTTP_200_OK,
-    summary="Lấy danh sách lô nông sản (hỗ trợ lọc sản phẩm & phân trang con trỏ - SCRUM-49)",
-    description="Hỗ trợ tìm kiếm, lọc theo loại sản phẩm và phân trang con trỏ keyset (cursor pagination).",
+    summary="Lấy danh sách lô nông sản (hỗ trợ lọc sản phẩm & phân trang con trỏ - SCRUM-49/70)",
+    description="Hỗ trợ tìm kiếm, lọc theo loại sản phẩm, phân trang con trỏ và phân quyền theo SCRUM-70.",
 )
 def list_batches(
     product: str | None = Query(None, description="Lọc chính xác hoặc tương đối theo tên sản phẩm."),
+    product_name: str | None = Query(None, description="Bộ lọc theo tên loại nông sản."),
     search: str | None = Query(None, description="Tìm kiếm mã lô hoặc tên sản phẩm không phân biệt hoa thường."),
     cursor: int | None = Query(None, ge=1, description="ID con trỏ cho trang kế tiếp (Keyset pagination)."),
     limit: int = Query(50, ge=1, le=100, description="Số lượng bản ghi tối đa trả về."),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[Batch]:
-    """Lấy danh sách lô nông sản có hỗ trợ bộ lọc và phân trang con trỏ (SCRUM-49)."""
+    """Lấy danh sách lô nông sản có hỗ trợ bộ lọc và phân quyền."""
     stmt = select(Batch)
 
     # Lọc theo sản phẩm
-    if product:
-        stmt = stmt.where(Batch.product_name.ilike(f"%{product}%"))
+    filter_prod = product or product_name
+    if filter_prod and filter_prod.strip():
+        stmt = stmt.where(Batch.product_name.ilike(f"%{filter_prod.strip()}%"))
 
     # Tìm kiếm theo tên sản phẩm, mã lô (batch_code), hoặc ID (không phân biệt chữ thường chữ hoa)
-    if search:
+    if search and search.strip():
         import re
         search_term = search.strip()
+        clean_id = search_term.lower().lstrip("#").replace("batch-", "").strip()
         conditions = [
             Batch.product_name.ilike(f"%{search_term}%"),
             Batch.batch_code.ilike(f"%{search_term}%"),
@@ -185,6 +225,8 @@ def list_batches(
                 conditions.append(Batch.batch_code.ilike(f"LOT-%{num_id:04d}%"))
             except ValueError:
                 pass
+        if clean_id.isdigit():
+            conditions.append(Batch.id == int(clean_id))
         stmt = stmt.where(or_(*conditions))
 
     # Phân trang con trỏ (keyset cursor)
@@ -197,16 +239,26 @@ def list_batches(
     for b in batches_list:
         if not b.batch_code:
             b.batch_code = f"LOT-{b.id:04d}"
-    return batches_list
+    return filter_viewable_batches(db, current_user, batches_list)
 
 
 @router.get(
     "/{batch_id}",
-    response_model=BatchResponse,
+    response_model=BatchDetailResponse,
     status_code=status.HTTP_200_OK,
     summary="Xem chi tiết một lô nông sản",
-    description="Trả về thông tin chi tiết của lô theo `id`. Trả `404` nếu không tồn tại.",
+    description=(
+        "Trả về thông tin chi tiết và quan hệ phả hệ của lô theo `id`. "
+        "Kiểm tra phân quyền theo quy tắc SCRUM-70: user/org phải đang giữ, "
+        "từng giữ, hoặc là tổ tiên của lô đang giữ."
+    ),
     responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Chưa đăng nhập.",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Không có quyền xem lô này theo quy tắc SCRUM-70.",
+        },
         status.HTTP_404_NOT_FOUND: {
             "description": "Không tìm thấy lô nông sản.",
         },
@@ -214,9 +266,10 @@ def list_batches(
 )
 def get_batch(
     batch_id: int = Path(..., ge=1, description="ID lô nông sản cần xem."),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Batch:
-    """Lấy chi tiết một lô nông sản theo ``id``."""
+    """Lấy chi tiết một lô nông sản theo ``id`` có kiểm tra quyền SCRUM-70."""
     batch = db.get(Batch, batch_id)
     if batch is None:
         raise HTTPException(
@@ -225,6 +278,13 @@ def get_batch(
         )
     if not batch.batch_code:
         batch.batch_code = f"LOT-{batch.id:04d}"
+
+    if not can_user_view_batch(db, current_user, batch_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản hoặc tổ chức của bạn không có quyền xem thông tin lô nông sản này.",
+        )
+
     return batch
 
 
@@ -286,7 +346,19 @@ def update_batch(
             detail=f"Không tìm thấy vùng trồng có id={payload.farm_id}.",
         )
 
+    # Kiểm tra phân quyền tổ chức: farmer không được sửa lô của tổ chức khác
+    if getattr(current_user, "role", None) != "admin":
+        user_org = getattr(current_user, "organization_id", None)
+        if user_org and batch.organization_id and batch.organization_id != user_org:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Bạn không có quyền sửa lô nông sản thuộc tổ chức khác.",
+            )
+
     for field, value in payload.model_dump().items():
+        # Không ghi đè organization_id thành None nếu payload không chỉ định
+        if field == "organization_id" and value is None:
+            continue
         setattr(batch, field, value)
 
     try:
@@ -566,191 +638,6 @@ def split_batch(
 # =========================================================================
 
 
-@router.post(
-    "/merge",
-    response_model=BatchMergeResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Gộp nhiều lô thành một lô mới",
-    description=(
-        "Gộp khối lượng từ 2 hoặc nhiều lô mẹ thành một lô mới. "
-        "Ghi nhận sự kiện MERGE_PARENT trên từng lô mẹ và sự kiện MERGE trên lô con mới."
-    ),
-)
-def merge_batches(
-    payload: BatchMergeRequest,
-    current_user: User = Depends(require_farmer),
-    current_org: str = Depends(require_tenant_context),
-    db: Session = Depends(get_db),
-) -> BatchMergeResponse:
-    """Gộp nhiều lô thành một lô mới."""
-    if len(payload.items) < 2:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cần ít nhất 2 lô để thực hiện thao tác gộp.",
-        )
-
-    # 1. Thu thập và kiểm tra tính hợp lệ của từng lô mẹ
-    parent_batches: list[Batch] = []
-    parent_contributions: list[dict] = []
-    total_merged_qty = 0.0
-
-    for item in payload.items:
-        p_batch = db.get(Batch, item.batch_id)
-        if not p_batch:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Không tìm thấy lô mẹ có ID #{item.batch_id}.",
-            )
-
-        # Kiểm tra khối lượng đóng góp
-        if item.quantity <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Khối lượng gộp từ lô #{item.batch_id} phải lớn hơn 0.",
-            )
-
-        if item.quantity > p_batch.quantity:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Khối lượng yêu cầu lấy từ lô #{item.batch_id} ({item.quantity} kg) "
-                    f"vượt quá khối lượng còn lại của lô ({p_batch.quantity} kg)."
-                ),
-            )
-
-        # Trừ khối lượng của lô mẹ
-        p_batch.quantity = round(p_batch.quantity - item.quantity, 4)
-        parent_batches.append(p_batch)
-        total_merged_qty = round(total_merged_qty + item.quantity, 4)
-
-        p_code = p_batch.batch_code or f"LOT-{p_batch.id:04d}"
-        parent_contributions.append({
-            "id": p_batch.id,
-            "batch_code": p_code,
-            "quantity": item.quantity,
-            "remaining_quantity": p_batch.quantity,
-        })
-
-    # 2. Tạo lô gộp mới
-    primary_parent = parent_batches[0]
-    new_product_name = payload.product_name or primary_parent.product_name
-    new_batch_code = generate_unique_batch_code(db, prefix="LOT-MERGE")
-
-    merged_batch = Batch(
-        farm_id=primary_parent.farm_id,
-        product_name=new_product_name,
-        quantity=total_merged_qty,
-        harvest_date=primary_parent.harvest_date,
-        batch_code=new_batch_code,
-        current_holder_org=primary_parent.current_holder_org,
-    )
-    db.add(merged_batch)
-
-    try:
-        db.flush()
-    except SQLAlchemyError as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Không thể tạo lô gộp mới trong cơ sở dữ liệu.",
-        ) from exc
-
-    now_iso = datetime.now(timezone.utc).isoformat()
-    org_name = get_tenant_org()
-    actor_name = current_user.username
-
-    # 3. Ghi nhận sự kiện MERGE trên lô gộp mới (nêu đầy đủ các lô mẹ và khối lượng lấy từ mỗi lô)
-    parent_codes_list = [pc["batch_code"] for pc in parent_contributions]
-    merged_event_payload = {
-        "action": "MERGE",
-        "batch_id": merged_batch.id,
-        "batch_code": new_batch_code,
-        "total_merged_quantity": total_merged_qty,
-        "parent_batches": parent_contributions,
-        "parent_batch_codes": parent_codes_list,
-        "note": payload.note,
-    }
-    merged_payload_str = json.dumps(merged_event_payload, ensure_ascii=False)
-    merged_prev_hash = "0" * 64
-    merged_h = compute_event_hash(
-        event_type="MERGE",
-        payload=merged_payload_str,
-        actor=actor_name,
-        organization=org_name,
-        timestamp=now_iso,
-        previous_hash=merged_prev_hash,
-    )
-    merged_event = BatchEvent(
-        batch_id=merged_batch.id,
-        event_type="MERGE",
-        payload=merged_payload_str,
-        actor=actor_name,
-        organization=org_name,
-        timestamp=now_iso,
-        hash=merged_h,
-        previous_hash=merged_prev_hash,
-    )
-    db.add(merged_event)
-
-    # 4. Ghi nhận sự kiện MERGE_PARENT vào dòng thời gian của TỪNG lô mẹ
-    for contrib, p_batch in zip(parent_contributions, parent_batches):
-        last_ev_stmt = (
-            select(BatchEvent)
-            .where(BatchEvent.batch_id == p_batch.id)
-            .order_by(BatchEvent.id.desc())
-            .limit(1)
-        )
-        last_ev = db.scalars(last_ev_stmt).first()
-        p_prev_hash = last_ev.hash if last_ev else "0" * 64
-
-        p_ev_payload = {
-            "action": "MERGED_INTO",
-            "parent_batch_id": p_batch.id,
-            "parent_batch_code": contrib["batch_code"],
-            "contributed_quantity": contrib["quantity"],
-            "remaining_quantity": p_batch.quantity,
-            "target_merged_batch_id": merged_batch.id,
-            "target_merged_batch_code": new_batch_code,
-        }
-        p_ev_payload_str = json.dumps(p_ev_payload, ensure_ascii=False)
-        p_ev_h = compute_event_hash(
-            event_type="MERGE_PARENT",
-            payload=p_ev_payload_str,
-            actor=actor_name,
-            organization=org_name,
-            timestamp=now_iso,
-            previous_hash=p_prev_hash,
-        )
-        p_event = BatchEvent(
-            batch_id=p_batch.id,
-            event_type="MERGE_PARENT",
-            payload=p_ev_payload_str,
-            actor=actor_name,
-            organization=org_name,
-            timestamp=now_iso,
-            hash=p_ev_h,
-            previous_hash=p_prev_hash,
-        )
-        db.add(p_event)
-
-    try:
-        db.commit()
-    except SQLAlchemyError as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Lỗi khi lưu giao dịch gộp lô.",
-        ) from exc
-
-    db.refresh(merged_batch)
-    for pb in parent_batches:
-        db.refresh(pb)
-
-    return BatchMergeResponse(
-        merged_batch=BatchResponse.model_validate(merged_batch),
-        parent_batches=[BatchResponse.model_validate(pb) for pb in parent_batches],
-        message=f"Đã gộp thành công {len(parent_batches)} lô mẹ vào lô mới #{merged_batch.id} ({new_batch_code}).",
-    )
 
 
 # =========================================================================

@@ -20,11 +20,12 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
 # Testing & Coverage
 .pytest_cache/
 .coverage
 htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # Virtual environments
 .venv/
@@ -35,11 +36,14 @@ env/
 
 # Database
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
 
-# Temp files
+# Temp files & OS
 nobreak
 *.log
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/

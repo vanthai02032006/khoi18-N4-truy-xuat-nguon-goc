@@ -195,7 +195,14 @@
               <span>ĐĂNG NHẬP HỆ THỐNG</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             </button>
+
+            <div style="margin-top: 14px; text-align: center;">
+              <button id="btn-open-accept-modal" type="button" class="btn-action-ghost" style="font-size: 13px; width: 100%; border-style: dashed;">
+                🔑 Được mời vào tổ chức? Kích hoạt tài khoản tại đây
+              </button>
+            </div>
           </form>
+
         </div>
       </div>
     </section>
@@ -544,28 +551,81 @@
               <span>Tiến hành gộp lô</span>
             </button>
           </div>
+          </div>
+
+          <!-- Thanh tìm kiếm và bộ lọc sản phẩm (SCRUM-50) -->
+          <div class="table-toolbar">
+            <div class="search-box">
+              <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input id="batch-search-input" type="search" class="search-input"
+                     placeholder="Tìm theo mã lô (VD: 1, 2) hoặc tên cây trồng / sản phẩm..."
+                     autocomplete="off" />
+              <button id="batch-search-clear" type="button" class="btn-clear-search" title="Xoá ô tìm kiếm" hidden>&times;</button>
+            </div>
+
+            <div class="filter-box">
+              <label for="batch-filter-product" class="filter-label">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                <span>Bộ lọc sản phẩm:</span>
+              </label>
+              <select id="batch-filter-product" class="filter-select">
+                <option value="">— Tất cả sản phẩm nông sản —</option>
+              </select>
+            </div>
+
+            <button id="btn-reset-filters" type="button" class="btn-reset-filter" title="Đặt lại bộ lọc" hidden>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              <span>Đặt lại</span>
+            </button>
+          </div>
+
+          <!-- Loading State (SCRUM-50) -->
+          <div id="batch-loading" class="table-state-box table-state-loading" hidden>
+            <div class="spinner-ring" aria-hidden="true"></div>
+            <span>Đang tải danh sách lô nông sản từ máy chủ...</span>
+          </div>
+
+          <!-- Error State (SCRUM-50) -->
+          <div id="batch-error" class="table-state-box table-state-error" hidden>
+            <div class="error-icon-wrap" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <div class="error-content">
+              <strong id="batch-error-title">Không thể tải danh sách lô</strong>
+              <p id="batch-error-desc">Vui lòng kiểm tra kết nối mạng hoặc thử lại.</p>
+            </div>
+            <button id="batch-btn-retry" type="button" class="btn-retry">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              <span>Thử lại</span>
+            </button>
+          </div>
+
+          <!-- Results Table -->
           <div class="responsive-table">
-            <table class="data-table">
+            <table class="data-table data-table--clickable">
               <thead>
                 <tr>
                   <th style="width: 140px;">MÃ LÔ</th>
                   <th>THỬA ĐẤT XUẤT XỨ</th>
                   <th>CÂY TRỒNG / NÔNG SẢN</th>
-                  <th class="is-right" style="width: 150px;">SẢN LƯỢNG (KG)</th>
+                  <th class="is-right" style="width: 130px;">SẢN LƯỢNG (KG)</th>
+                  <th class="is-right" style="width: 130px;">CÒN LẠI (KG)</th>
+                  <th style="width: 150px;">TỔ CHỨC ĐANG GIỮ</th>
                   <th style="width: 130px;">NGÀY THU HOẠCH</th>
-                  <th style="width: 170px;">TỔ CHỨC ĐANG GIỮ</th>
                   <th class="is-center" style="width: 160px;">THAO TÁC</th>
                 </tr>
               </thead>
               <tbody id="batch-table-body"></tbody>
             </table>
           </div>
+
+          <!-- Empty State (SCRUM-50) -->
           <div id="batch-empty" class="empty-placeholder" hidden>
             <div class="empty-icon-wrap">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
             </div>
-            <h4>Chưa có lô thu hoạch nào</h4>
-            <p>Vui lòng ghi nhận lô thu hoạch mới bằng biểu mẫu phía trên.</p>
+            <h4 id="batch-empty-title">Không tìm thấy lô nông sản nào</h4>
+            <p id="batch-empty-desc">Không có kết quả nào phù hợp với từ khoá tìm kiếm hoặc bộ lọc hiện tại.</p>
           </div>
         </div>
       </section>
@@ -1041,8 +1101,11 @@
                 <tr>
                   <th style="width: 80px;">ID</th>
                   <th>TÊN TÀI KHOẢN</th>
+                  <th>EMAIL</th>
                   <th>VAI TRÒ (ROLE)</th>
-                  <th>TRẠNG THÁI BẢO MẬT</th>
+                  <th>TỔ CHỨC TRỰC THUỘC</th>
+                  <th>TRẠNG THÁI</th>
+                  <th style="width: 140px;">THAO TÁC</th>
                 </tr>
               </thead>
               <tbody id="user-table-body"></tbody>
@@ -1053,7 +1116,438 @@
           </div>
         </div>
       </section>
+
+      <!-- ================= Section 4: Giám Sát Chuỗi Lạnh & Tổng Hợp Nhiệt Độ (SCRUM-126) ================= -->
+      <section id="cold-chain-card" class="content-card">
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar" style="background: rgba(14, 165, 233, 0.12); color: #0284c7;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">4. Giám sát chuỗi lạnh & Tổng hợp nhiệt độ (SCRUM-126)</h3>
+              <p class="card-subtitle">
+                Đo lường nhiệt độ cảm biến IoT. Tổng hợp số đo cũ hơn 30 ngày thành MIN, MAX, AVG theo giờ; <strong>bảo lưu nguyên vẹn 100% các số đo vi phạm ngưỡng</strong>.
+              </p>
+            </div>
+          </div>
+          <div class="header-right" id="coldchain-admin-actions" hidden>
+            <button id="btn-run-aggregate" class="action-btn" type="button" title="Tổng hợp số đo cũ hơn 30 ngày">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              <span>Tổng hợp dữ liệu cũ (>30 ngày)</span>
+            </button>
+          </div>
+        </header>
+
+        <!-- Form ghi nhận số đo nhanh -->
+        <form id="temp-reading-form" class="form-wrapper">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="temp-sensor-id" class="input-label">Mã cảm biến (Sensor ID) <span class="required">*</span></label>
+              <input id="temp-sensor-id" type="text" maxlength="50" required placeholder="Ví dụ: SENSOR_KHO_01" value="SENSOR_KHO_01" />
+            </div>
+            <div class="form-group">
+              <label for="temp-value" class="input-label">Nhiệt độ đo được (°C) <span class="required">*</span></label>
+              <input id="temp-value" type="number" step="0.1" required placeholder="Ví dụ: 5.5" />
+            </div>
+            <div class="form-group">
+              <label for="temp-batch-id" class="input-label">Lô nông sản giám sát</label>
+              <select id="temp-batch-id">
+                <option value="">-- Cảm biến kho chung (không gắn lô) --</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button id="btn-submit-reading" type="submit" class="submit-btn" style="width: auto; padding: 10px 24px;">
+              <span>Ghi nhận số đo cảm biến</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- Danh sách vi phạm đang được bảo lưu nguyên vẹn -->
+        <div style="margin: 20px 24px 10px;">
+          <h4 style="font-size: 14px; font-weight: 700; color: #dc2626; display: flex; align-items: center; gap: 8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            Số đo thô vi phạm ngưỡng (Được bảo lưu vĩnh viễn phục vụ điều tra)
+          </h4>
+        </div>
+        <div class="table-container">
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>THỜI GIAN ĐO</th>
+                  <th>CẢM BIẾN</th>
+                  <th>LÔ HÀNG</th>
+                  <th>NHIỆT ĐỘ</th>
+                  <th>LÝ DO VI PHẠM</th>
+                </tr>
+              </thead>
+              <tbody id="violation-table-body"></tbody>
+            </table>
+          </div>
+          <div id="violation-empty" class="empty-placeholder">
+            <p>Chưa có vi phạm nhiệt độ nào được ghi nhận. Chuỗi lạnh ổn định.</p>
+          </div>
+        </div>
+
+        <!-- Bảng tổng hợp nhiệt độ theo giờ -->
+        <div style="margin: 20px 24px 10px;">
+          <h4 style="font-size: 14px; font-weight: 700; color: var(--slate-700); display: flex; align-items: center; gap: 8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Dữ liệu tổng hợp theo giờ (Hourly Summaries - MIN, MAX, AVG)
+          </h4>
+        </div>
+        <div class="table-container">
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>KHUNG GIỜ</th>
+                  <th>CẢM BIẾN</th>
+                  <th>LÔ HÀNG</th>
+                  <th>MIN (°C)</th>
+                  <th>MAX (°C)</th>
+                  <th>AVG (°C)</th>
+                  <th>SỐ MẪU</th>
+                  <th>VI PHẠM</th>
+                </tr>
+              </thead>
+              <tbody id="summary-table-body"></tbody>
+            </table>
+          </div>
+          <div id="summary-empty" class="empty-placeholder">
+            <p>Chưa có bản ghi tổng hợp theo giờ nào.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= Section 5: Kiểm Định Toàn Vẹn Dữ Liệu S-12 (SCRUM-136) ================= -->
+      <section id="integrity-card" class="content-card">
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar" style="background: rgba(245, 158, 11, 0.12); color: #d97706;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">5. Job S-12 kiểm tra tính toàn vẹn chuỗi dữ liệu (SCRUM-136)</h3>
+              <p class="card-subtitle">
+                Quy tắc nghiệp vụ kiểm định chuỗi băm SHA-256, liên kết phả hệ, khóa ngoại và phát hiện bất thường sản lượng.
+              </p>
+            </div>
+          </div>
+          <div class="header-right" id="integrity-admin-actions" hidden>
+            <button id="btn-run-integrity" class="action-btn" type="button" title="Chạy kiểm định ngay">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span>Chạy kiểm định S-12</span>
+            </button>
+          </div>
+        </header>
+
+        <!-- Trạng thái lần chạy gần nhất -->
+        <div style="padding: 16px 24px; background: rgba(248, 250, 252, 0.8); border-bottom: 1px solid var(--card-border); display: flex; flex-wrap: wrap; gap: 20px; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span style="font-weight: 600; font-size: 14px;">Trạng thái lần quét gần nhất:</span>
+            <span id="integrity-status-badge" class="badge-pill badge-pill--safe">ĐANG TẢI...</span>
+          </div>
+          <div style="display: flex; gap: 16px; font-size: 13px; color: var(--slate-600);">
+            <span>Thời điểm quét: <strong id="integrity-timestamp" class="font-mono">—</strong></span>
+            <span>Bản ghi đã quét: <strong id="integrity-scanned">—</strong></span>
+            <span>Số lỗi phát hiện: <strong id="integrity-errors" style="color: #dc2626;">0</strong></span>
+          </div>
+        </div>
+
+        <!-- Chi tiết các vi phạm -->
+        <div class="table-container">
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 180px;">PHÂN LOẠI LỖI</th>
+                  <th style="width: 140px;">BẢNG DỮ LIỆU</th>
+                  <th style="width: 120px;">MÃ BẢN GHI</th>
+                  <th>CHI TIẾT SAI LỆCH PHÁT HIỆN ĐƯỢC</th>
+                </tr>
+              </thead>
+              <tbody id="integrity-table-body"></tbody>
+            </table>
+          </div>
+          <div id="integrity-empty" class="empty-placeholder">
+            <p style="color: #059669; font-weight: 500;">✓ Toàn bộ chuỗi dữ liệu đạt tính toàn vẹn 100%. Không phát hiện sai lệch.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= Section 6: Sao Lưu & Diễn Tập Khôi Phục (SCRUM-138) ================= -->
+      <section id="backup-card" class="content-card" hidden>
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar" style="background: rgba(16, 185, 129, 0.12); color: #059669;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">6. Sao lưu dữ liệu & Diễn tập khôi phục (SCRUM-138)</h3>
+              <p class="card-subtitle">
+                SQLite Online Backup API nhất quán, lưu trữ ngoài máy chủ, duy trì 14 bản gần nhất và diễn tập khôi phục DB tạm.
+              </p>
+            </div>
+          </div>
+          <div class="header-right">
+            <button id="btn-run-backup" class="action-btn" type="button" title="Sao lưu CSDL ngay">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <span>Sao lưu Online ngay</span>
+            </button>
+            <button id="btn-run-rehearsal" class="action-btn" type="button" title="Diễn tập khôi phục DB tạm">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              <span>Diễn tập khôi phục</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="table-container">
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 80px;">ID</th>
+                  <th>THỜI ĐIỂM SAO LƯU</th>
+                  <th>TRẠNG THÁI</th>
+                  <th>DUNG LƯỢNG</th>
+                  <th>MÃ BĂM CHECKSUM (SHA-256)</th>
+                  <th>DIỄN TẬP</th>
+                  <th style="width: 140px;">THAO TÁC</th>
+                </tr>
+              </thead>
+              <tbody id="backup-table-body"></tbody>
+            </table>
+          </div>
+          <div id="backup-empty" class="empty-placeholder">
+            <p>Chưa có bản sao lưu nào. Hãy bấm "Sao lưu Online ngay" để tạo bản sao lưu đầu tiên.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= Section 7: Mời Thành Viên & Phân Quyền Tổ Chức (SCRUM-91) ================= -->
+      <section id="invitation-card" class="content-card" hidden>
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar" style="background: rgba(99, 102, 241, 0.12); color: #4f46e5;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">7. Mời nhân viên & Phân quyền tổ chức (SCRUM-91)</h3>
+              <p class="card-subtitle">
+                Mời nhân viên tham gia tổ chức qua email, token một lần, thời hạn 48h, cách ly dữ liệu và kiểm toán thao tác.
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <!-- Form gửi lời mời -->
+        <form id="invite-form" class="form-wrapper">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="invite-email" class="input-label">Email người nhận <span class="required">*</span></label>
+              <input id="invite-email" type="email" required placeholder="nhanvien@hoptacxa.vn" />
+            </div>
+            <div class="form-group">
+              <label for="invite-role" class="input-label">Vai trò chỉ định <span class="required">*</span></label>
+              <select id="invite-role">
+                <option value="farmer">Farmer (Nông dân / Quản lý nông sản)</option>
+                <option value="admin">Admin (Quản trị viên tổ chức)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="invite-expires" class="input-label">Thời hạn lời mời (giờ)</label>
+              <input id="invite-expires" type="number" min="1" max="168" value="48" />
+            </div>
+          </div>
+          <div class="form-actions">
+            <button id="btn-submit-invite" type="submit" class="submit-btn" style="width: auto; padding: 10px 24px;">
+              <span>Gửi lời mời tham gia</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- Danh sách lời mời đang chờ -->
+        <div style="margin: 20px 24px 10px;">
+          <h4 style="font-size: 14px; font-weight: 700; color: var(--slate-700);">Danh sách lời mời đã gửi</h4>
+        </div>
+        <div class="table-container">
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>EMAIL NGƯỜI NHẬN</th>
+                  <th>VAI TRÒ</th>
+                  <th>TỔ CHỨC</th>
+                  <th>HẾT HẠN LÚC</th>
+                  <th>TRẠNG THÁI</th>
+                  <th style="width: 120px;">THAO TÁC</th>
+                </tr>
+              </thead>
+              <tbody id="invite-table-body"></tbody>
+            </table>
+          </div>
+          <div id="invite-empty" class="empty-placeholder">
+            <p>Chưa có lời mời nào đang chờ xử lý.</p>
+          </div>
+        </div>
+
+        <!-- Nhật ký kiểm toán tổ chức -->
+        <div style="margin: 20px 24px 10px;">
+          <h4 style="font-size: 14px; font-weight: 700; color: var(--slate-700);">Nhật ký kiểm toán thành viên (Audit Trail)</h4>
+        </div>
+        <div class="table-container">
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 170px;">THỜI GIAN</th>
+                  <th>NGƯỜI THỰC HIỆN</th>
+                  <th>HÀNH ĐỘNG</th>
+                  <th>ĐỐI TƯỢNG</th>
+                  <th>CHI TIẾT</th>
+                </tr>
+              </thead>
+              <tbody id="audit-table-body"></tbody>
+            </table>
+          </div>
+          <div id="audit-empty" class="empty-placeholder">
+            <p>Chưa có hoạt động kiểm toán nào.</p>
+          </div>
+        </div>
+      </section>
+
     </div>
+
+    <!-- ==================== MODAL KÍCH HOẠT LỜI MỜI (SCRUM-91) ==================== -->
+    <div id="invite-modal" class="modal-overlay" hidden aria-hidden="true" role="dialog" aria-modal="true">
+      <div class="modal-dialog" style="max-width: 500px;">
+        <header class="modal-header">
+          <div class="modal-header__info">
+            <span class="tag-section">Kích hoạt tài khoản thành viên (SCRUM-91)</span>
+            <h3 class="modal-title">Thiết lập tài khoản từ lời mời</h3>
+          </div>
+          <button id="modal-invite-close" class="modal-close" type="button" title="Đóng">&times;</button>
+        </header>
+
+        <form id="invite-accept-form" style="padding: 24px;">
+          <div class="form-group" style="margin-bottom: 16px;">
+            <label for="accept-token" class="input-label">Mã token lời mời <span class="required">*</span></label>
+            <input id="accept-token" type="text" required placeholder="Nhập chuỗi token từ email hoặc link mời" />
+          </div>
+          <div class="form-group" style="margin-bottom: 16px;">
+            <label for="accept-username" class="input-label">Tên đăng nhập mong muốn <span class="required">*</span></label>
+            <input id="accept-username" type="text" minlength="3" maxlength="50" required placeholder="Ví dụ: nguyenvanan" />
+          </div>
+          <div class="form-group" style="margin-bottom: 24px;">
+            <label for="accept-password" class="input-label">Mật khẩu mới <span class="required">*</span></label>
+            <input id="accept-password" type="password" minlength="6" required placeholder="Nhập mật khẩu (tối thiểu 6 ký tự)" />
+          </div>
+          <button id="btn-submit-accept" type="submit" class="submit-btn" style="width: 100%;">
+            <span>Xác nhận & Kích hoạt tài khoản</span>
+          </button>
+        </form>
+      </div>
+    </div>
+
+
+    <!-- ==================== MODAL CHI TIẾT LÔ (SCRUM-50) ==================== -->
+    <div id="batch-modal" class="modal-overlay" hidden aria-hidden="true" role="dialog" aria-modal="true">
+      <div class="modal-dialog">
+        <header class="modal-header">
+          <div class="modal-header__info">
+            <span class="tag-section">Chi tiết lô & Phả hệ truy xuất (SCRUM-50 / SCRUM-70)</span>
+            <h3 id="modal-batch-title" class="modal-title">Thông tin lô nông sản #...</h3>
+          </div>
+          <button id="modal-batch-close" class="modal-close" type="button" title="Đóng modal">&times;</button>
+        </header>
+
+        <div class="modal-body">
+          <div id="modal-batch-loading" class="table-state-box table-state-loading" hidden>
+            <div class="spinner-ring"></div>
+            <span>Đang tải thông tin chi tiết lô...</span>
+          </div>
+
+          <div id="modal-batch-content">
+            <!-- Grid thông tin thuộc tính -->
+            <div class="detail-grid">
+              <div class="detail-item">
+                <span class="detail-label">Mã định danh lô:</span>
+                <strong id="modal-batch-id" class="detail-value font-mono">—</strong>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Cây trồng / Nông sản:</span>
+                <strong id="modal-batch-product" class="detail-value">—</strong>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Thửa đất xuất xứ:</span>
+                <span id="modal-batch-farm" class="detail-value">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Tổ chức nắm giữ:</span>
+                <span id="modal-batch-org" class="detail-value badge-pill">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Sản lượng ban đầu:</span>
+                <span id="modal-batch-qty" class="detail-value">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Số lượng tồn còn lại:</span>
+                <strong id="modal-batch-rem" class="detail-value text-safe">—</strong>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Ngày thu hoạch / Gộp:</span>
+                <span id="modal-batch-date" class="detail-value">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Tiêu chuẩn canh tác:</span>
+                <span class="detail-value badge-pill badge-pill--safe">VietGAP Chứng Nhận</span>
+              </div>
+            </div>
+
+            <!-- Phả hệ nguồn gốc (Genealogy) -->
+            <div class="genealogy-section">
+              <h4 class="genealogy-heading">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                <span>Cây phả hệ nguồn gốc (Genealogy Tree)</span>
+              </h4>
+
+              <div class="genealogy-content">
+                <div class="genealogy-block">
+                  <span class="g-label">Lô mẹ kế thừa (Parent Batches):</span>
+                  <div id="modal-parent-relations" class="g-list">
+                    <span class="text-muted">Lô gốc thu hoạch trực tiếp từ thửa đất (Root Batch)</span>
+                  </div>
+                </div>
+
+                <div class="genealogy-block">
+                  <span class="g-label">Lô con sinh ra từ lô này (Child Batches):</span>
+                  <div id="modal-child-relations" class="g-list">
+                    <span class="text-muted">Chưa có lô con phái sinh</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Mã băm kiểm định SHA-256 (SCRUM-40) -->
+            <div class="hash-section">
+              <div class="hash-header">
+                <span class="g-label">Mã băm kiểm định tính bất biến (SHA-256 Canonical Hash):</span>
+                <span class="badge-pill badge-pill--mono">SCRUM-40</span>
+              </div>
+              <code id="modal-batch-hash" class="hash-display">—</code>
+            </div>
+          </div>
+        </div>
+
+        <footer class="modal-footer">
+          <button id="modal-batch-btn-close" type="button" class="btn-action-ghost">Đóng</button>
+        </footer>
+      </div>
+    </div>
+
   </main>
 
   <!-- ======================== MODAL TÁCH LÔ NHIỀU DÒNG (T-40) ======================== -->
