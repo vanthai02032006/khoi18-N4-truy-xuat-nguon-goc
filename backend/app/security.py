@@ -23,6 +23,9 @@ production** (Basic gửi mật khẩu ở mọi request nên bắt buộc phả
 SHA-256 không salt nên không chống được brute-force - production nên dùng
 ``bcrypt``/``argon2`` qua ``passlib`` và chuyển sang JWT/OAuth2).
 """
+from __future__ import annotations
+
+from __future__ import annotations
 
 import hashlib
 from hmac import compare_digest
@@ -57,6 +60,30 @@ def hash_password(raw_password: str) -> str:
         nên không chống được brute-force/rainbow table.
     """
     return hashlib.sha256(raw_password.encode("utf-8")).hexdigest()
+
+
+def compute_event_hash(
+    event_type: str,
+    payload: str,
+    actor: str,
+    organization: str,
+    timestamp: str,
+    previous_hash: str,
+) -> str:
+    """Tính toán mã băm SHA-256 bảo vệ tính toàn vẹn sự kiện (SCRUM-40 / T-24).
+
+    Nội dung được chuẩn hoá, nối cùng previous_hash tạo thành chuỗi liên kết mật mã
+    không thể sửa lén (Cryptographic hash-chain).
+    """
+    import json
+    try:
+        data = json.loads(payload)
+        canonical_payload = json.dumps(data, sort_keys=True, separators=(',', ':'))
+    except Exception:
+        canonical_payload = payload.strip()
+
+    raw_string = f"{previous_hash}|{event_type}|{canonical_payload}|{actor}|{organization}|{timestamp}"
+    return hashlib.sha256(raw_string.encode("utf-8")).hexdigest()
 
 
 def verify_password(raw_password: str, hashed_password: str) -> bool:
@@ -166,13 +193,38 @@ def require_farmer(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+def require_inspector(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency: cho phép **inspector và admin** (Cán bộ kiểm tra & Quản trị viên)."""
+    from app.models import ROLE_INSPECTOR
+    if current_user.role not in (ROLE_INSPECTOR, ROLE_ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ cán bộ kiểm tra (inspector) hoặc admin được phép thực hiện chức năng này.",
+        )
+    return current_user
+
+
+def require_farm_view(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency: cho phép farmer, admin, và inspector xem danh sách vùng trồng."""
+    from app.models import ROLE_ADMIN, ROLE_FARMER, ROLE_INSPECTOR
+    if current_user.role not in (ROLE_FARMER, ROLE_ADMIN, ROLE_INSPECTOR):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ tài khoản nông dân, thanh tra hoặc admin mới có quyền xem danh sách vùng trồng.",
+        )
+    return current_user
+
+
 __all__ = [
     "authenticate_user",
     "basic_scheme",
+    "compute_event_hash",
     "get_current_user",
     "hash_password",
     "require_admin",
+    "require_farm_view",
     "require_farmer",
+    "require_inspector",
     "verify_password",
 ]
 
