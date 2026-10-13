@@ -105,6 +105,21 @@ class UserResponse(BaseModel):
     id: int = Field(..., description="Mã định danh tài khoản.", examples=[1])
     username: str = Field(..., description="Tên đăng nhập.", examples=["admin"])
     role: str = Field(..., description="Vai trò: `admin` hoặc `farmer`.", examples=["admin"])
+    organization_id: str | None = Field(
+        default=None,
+        description="Tổ chức / đơn vị của tài khoản.",
+        examples=["ORG_ADMIN"],
+    )
+    email: str | None = Field(
+        default=None,
+        description="Địa chỉ email tài khoản.",
+        examples=["admin@agritrace.vn"],
+    )
+    is_active: bool = Field(
+        default=True,
+        description="Trạng thái tài khoản (True: đang hoạt động, False: đã vô hiệu hoá).",
+        examples=[True],
+    )
 
 
 # ------------------------------------------------------------------ Farm ---
@@ -313,7 +328,7 @@ class BatchResponse(BaseModel):
     )
 
     id: int = Field(..., description="Mã định danh lô nông sản.", examples=[1])
-    batch_code: str = Field(..., description="Mã lô sinh tự động (Unique Batch Code).", examples=["LOT-20261007-0001"])
+    batch_code: str | None = Field(default=None, description="Mã lô sinh tự động (Unique Batch Code).", examples=["LOT-20261007-0001"])
     farm_id: int = Field(..., description="ID vùng trồng xuất xứ.", examples=[1])
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
     quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
@@ -452,22 +467,23 @@ class ParentBatchItem(BaseModel):
 class ParentRemainingResponse(BaseModel):
     """Số lượng còn lại của một lô mẹ sau khi trích (SCRUM-60)."""
     parent_batch_id: int
-    product_name: str
     remaining_quantity: float
+    product_name: str | None = None
 
 class BatchRelationResponse(BaseModel):
     """Thông tin liên kết phả hệ cha - con (SCRUM-60)."""
+    model_config = ConfigDict(from_attributes=True)
     id: int
     parent_batch_id: int
     child_batch_id: int
     used_quantity: float
-    created_at: datetime
+    created_at: datetime | str | None = None
 
 class BatchDetailResponse(BaseModel):
     """Thông tin chi tiết một lô nông sản kèm phả hệ cha - con (SCRUM-70)."""
     model_config = ConfigDict(from_attributes=True)
     id: int
-    batch_code: str
+    batch_code: str | None = None
     farm_id: int
     product_name: str
     quantity: float
@@ -495,14 +511,18 @@ class BatchMergeRequest(BaseModel):
     harvest_date: date | None = Field(default=None, description="Ngày thu hoạch.")
     product_name: str | None = Field(default=None, max_length=255, description="Tên sản phẩm của lô mới (nếu không truyền sẽ lấy theo lô mẹ đầu tiên).")
     note: str | None = Field(default=None, max_length=500, description="Ghi chú mẻ gộp.")
+    organization_id: str | None = Field(default=None, max_length=50, description="Tổ chức nắm giữ lô mới.")
 
 
 class BatchMergeResponse(BaseModel):
-    """Kết quả sau khi gộp lô thành công."""
+    """Kết quả sau khi gộp lô thành công (hỗ trợ cả schema SCRUM-60 và tổng hợp)."""
 
-    merged_batch: BatchResponse
-    parent_batches: list[BatchResponse]
-    message: str
+    merged_batch: BatchResponse | None = None
+    parent_batches: list[BatchResponse] = Field(default_factory=list)
+    message: str = "Gộp lô thành công"
+    new_batch: BatchResponse | None = None
+    relations: list[BatchRelationResponse] = Field(default_factory=list)
+    parent_remainings: list[ParentRemainingResponse] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------- Batch Handover ---

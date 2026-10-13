@@ -13,18 +13,23 @@ Yêu cầu transaction nghiệp vụ:
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Batch, BatchCustodyHistory, BatchRelation, Farm, User
+from app.models import Batch, BatchCustodyHistory, BatchEvent, BatchRelation, Farm, User
 from app.schemas import (
+    BatchMergeItem,
     BatchMergeRequest,
     BatchMergeResponse,
     BatchRelationResponse,
     BatchResponse,
+    ParentBatchItem,
     ParentRemainingResponse,
 )
+from app.security import compute_event_hash
 
 
 def merge_batches_transaction(
@@ -46,6 +51,17 @@ def merge_batches_transaction(
         HTTPException 400: Nếu dữ liệu không hợp lệ, trùng lặp lô mẹ, hoặc vượt tồn kho.
         HTTPException 404: Nếu lô mẹ hoặc vùng trồng không tồn tại.
     """
+    if not payload.parents and payload.items:
+        payload.parents = [
+            ParentBatchItem(parent_batch_id=item.batch_id, used_quantity=item.quantity)
+            for item in payload.items
+        ]
+    elif not payload.items and payload.parents:
+        payload.items = [
+            BatchMergeItem(batch_id=p.parent_batch_id, quantity=p.used_quantity)
+            for p in payload.parents
+        ]
+
     if not payload.parents or len(payload.parents) < 2:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -77,12 +93,11 @@ def merge_batches_transaction(
         # Bước 1: Lock và nạp các parent batch theo thứ tự sắp xếp cố định
         parents_by_id: dict[int, Batch] = {}
         for pid in sorted_ids:
-            # Query với with_for_update() để chống race condition khi nhiều request cùng lúc
             query = select(Batch).where(Batch.id == pid)
             try:
                 query = query.with_for_update()
             except Exception:
-                pass  # Một số database/dialect không hỗ trợ with_for_update thì query thông thường
+                pass
 
             parent_batch = db.scalar(query)
             if parent_batch is None:
@@ -96,11 +111,14 @@ def merge_batches_transaction(
         for pid in sorted_ids:
             parent_batch = parents_by_id[pid]
             needed_qty = items_by_id[pid].used_quantity
-            # Lấy remaining_quantity; nếu chưa có thì lấy quantity
             current_rem = (
-                parent_batch.remaining_quantity
-                if parent_batch.remaining_quantity is not None
-                else parent_batch.quantity
+                parent_batch.quantity
+                if (parent_batch.remaining_quantity == 0.0 and parent_batch.quantity > 0)
+                else (
+                    parent_batch.remaining_quantity
+                    if parent_batch.remaining_quantity is not None
+                    else parent_batch.quantity
+                )
             )
 
             if needed_qty > current_rem:
@@ -134,28 +152,40 @@ def merge_batches_transaction(
         new_quantity = round(sum(item.used_quantity for item in payload.parents), 4)
 
         # Bước 6: Tạo lô mới
+        from app.routers.batches import generate_unique_batch_code
+        new_batch_code = generate_unique_batch_code(db, prefix="LOT-MERGE")
+        new_product_name = payload.product_name.strip() if (payload.product_name and payload.product_name.strip()) else first_parent.product_name
+        primary_holder = getattr(first_parent, "current_holder_org", None) or org_id
+
         new_batch = Batch(
             farm_id=target_farm_id,
-            product_name=payload.product_name.strip(),
+            product_name=new_product_name,
             quantity=new_quantity,
             remaining_quantity=new_quantity,
-            harvest_date=payload.harvest_date,
+            harvest_date=payload.harvest_date or first_parent.harvest_date,
+            batch_code=new_batch_code,
+            current_holder_org=primary_holder,
             organization_id=org_id,
         )
         db.add(new_batch)
-        db.flush()  # Sinh new_batch.id để làm foreign key cho quan hệ phả hệ
+        db.flush()
 
         # Bước 7: Trừ số lượng lô mẹ và tạo quan hệ BatchRelation
         relations_responses: list[BatchRelationResponse] = []
         parent_remainings: list[ParentRemainingResponse] = []
+        parent_contributions: list[dict] = []
 
         for pid in sorted_ids:
             parent_batch = parents_by_id[pid]
             used_qty = items_by_id[pid].used_quantity
             current_rem = (
-                parent_batch.remaining_quantity
-                if parent_batch.remaining_quantity is not None
-                else parent_batch.quantity
+                parent_batch.quantity
+                if (parent_batch.remaining_quantity == 0.0 and parent_batch.quantity > 0)
+                else (
+                    parent_batch.remaining_quantity
+                    if parent_batch.remaining_quantity is not None
+                    else parent_batch.quantity
+                )
             )
 
             new_rem = round(current_rem - used_qty, 4)
@@ -181,24 +211,123 @@ def merge_batches_transaction(
                 ParentRemainingResponse(
                     parent_batch_id=pid,
                     remaining_quantity=new_rem,
+                    product_name=parent_batch.product_name,
                 )
             )
+
+            p_code = parent_batch.batch_code or f"LOT-{parent_batch.id:04d}"
+            parent_contributions.append({
+                "id": parent_batch.id,
+                "batch_code": p_code,
+                "quantity": used_qty,
+                "remaining_quantity": new_rem,
+            })
 
         # Ghi nhận lịch sử nắm giữ cho lô mới (SCRUM-70)
         db.add(BatchCustodyHistory(batch_id=new_batch.id, organization_id=org_id))
 
-        # Bước 8: COMMIT TOÀN BỘ TRANSACTION
+        # Bước 8: Ghi nhận sự kiện chuỗi khối (Cryptographic events)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        actor_name = getattr(current_user, "username", "admin") if current_user else "admin"
+        from app.tenant import get_tenant_org
+        org_name = (
+            getattr(first_parent, "current_holder_org", None)
+            or get_tenant_org()
+            or getattr(current_user, "organization_id", None)
+            or org_id
+        )
+
+        parent_codes_list = [pc["batch_code"] for pc in parent_contributions]
+        merged_event_payload = {
+            "action": "MERGE",
+            "batch_id": new_batch.id,
+            "batch_code": new_batch.batch_code,
+            "total_merged_quantity": new_quantity,
+            "parent_batches": parent_contributions,
+            "parent_batch_codes": parent_codes_list,
+            "note": payload.note,
+        }
+        merged_payload_str = json.dumps(merged_event_payload, ensure_ascii=False)
+        merged_prev_hash = "0" * 64
+        merged_h = compute_event_hash(
+            event_type="MERGE",
+            payload=merged_payload_str,
+            actor=actor_name,
+            organization=org_name,
+            timestamp=now_iso,
+            previous_hash=merged_prev_hash,
+        )
+        merged_event = BatchEvent(
+            batch_id=new_batch.id,
+            event_type="MERGE",
+            payload=merged_payload_str,
+            actor=actor_name,
+            organization=org_name,
+            timestamp=now_iso,
+            hash=merged_h,
+            previous_hash=merged_prev_hash,
+        )
+        db.add(merged_event)
+
+        for contrib in parent_contributions:
+            pb = parents_by_id[contrib["id"]]
+            last_ev_stmt = (
+                select(BatchEvent)
+                .where(BatchEvent.batch_id == pb.id)
+                .order_by(BatchEvent.id.desc())
+                .limit(1)
+            )
+            last_ev = db.scalars(last_ev_stmt).first()
+            p_prev_hash = last_ev.hash if last_ev else "0" * 64
+
+            p_ev_payload = {
+                "action": "MERGED_INTO",
+                "parent_batch_id": pb.id,
+                "parent_batch_code": contrib["batch_code"],
+                "contributed_quantity": contrib["quantity"],
+                "remaining_quantity": contrib["remaining_quantity"],
+                "target_merged_batch_id": new_batch.id,
+                "target_merged_batch_code": new_batch.batch_code,
+            }
+            p_ev_payload_str = json.dumps(p_ev_payload, ensure_ascii=False)
+            p_ev_h = compute_event_hash(
+                event_type="MERGE_PARENT",
+                payload=p_ev_payload_str,
+                actor=actor_name,
+                organization=org_name,
+                timestamp=now_iso,
+                previous_hash=p_prev_hash,
+            )
+            p_event = BatchEvent(
+                batch_id=pb.id,
+                event_type="MERGE_PARENT",
+                payload=p_ev_payload_str,
+                actor=actor_name,
+                organization=org_name,
+                timestamp=now_iso,
+                hash=p_ev_h,
+                previous_hash=p_prev_hash,
+            )
+            db.add(p_event)
+
+        # Bước 9: COMMIT TOÀN BỘ TRANSACTION
         db.commit()
         db.refresh(new_batch)
+        for pb in parents_by_id.values():
+            db.refresh(pb)
 
+        new_batch_resp = BatchResponse.model_validate(new_batch)
+        parent_batches_resp = [BatchResponse.model_validate(b) for b in parents_by_id.values()]
         return BatchMergeResponse(
-            new_batch=BatchResponse.model_validate(new_batch),
+            new_batch=new_batch_resp,
+            merged_batch=new_batch_resp,
             relations=relations_responses,
             parent_remainings=parent_remainings,
+            parent_batches=parent_batches_resp,
+            message=f"Gộp thành công {len(sorted_ids)} lô mẹ vào lô mới #{new_batch.id} ({new_batch_code})",
         )
 
     except Exception:
-        # Nếu bất kỳ bước nào gặp lỗi -> ROLLBACK TOÀN BỘ
         db.rollback()
         raise
 

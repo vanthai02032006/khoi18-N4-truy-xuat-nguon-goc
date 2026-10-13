@@ -35,7 +35,10 @@ from app.append_only import APPEND_ONLY_TABLES, is_append_only, trigger_names
 from app.models import ROLE_ADMIN, Base, Batch, BatchEvent, Farm, User
 from app.routers.batches import delete_batch
 from app.routers.farms import delete_farm
-from conftest import build_engine
+try:
+    from tests.conftest import build_engine
+except ImportError:
+    from conftest import build_engine
 
 
 

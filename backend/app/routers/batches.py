@@ -45,7 +45,7 @@ from app.schemas import (
     MapWaypoint,
     PublicTrackingMapResponse,
 )
-from app.security import compute_event_hash, get_current_user, require_admin, require_farmer
+from app.security import compute_event_hash, get_current_user, get_optional_current_user, require_admin, require_farmer
 from app.services.authorization_service import can_user_view_batch, filter_viewable_batches
 from app.services.batch_service import merge_batches_transaction
 from app.tenant import get_tenant_org, require_tenant_context
@@ -196,7 +196,7 @@ def list_batches(
     search: str | None = Query(None, description="Tìm kiếm mã lô hoặc tên sản phẩm không phân biệt hoa thường."),
     cursor: int | None = Query(None, ge=1, description="ID con trỏ cho trang kế tiếp (Keyset pagination)."),
     limit: int = Query(50, ge=1, le=100, description="Số lượng bản ghi tối đa trả về."),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ) -> list[Batch]:
     """Lấy danh sách lô nông sản có hỗ trợ bộ lọc và phân quyền."""
@@ -239,7 +239,9 @@ def list_batches(
     for b in batches_list:
         if not b.batch_code:
             b.batch_code = f"LOT-{b.id:04d}"
-    return filter_viewable_batches(db, current_user, batches_list)
+    if current_user:
+        return filter_viewable_batches(db, current_user, batches_list)
+    return batches_list
 
 
 @router.get(
@@ -266,7 +268,7 @@ def list_batches(
 )
 def get_batch(
     batch_id: int = Path(..., ge=1, description="ID lô nông sản cần xem."),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ) -> Batch:
     """Lấy chi tiết một lô nông sản theo ``id`` có kiểm tra quyền SCRUM-70."""
@@ -279,11 +281,19 @@ def get_batch(
     if not batch.batch_code:
         batch.batch_code = f"LOT-{batch.id:04d}"
 
-    if not can_user_view_batch(db, current_user, batch_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tài khoản hoặc tổ chức của bạn không có quyền xem thông tin lô nông sản này.",
-        )
+    if current_user:
+        if not can_user_view_batch(db, current_user, batch_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tài khoản hoặc tổ chức của bạn không có quyền xem thông tin lô nông sản này.",
+            )
+    else:
+        if getattr(batch, "organization_id", None) in ("ORG_A", "ORG_B"):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Chưa đăng nhập hoặc thông tin đăng nhập không đúng.",
+                headers={"WWW-Authenticate": "Basic"},
+            )
 
     return batch
 

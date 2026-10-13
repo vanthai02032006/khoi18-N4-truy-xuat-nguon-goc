@@ -47,9 +47,26 @@ router = APIRouter(
 )
 def list_thresholds(
     db: Session = Depends(get_db),
-) -> list[ColdChainThreshold]:
+) -> list[ColdChainThresholdResponse]:
     """Danh sách cấu hình ngưỡng nhiệt độ và độ trễ cho từng loại sản phẩm."""
-    return list(db.scalars(select(ColdChainThreshold).order_by(ColdChainThreshold.id.asc())).all())
+    records = list(db.scalars(select(ColdChainThreshold).order_by(ColdChainThreshold.id.asc())).all())
+    if not records:
+        legacy = list(db.scalars(select(TemperatureThresholdConfig).order_by(TemperatureThresholdConfig.id.asc())).all())
+        if legacy:
+            return [
+                ColdChainThresholdResponse(
+                    id=item.id,
+                    product_type=item.product_name,
+                    temp_min=item.min_temp,
+                    temp_max=item.max_temp,
+                    delay_minutes=30,
+                    description=item.description or f"Ngưỡng tiêu chuẩn cho {item.product_name}",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                )
+                for item in legacy
+            ]
+    return records
 
 
 @router.post(
