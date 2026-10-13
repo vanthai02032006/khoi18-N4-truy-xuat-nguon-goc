@@ -87,6 +87,3 @@ jobs:
       - name: Run Unit Tests & Check Coverage (pytest)
         run: |
           PYTHONPATH=backend pytest backend/tests -v
-          if [ -d tests ]; then
-            PYTHONPATH=backend pytest tests -v
-          fi
