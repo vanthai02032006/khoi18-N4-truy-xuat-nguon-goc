@@ -7,11 +7,16 @@
 "use strict";
 
 // Địa chỉ backend FastAPI: tự động nhận diện localhost/live server hoặc production HTTPS
-const API_BASE_URL =
-  (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") &&
-  window.location.port === "5500"
-    ? "http://127.0.0.1:8000"
-    : "";
+const API_BASE_URL = (() => {
+  if (
+    window.location.protocol === "file:" ||
+    ((window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") &&
+      window.location.port !== "8000")
+  ) {
+    return "http://127.0.0.1:8000";
+  }
+  return "";
+})();
 
 // Khoá lưu phiên đăng nhập trong sessionStorage (tự mất khi đóng tab).
 const SESSION_STORAGE_KEY = "ttcs.session";
@@ -1657,4 +1662,17 @@ async function init() {
 }
 
 document.addEventListener("DOMContentLoaded", init);
+
+// Đảm bảo các hàm gọi qua inline onclick trong HTML luôn sẵn sàng trong global scope
+window.runRehearsalForBackup = runRehearsalForBackup;
+window.toggleMemberStatus = toggleMemberStatus;
+window.revokeInvitationAction = revokeInvitationAction;
+window.openBatchDetail = openBatchDetail;
+window.closeBatchDetail = closeBatchDetail;
+window.openAcceptModal = openAcceptModal;
+window.closeAcceptModal = closeAcceptModal;
+window.startEditFarm = startEditFarm;
+window.startEditBatch = startEditBatch;
+window.deleteFarm = deleteFarm;
+window.deleteBatch = deleteBatch;
 

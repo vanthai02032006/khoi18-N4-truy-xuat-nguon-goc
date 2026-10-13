@@ -15,7 +15,7 @@ Sprint 4: thêm `seed_default_users()` - tạo sẵn 2 tài khoản demo
 from collections.abc import Generator
 from pathlib import Path
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -35,6 +35,17 @@ engine = create_engine(
     connect_args={"check_same_thread": False},
     echo=False,  # đổi thành True nếu muốn xem câu SQL sinh ra khi debug
 )
+
+
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    """Kích hoạt kiểm tra khoá ngoại, chế độ WAL và timeout chống lock cho SQLite."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.close()
+
 
 # Mỗi request sẽ mở một Session riêng, không tự commit/autoflush (an toàn hơn).
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -320,7 +331,8 @@ def run_schema_migrations() -> None:
                 conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1"))
                 conn.execute(text("UPDATE users SET is_active = 1 WHERE is_active IS NULL"))
             if "created_at" not in user_cols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"))
+                conn.execute(text("ALTER TABLE users ADD COLUMN created_at DATETIME"))
+                conn.execute(text("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
 
         conn.commit()
 

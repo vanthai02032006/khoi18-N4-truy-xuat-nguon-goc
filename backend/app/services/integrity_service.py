@@ -178,12 +178,12 @@ def run_s12_integrity_check(
     # Kiểm tra tổng used_quantity có vượt quá sản lượng ban đầu của lô mẹ không
     for p_id, total_used in total_used_from_parent.items():
         p_batch = db.get(Batch, p_id)
-        if p_batch and total_used > p_batch.quantity:
+        if p_batch and round(total_used, 4) > round(p_batch.quantity, 4):
             violations.append({
                 "category": "GENEALOGY_OVERUSE",
                 "table": "batches",
                 "record_id": p_id,
-                "message": f"Lô mẹ #{p_id} bị rút tổng cộng {total_used}kg, vượt quá sản lượng ban đầu ({p_batch.quantity}kg).",
+                "message": f"Lô mẹ #{p_id} bị rút tổng cộng {round(total_used, 4)}kg, vượt quá sản lượng ban đầu ({p_batch.quantity}kg).",
             })
 
     # Phát hiện chu trình khép kín trong phả hệ (Cycle Detection via DFS)
@@ -193,20 +193,25 @@ def run_s12_integrity_check(
     def has_cycle(node: int, path: list[int]) -> bool:
         visited.add(node)
         rec_stack.add(node)
-        for neighbor in graph.get(node, []):
-            if neighbor not in visited:
-                if has_cycle(neighbor, path + [neighbor]):
-                    return True
-            elif neighbor in rec_stack:
-                violations.append({
-                    "category": "CYCLE_DETECTED",
-                    "table": "batch_relations",
-                    "record_id": f"{node}->{neighbor}",
-                    "message": f"Phát hiện chu trình phả hệ vòng tròn bất hợp lệ: {' -> '.join(map(str, path + [neighbor]))}.",
-                })
-                return True
-        rec_stack.remove(node)
-        return False
+        cycle_found = False
+        try:
+            for neighbor in graph.get(node, []):
+                if neighbor not in visited:
+                    if has_cycle(neighbor, path + [neighbor]):
+                        cycle_found = True
+                        break
+                elif neighbor in rec_stack:
+                    violations.append({
+                        "category": "CYCLE_DETECTED",
+                        "table": "batch_relations",
+                        "record_id": f"{node}->{neighbor}",
+                        "message": f"Phát hiện chu trình phả hệ vòng tròn bất hợp lệ: {' -> '.join(map(str, path + [neighbor]))}.",
+                    })
+                    cycle_found = True
+                    break
+            return cycle_found
+        finally:
+            rec_stack.discard(node)
 
     for b_id in list(graph.keys()):
         if b_id not in visited:

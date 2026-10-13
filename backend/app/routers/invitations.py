@@ -152,13 +152,7 @@ def accept_invitation_endpoint(
         username=payload.username,
         password=payload.password,
     )
-    return UserResponse(
-        id=new_user.id,
-        username=new_user.username,
-        role=new_user.role,
-        organization_id=new_user.organization_id,
-        email=new_user.email,
-    )
+    return UserResponse.model_validate(new_user)
 
 
 @router.get(
@@ -173,16 +167,7 @@ def get_members_endpoint(
     db: Session = Depends(get_db),
 ) -> list[UserResponse]:
     members = list_organization_members(db, current_user=current_user, limit=limit)
-    return [
-        UserResponse(
-            id=u.id,
-            username=u.username,
-            role=u.role,
-            organization_id=u.organization_id,
-            email=u.email,
-        )
-        for u in members
-    ]
+    return [UserResponse.model_validate(u) for u in members]
 
 
 @router.post(
@@ -203,13 +188,7 @@ def update_member_status_endpoint(
         current_user=current_user,
         reason=payload.reason,
     )
-    return UserResponse(
-        id=updated_user.id,
-        username=updated_user.username,
-        role=updated_user.role,
-        organization_id=updated_user.organization_id,
-        email=updated_user.email,
-    )
+    return UserResponse.model_validate(updated_user)
 
 
 @router.get(

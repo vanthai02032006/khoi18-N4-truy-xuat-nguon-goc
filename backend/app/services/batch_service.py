@@ -160,7 +160,6 @@ def merge_batches_transaction(
 
             new_rem = round(current_rem - used_qty, 4)
             parent_batch.remaining_quantity = new_rem
-            parent_batch.quantity = new_rem  # Cập nhật đồng bộ để hiển thị
 
             relation = BatchRelation(
                 parent_batch_id=pid,

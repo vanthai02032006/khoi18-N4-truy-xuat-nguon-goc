@@ -165,9 +165,10 @@ def list_batches(
 
     if search and search.strip():
         term = search.strip().lower()
+        clean_id = term.lstrip("#").replace("batch-", "").strip()
         all_batches = [
             b for b in all_batches
-            if str(b.id) == term or term in b.product_name.lower()
+            if str(b.id) == term or (clean_id.isdigit() and b.id == int(clean_id)) or term in b.product_name.lower()
         ]
 
     return filter_viewable_batches(db, current_user, all_batches)
@@ -275,7 +276,19 @@ def update_batch(
             detail=f"Không tìm thấy vùng trồng có id={payload.farm_id}.",
         )
 
+    # Kiểm tra phân quyền tổ chức: farmer không được sửa lô của tổ chức khác
+    if getattr(current_user, "role", None) != "admin":
+        user_org = getattr(current_user, "organization_id", None)
+        if user_org and batch.organization_id and batch.organization_id != user_org:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Bạn không có quyền sửa lô nông sản thuộc tổ chức khác.",
+            )
+
     for field, value in payload.model_dump().items():
+        # Không ghi đè organization_id thành None nếu payload không chỉ định
+        if field == "organization_id" and value is None:
+            continue
         setattr(batch, field, value)
 
     try:
