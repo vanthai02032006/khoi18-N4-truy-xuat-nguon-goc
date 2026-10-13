@@ -27,6 +27,7 @@ import sys
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 # Cấu hình UTF-8 cho console Windows
 if hasattr(sys.stdout, "reconfigure"):
