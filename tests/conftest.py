@@ -9,6 +9,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
+import sys
+
+_backend_dir = str(Path(__file__).resolve().parent.parent / "backend")
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 import pytest
 from sqlalchemy import create_engine
