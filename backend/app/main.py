@@ -24,7 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.database import init_db
-from app.routers import auth, batches, farms, health, users
+from app.middleware import AuditLogMiddleware
+from app.routers import audit, auth, batches, farms, health, users
 
 # ------------------------------------------------------------------ Lifespan ---
 @asynccontextmanager
@@ -74,6 +75,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# AuditLogMiddleware ghi nhận tự động nhật ký thao tác (không can thiệp handler)
+app.add_middleware(AuditLogMiddleware)
 
 # --------------------------------------------------------- Đăng ký các router ---
 # Mỗi module nghiệp vụ là 1 router; thêm module mới = thêm 1 dòng ở đây.
@@ -82,3 +85,5 @@ app.include_router(auth.router)
 app.include_router(farms.router)
 app.include_router(batches.router)
 app.include_router(users.router)
+app.include_router(audit.router)
+

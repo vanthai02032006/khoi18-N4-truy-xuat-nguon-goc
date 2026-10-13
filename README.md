@@ -71,6 +71,33 @@ trồng, tổng lô nông sản, tổng sản lượng kg) và 2 bảng dữ li�
 
 ---
 
+## 📜 Quy ước kiến trúc: Bảng sự kiện chỉ-thêm (Append-only) & Vì sao bất biến
+
+### 1. Quy ước (Conventions)
+* **Bảng chỉ-thêm (Append-only):** Bảng sự kiện `batch_events` (và các bảng nhật ký hành trình nông sản) là **sổ nhật ký bất biến (immutable audit log)**.
+* **Quyền hạn truy cập:** Tài khoản ứng dụng **chỉ được phép `SELECT` và `INSERT`**, tuyệt đối **không được phép `UPDATE` hoặc `DELETE`**.
+* **Đơn nguồn chân lý (Single Source of Truth):** Danh sách `APPEND_ONLY_TABLES = ("batch_events",)` được định nghĩa tập trung tại `backend/app/append_only.py`.
+
+### 2. Vì sao cần quy ước này (Why)
+* **Bằng chứng nguồn gốc & Giá trị pháp lý:** Nhật ký hành trình lô nông sản (thu hoạch, kiểm định chất lượng VietGAP/GlobalGAP, sơ chế, đóng gói, giám sát nhiệt độ kho lạnh, vận chuyển, bàn giao) là bằng chứng truy xuất nguồn gốc phục vụ cán bộ kiểm tra và người tiêu dùng.
+* **Ngăn chặn gian lận chuỗi cung ứng:** Nếu sự kiện có thể bị sửa hoặc xoá, kẻ gian lận có thể che giấu vi phạm chuỗi lạnh (nhiệt độ tăng vọt làm hư hỏng nông sản), thay đổi ngày thu hoạch, hoặc hợp thức hóa hàng trôi nổi kém chất lượng, làm mất toàn bộ giá trị của hệ thống truy xuất.
+* **Không phụ thuộc vào việc "mọi người nhớ quy ước":** Lời cam kết "không sửa được" phải được bảo vệ cưỡng chế ở cấp kiến trúc hệ thống (Enforced by Design). Kể cả lập trình viên mới vào dự án có viết nhầm câu lệnh sửa/xoá, hoặc kẻ xấu cố tình gọi API hay kết nối CSDL, hệ thống vẫn kiên quyết từ chối.
+
+### 3. Ba lớp phòng thủ thực thi cam kết "Không sửa được" (Defense-in-Depth)
+1. **Lớp 1 — Tầng API (Web Application Layer):**
+   * Không cung cấp bất kỳ endpoint nào phục vụ sửa (`PUT`, `PATCH`) hoặc xoá (`DELETE`) sự kiện.
+   * Khi client gửi yêu cầu `PUT/PATCH/DELETE` tới `/batches/{id}/events` hoặc `/batches/{id}/events/{event_id}`, máy chủ FastAPI tự động từ chối với mã lỗi `405 Method Not Allowed` hoặc `404 Not Found`.
+2. **Lớp 2 — Tầng Cơ sở dữ liệu (Database Engine Layer):**
+   * **PostgreSQL (Production):** Role ứng dụng `agri_app_user` chỉ được `GRANT SELECT, INSERT`; toàn bộ quyền `UPDATE`, `DELETE`, `TRUNCATE` trên bảng chỉ-thêm bị `REVOKE` (chi tiết xem `migrations/002_batch_events_append_only.sql`).
+   * **SQLite (Local / Test / CI):** Sử dụng `sqlite3.Connection.set_authorizer` chặn thẳng mọi câu lệnh `SQLITE_UPDATE` và `SQLITE_DELETE` trên bảng chỉ-thêm (`SQLITE_DENY`), độc lập với ORM.
+   * **Database Triggers (Van an toàn cuối cùng):** Trigger `BEFORE UPDATE` và `BEFORE DELETE` tự động gọi `RAISE(ABORT, ...)` chặn cả các kết nối trực tiếp toàn quyền / tài khoản admin của CSDL.
+   * **Chặn xoá dây chuyền:** Lô nông sản hoặc vùng trồng đã phát sinh sự kiện nhật ký sẽ bị CSDL và API từ chối xoá (trả về lỗi `409 Conflict`), ngăn chặn việc xoá gián tiếp làm mất dấu vết sự kiện.
+3. **Lớp 3 — Tầng Mật mã học (Cryptographic Hash Chain):**
+   * Mỗi sự kiện tự động tính mã băm SHA-256 canonical từ toàn bộ dữ liệu nghiệp vụ và liên kết với `previous_hash` của sự kiện trước đó (T-24). Sự kiện đầu tiên trỏ về Genesis hash (`"0" * 64`).
+   * Hàm `verify_batch_chain` (T-28 / SCRUM-44) tự động quét và chỉ đích danh vị trí bản ghi bị can thiệp sửa lén (`DATA_MODIFIED`) hoặc vị trí bị xóa mất làm đứt gãy chuỗi (`CHAIN_BROKEN`).
+
+---
+
 ## Đồ thị mẫu phả hệ nông sản 4 tầng (Lineage Graph DAG - T-46 / SCRUM-62)
 
 Hệ thống cung cấp script tự động dựng đồ thị mẫu phả hệ truy xuất nguồn gốc hoàn chỉnh sử dụng **chính hàm tách (`split_batch`)** và **hàm gộp (`merge_batches`)** của ứng dụng.

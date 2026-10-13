@@ -134,6 +134,12 @@ class Batch(Base):
         default=None,
     )
 
+    current_holder_org: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        default="HTX Nông Nghiệp Số 4",
+    )
+
     # Quan hệ N-1: nhiều lô có thể thuộc về một vùng trồng.
     farm: Mapped["Farm"] = relationship(back_populates="batches")
 
@@ -241,17 +247,22 @@ class BatchEvent(Base):
         nullable=False,
         index=True,
     )
-    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload: Mapped[str] = mapped_column(String(1000), nullable=False, default="{}")
+    actor: Mapped[str] = mapped_column(String(100), nullable=False, default="system")
     organization: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
-        default="Hợp tác xã Nông nghiệp Cao Lãnh",
+        default="HTX Nông Nghiệp Số 4",
     )
-    data: Mapped[str] = mapped_column(String(1000), nullable=False)
     timestamp: Mapped[str] = mapped_column(String(50), nullable=False)
-    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    previous_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="0" * 64)
+
+    # Trường tương thích ngược
+    sequence: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=1)
+    data: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True, default="{}")
+    prev_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default="0" * 64)
 
     # Quan hệ ngược về Batch
     batch: Mapped["Batch"] = relationship("Batch", backref="events")
@@ -304,7 +315,34 @@ class BatchRelation(Base):
         )
 
 
+class AuditLog(Base):
+    """Bảng nhật ký kiểm toán hệ thống (audit_logs).
+
+    Lưu vết ai đã thực hiện thao tác nào (đăng nhập, tạo lô, tách lô, v.v.)
+    để làm rõ trách nhiệm khi có tranh cãi, không cần đọc từng chuỗi sự kiện của từng lô.
+    Được ghi tự động từ middleware, không rải rác trong từng handler.
+    """
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    organization: Mapped[str] = mapped_column(String(100), nullable=False, default="HTX Nông Nghiệp Số 4", index=True)
+    timestamp: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    ip_address: Mapped[str] = mapped_column(String(50), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="SUCCESS", index=True)
+    target_code: Mapped[str] = mapped_column(String(100), nullable=False, default="", index=True)
+    reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<AuditLog id={self.id} actor={self.actor!r} action={self.action!r} target={self.target_code!r} status={self.status!r}>"
+
+
 __all__ = [
+    "AuditLog",
     "Base",
     "Batch",
     "BatchEvent",
@@ -315,4 +353,5 @@ __all__ = [
     "ROLES",
     "User",
 ]
+
 

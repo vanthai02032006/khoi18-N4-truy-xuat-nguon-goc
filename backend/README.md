@@ -54,6 +54,33 @@ backend/
 
 ---
 
+## 📜 Quy ước kiến trúc: Bảng sự kiện chỉ-thêm (Append-only) & Vì sao bất biến
+
+### 1. Quy ước (Conventions)
+* **Bảng chỉ-thêm (Append-only):** Bảng sự kiện `batch_events` là **sổ nhật ký bất biến (immutable audit log)** ghi lại toàn bộ hành trình nông sản.
+* **Quyền hạn tài khoản ứng dụng:** **Chỉ được `SELECT` và `INSERT`**, tuyệt đối **không được `UPDATE` hoặc `DELETE`**.
+* **Đơn nguồn chân lý:** Danh sách `APPEND_ONLY_TABLES = ("batch_events",)` được khai báo tập trung trong `app/append_only.py`.
+
+### 2. Vì sao cần quy ước này (Why)
+* **Bằng chứng pháp lý & Kiểm định nguồn gốc:** Nhật ký hành trình lô nông sản (thu hoạch, kiểm định chất lượng, sơ chế, đóng gói, nhiệt độ kho lạnh, vận chuyển, bàn giao) là bằng chứng truy xuất nguồn gốc phục vụ cán bộ kiểm tra và người tiêu dùng.
+* **Ngăn chặn gian lận chuỗi cung ứng:** Nếu sự kiện có thể bị sửa hoặc xoá, kẻ xấu có thể che giấu vi phạm chuỗi lạnh (nhiệt độ tăng vọt làm hỏng hàng), thay đổi xuất xứ hoặc hợp thức hóa hàng trôi nổi kém chất lượng.
+* **Không phụ thuộc vào việc nhớ quy ước:** Cam kết "không thể sửa đổi" phải được đảm bảo bằng kiến trúc cưỡng chế (Enforced by Design). Kể cả lập trình viên mới vào dự án có viết nhầm câu lệnh sửa/xoá hoặc ai đó cố tình gọi API hay can thiệp CSDL, hệ thống vẫn từ chối thực thi.
+
+### 3. Ba lớp phòng thủ thực thi cam kết "Không sửa được" (Defense-in-Depth)
+1. **Lớp 1 — Tầng API (Web Application Layer):**
+   * Tuyệt đối không cung cấp bất kỳ endpoint nào nhận `PUT`, `PATCH`, hoặc `DELETE` đối với sự kiện.
+   * Client gửi request sửa/xoá sự kiện sẽ nhận ngay mã lỗi `405 Method Not Allowed` hoặc `404 Not Found`.
+2. **Lớp 2 — Tầng Cơ sở dữ liệu (Database Engine Layer):**
+   * **PostgreSQL (Production):** Role ứng dụng `agri_app_user` chỉ được `GRANT SELECT, INSERT`; toàn bộ quyền `UPDATE`, `DELETE`, `TRUNCATE` bị `REVOKE` ở migration `migrations/002_batch_events_append_only.sql`.
+   * **SQLite (Local / Test / CI):** Sử dụng `sqlite3.Connection.set_authorizer` chặn thẳng câu lệnh `SQLITE_UPDATE` và `SQLITE_DELETE` trên bảng chỉ-thêm (`SQLITE_DENY`).
+   * **Database Triggers (Van an toàn cuối cùng):** Trigger `BEFORE UPDATE` và `BEFORE DELETE` tự động gọi `RAISE(ABORT, ...)` chặn cả kết nối toàn quyền/admin của CSDL.
+   * **Chặn xoá dây chuyền:** Lô nông sản hoặc vùng trồng đã phát sinh sự kiện sẽ bị từ chối xoá (trả về lỗi `409 Conflict`), ngăn chặn xoá mồ côi làm mất dấu vết sự kiện.
+3. **Lớp 3 — Tầng Mật mã học (Cryptographic Hash Chain):**
+   * Mỗi sự kiện băm SHA-256 canonical từ toàn bộ dữ liệu nghiệp vụ và liên kết với `previous_hash` của sự kiện trước (T-24). Sự kiện đầu tiên trỏ về Genesis hash (`"0" * 64`).
+   * Hàm `verify_batch_chain` (T-28) tự động quét và chỉ đích danh vị trí bản ghi bị sửa lén (`DATA_MODIFIED`) hoặc vị trí bị xóa mất (`CHAIN_BROKEN`).
+
+---
+
 ## 2. Cách chạy
 
 ### Bước 1 — Tạo môi trường ảo (khuyến nghị)

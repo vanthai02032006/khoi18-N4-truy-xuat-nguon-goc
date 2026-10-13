@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -574,5 +575,25 @@ class BatchMergeResponse(BaseModel):
     relations: list[BatchRelationResponse] = Field(..., description="Các liên kết phả hệ cha - con đã tạo.")
     parent_remainings: list[ParentRemainingResponse] = Field(..., description="Số dư còn lại của từng lô mẹ.")
     message: str = Field(..., description="Thông báo kết quả giao dịch.")
+
+
+# ------------------------------------------------------------- Audit Log ---
+class AuditLogResponse(BaseModel):
+    """Schema trả về thông tin nhật ký kiểm toán hệ thống (Audit Log)."""
+
+    id: int = Field(..., description="ID dòng nhật ký.")
+    actor: str = Field(..., description="Người thực hiện thao tác (username).")
+    organization: str = Field(..., description="Tổ chức của người thực hiện.")
+    timestamp: str = Field(..., description="Thời điểm ghi nhận (ISO 8601).")
+    ip_address: str = Field(..., description="Địa chỉ IP của client gửi yêu cầu.")
+    action: str = Field(..., description="Tên thao tác (LOGIN, CREATE_BATCH, SPLIT_BATCH, ...).")
+    status: str = Field(..., description="Trạng thái thao tác (SUCCESS hoặc FAILED).")
+    target_code: str = Field(..., description="Mã đối tượng thao tác (mã lô, username, ...).")
+    reason: Optional[str] = Field(None, description="Lý do/chi tiết nếu thao tác thất bại hoặc có lưu ý.")
+    method: Optional[str] = Field(None, description="HTTP method (POST, PUT, DELETE, ...).")
+    path: Optional[str] = Field(None, description="Đường dẫn API của yêu cầu.")
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 
