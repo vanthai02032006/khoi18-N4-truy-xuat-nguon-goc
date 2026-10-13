@@ -979,4 +979,144 @@ class HandoverWorkflowResponse(HandoverResponse):
     )
 
 
+# ==============================================================================
+# S-42 COLD CHAIN & TELEMETRY SCHEMAS
+# ==============================================================================
+class TelemetryItemSchema(BaseModel):
+    """Một bản ghi đo đạc từ cảm biến IoT lắp trên thùng xe lạnh."""
+    trip_code: str = Field(..., min_length=1, max_length=50, description="Mã chuyến xe")
+    device_id: str = Field(..., min_length=1, max_length=100, description="Mã cảm biến IoT")
+    temperature: float = Field(..., description="Nhiệt độ (°C)")
+    humidity: Optional[float] = Field(None, description="Độ ẩm không khí (%)")
+    latitude: Optional[float] = Field(None, description="Vĩ độ GPS")
+    longitude: Optional[float] = Field(None, description="Kinh độ GPS")
+    recorded_at: str = Field(..., description="Thời điểm cảm biến ghi nhận (ISO format)")
+
+
+class TelemetryBatchIngestRequest(BaseModel):
+    """Gói telemetry nhiều bản ghi gửi lên từ IoT Gateway."""
+    readings: list[TelemetryItemSchema] = Field(..., min_length=1, description="Danh sách các bản ghi cảm biến")
+
+
+class TelemetryIngestResponse(BaseModel):
+    """Kết quả tiếp nhận dữ liệu telemetry và đánh giá vi phạm tức thời."""
+    received_count: int
+    accepted_count: int
+    filtered_count: int
+    violations_detected: int
+    message: str
+
+
+class TripCreateRequest(BaseModel):
+    """Yêu cầu khởi tạo chuyến xe vận chuyển chuỗi lạnh (S-42.2)."""
+    trip_code: str = Field(..., min_length=1, max_length=50, description="Mã chuyến xe duy nhất")
+    carrier_name: str = Field(..., min_length=1, max_length=255, description="Tên nhà xe / đơn vị vận chuyển")
+    vehicle_plate: str = Field(..., min_length=1, max_length=50, description="Biển số xe lạnh")
+    driver_name: str = Field(..., min_length=1, max_length=100, description="Họ tên tài xế")
+    driver_phone: Optional[str] = Field(None, max_length=50, description="Số điện thoại tài xế")
+    start_location: str = Field(..., min_length=1, max_length=255, description="Điểm xuất phát")
+    end_location: str = Field(..., min_length=1, max_length=255, description="Điểm đến")
+    batch_ids: list[int] = Field(..., min_length=1, description="Danh sách ID các lô nông sản xếp lên xe (ON-BOARD)")
+    temp_min_threshold: float = Field(default=2.0, description="Ngưỡng nhiệt độ dưới (°C)")
+    temp_max_threshold: float = Field(default=8.0, description="Ngưỡng nhiệt độ trên (°C)")
+    max_allowed_breach_minutes: int = Field(default=30, ge=0, description="Cửa sổ cho phép vượt ngưỡng (chuẩn 30 phút)")
+    started_at: Optional[str] = Field(None, description="Thời điểm chuyến xe xuất phát (mặc định hiện tại nếu không truyền)")
+
+
+class TripConsignmentResponse(BaseModel):
+    """Thông tin lô hàng xếp trên chuyến xe."""
+    model_config = ConfigDict(from_attributes=True)
+
+    batch_id: int
+    batch_code: Optional[str] = None
+    product_name: Optional[str] = None
+    quantity: float
+    loaded_at: str
+
+
+class TripViolationDetail(BaseModel):
+    """Chi tiết một vi phạm chuỗi lạnh phát hiện bởi Core Engine S-42."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    violation_type: str
+    severity: str
+    started_at: str
+    ended_at: str
+    duration_minutes: float
+    peak_temperature: float
+    threshold_temp: float
+    reason: str
+
+
+class TripResponse(BaseModel):
+    """Thông tin chi tiết chuyến xe vận chuyển chuỗi lạnh."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    trip_code: str
+    carrier_name: str
+    vehicle_plate: str
+    driver_name: str
+    driver_phone: Optional[str] = None
+    start_location: str
+    end_location: str
+    temp_min_threshold: float
+    temp_max_threshold: float
+    max_allowed_breach_minutes: int
+    started_at: str
+    completed_at: Optional[str] = None
+    status: str
+    consignments: list[TripConsignmentResponse] = []
+    violations: list[TripViolationDetail] = []
+    violations_count: int = 0
+
+
+class TripCompleteResponse(BaseModel):
+    """Kết quả hoàn tất hành trình chuyến xe (S-42.2)."""
+    trip_code: str
+    status: str
+    completed_at: str
+    batches_offboarded: list[int]
+    total_violations: int
+    summary: str
+
+
+class HandoverWarningResponse(BaseModel):
+    """Cảnh báo đỏ chuỗi lạnh khi bàn giao lô hàng (S-42.4)."""
+    batch_id: int
+    batch_code: Optional[str] = None
+    product_name: Optional[str] = None
+    warning_level: str  # RED hoặc GREEN
+    has_violations: bool
+    total_violations: int
+    max_violation_duration_minutes: float
+    worst_peak_temperature: Optional[float] = None
+    carrier_names: list[str] = []
+    vehicle_plates: list[str] = []
+    violations_detail: list[TripViolationDetail] = []
+    recommendation: str
+
+
+class CarrierReportItem(BaseModel):
+    """Số liệu thống kê hiệu suất theo từng nhà xe (S-42.5)."""
+    carrier_name: str
+    total_trips: int
+    completed_trips: int
+    compliant_trips: int
+    violated_trips: int
+    compliance_rate: float
+    total_violations: int
+    avg_violation_duration_minutes: float
+    rating: str
+
+
+class CarrierReportResponse(BaseModel):
+    """Báo cáo hiệu suất nhà xe theo kỳ đánh giá (S-42.5)."""
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    total_carriers: int
+    carriers: list[CarrierReportItem]
+
+
 
