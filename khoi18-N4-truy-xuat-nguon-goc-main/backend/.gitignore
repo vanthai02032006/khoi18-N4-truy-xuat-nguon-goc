@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Database SQLite sinh ra khi chạy local
+*.db
+*.db-journal
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
