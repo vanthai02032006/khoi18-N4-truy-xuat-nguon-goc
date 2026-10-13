@@ -163,6 +163,10 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | POST | `/batches` | Tạo lô nông sản (kiểm tra `farm_id` tồn tại) | farmer **hoặc** admin | `201` · `401` · `404` farm không tồn tại · `422` dữ liệu sai |
 | PUT | `/batches/{batch_id}` | Cập nhật (thay thế) lô nông sản - đổi được `farm_id` nếu tồn tại | farmer **hoặc** admin | `200` · `401` · `404` lô/farm không tồn tại · `422` |
 | DELETE | `/batches/{batch_id}` | Xoá một lô nông sản | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy |
+| POST | `/locations` | Khai báo địa điểm / cửa hàng (tên + địa chỉ) cho tổ chức đang gọi | farmer **hoặc** admin | `201` · `401` · `409` trùng tên trong tổ chức · `422` dữ liệu sai |
+| GET | `/locations` | Danh sách địa điểm của **chính tổ chức đang gọi** | farmer **hoặc** admin | `200` · `401` |
+| GET | `/locations/{location_id}/batches` | Tra cứu lô đang nằm tại một địa điểm (thu hồi đúng cửa hàng) | farmer **hoặc** admin | `200` · `401` · `403` địa điểm của tổ chức khác · `404` không tìm thấy |
+| POST | `/batches/{batch_id}/location` | Ghi nhận lô đang ở địa điểm nào + ghi sự kiện `LOCATION_CHANGED` vào chuỗi | farmer **hoặc** admin | `200` · `400` lô đã tiêu thụ · `403` lô/địa điểm của tổ chức khác · `404` không tìm thấy |
 | GET | `/users` | Danh sách tài khoản (không kèm mật khẩu) | **chỉ admin** | `200` · `401` · `403` sai vai trò |
 
 > ✅ **Sprint 5 hoàn thiện CRUD:** cả Farm và Batch đều có đủ `POST` / `GET` /
@@ -241,6 +245,53 @@ Lô đã tiêu thụ không thể sửa, tách hoặc bàn giao. Lô đang có t
 
 Khi tạo lô, backend **kiểm tra `farm_id` có tồn tại trước khi ghi** → nếu không
 tìm thấy vùng trồng, API trả `404 Not Found` thay vì tạo dữ liệu mồ côi.
+
+### Cấu trúc bảng `locations` (S-18)
+
+| Cột | Kiểu | Ràng buộc |
+| --- | --- | --- |
+| `id` | INTEGER | Khoá chính, tự tăng |
+| `organization` | VARCHAR(100) | Bắt buộc, có index - **địa điểm thuộc tổ chức nào** |
+| `name` | VARCHAR(255) | Bắt buộc, có index - duy nhất trong một tổ chức (`uq_locations_org_name`) |
+| `address` | VARCHAR(255) | Bắt buộc |
+| `created_at` | DATETIME | Tự sinh khi khai báo |
+
+Bảng `batches` được bổ sung cột `current_location_id` (INTEGER, **khoá ngoại →
+`locations.id`**, `NULL` được): **địa điểm hiện tại của lô**. Lô chưa gắn địa
+điểm thì cột này `NULL` - xem quan hệ `Location 1 ---- N Batch`.
+
+> Database SQLite đã tồn tại từ trước được `_migrate_sqlite_schema()` (chạy
+> trong `init_db()`) tự động thêm cột `current_location_id` khi khởi động, nên
+> không cần xoá `ttcs.db` hay chạy script SQL thủ công.
+
+### Theo dõi vị trí lô & thu hồi theo địa điểm (S-18)
+
+Nhà phân phối có nhiều địa điểm trong hệ thống của mình; cần biết **lô đang nằm
+ở cửa hàng nào** để thu hồi đúng điểm bán thay vì rà soát cả chuỗi.
+
+| Tiêu chí | Cách hệ thống đáp ứng |
+| --- | --- |
+| Khai báo địa điểm (tên + địa chỉ) thì địa điểm thuộc tổ chức tôi | `POST /locations` tự gán `organization` = tổ chức gọi request; tên địa điểm duy nhất **trong tổ chức** (`409` nếu trùng); `GET /locations` chỉ trả địa điểm của tổ chức đang gọi |
+| Chuyển một lô về một địa điểm thì lô ghi rõ địa điểm hiện tại và sự kiện được ghi vào chuỗi | `POST /batches/{batch_id}/location` cập nhật `current_location_id` (kèm `current_location_name`/`current_location_address` trong mọi response lô) và ghi sự kiện `LOCATION_CHANGED` (từ địa điểm nào → đến địa điểm nào) vào chuỗi băm bất biến |
+| Chia một lô cho nhiều cửa hàng thì đó là phép tách ở S-17 với mỗi lô con gắn một địa điểm | `POST /batches/{batch_id}/split` nhận thêm `location_id` **trên từng dòng** lô con (S-17): mỗi lô con gắn địa điểm của nó, sự kiện `SPLIT` ghi kèm địa điểm từng lô con; bỏ trống thì lô con giữ địa điểm hiện tại của lô mẹ |
+
+**Tra cứu thu hồi:** `GET /locations/{location_id}/batches` trả địa điểm + tổng
+số lô + tổng khối lượng + danh sách lô đang nằm tại đó:
+
+```json
+{
+  "location": {"id": 2, "organization": "HTX Nông Nghiệp Số 4",
+               "name": "Cửa hàng Sa Đéc", "address": "Số 5 Trần Hưng Đạo, TP Sa Đéc"},
+  "total_batches": 1,
+  "total_quantity": 5.0,
+  "batches": [{"id": 13, "batch_code": "LOT-20261014-CUFE", "quantity": 5.0,
+               "current_location_id": 2, "current_location_name": "Cửa hàng Sa Đéc"}]
+}
+```
+
+**Cách ly đa tổ chức:** địa điểm của tổ chức khác trả `403 Forbidden` (không xem
+chéo dữ liệu); lô đang do tổ chức khác nắm giữ cũng không di chuyển được (`403`),
+lô đã tiêu thụ (`consumed`) không di chuyển được (`400`).
 
 ### Cấu trúc bảng `users` (Sprint 4)
 
@@ -562,3 +613,4 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 3 | Module **Batch** (quản lý lô nông sản): model `Batch` → bảng `batches` (FK `farm_id` → `farms.id`, quan hệ `Farm 1 ---- N Batch`), schemas `BatchCreate`/`BatchResponse`, router `app/routers/batches.py` với `POST /batches` (**201**, trả **404** nếu `farm_id` không tồn tại), `GET /batches` (**200**) và `GET /batches/{batch_id}` (**200**/**404**). `GET /health`, `POST /farms`, `GET /farms` giữ nguyên. |
 | Sprint 4 | **Đăng nhập + phân quyền cơ bản (không JWT):** model `User` → bảng `users` (`username` unique, mật khẩu băm SHA-256, `role`), `seed_default_users()` tạo sẵn `admin`/`farmer` (mật khẩu `123456`); module `app/security.py` với `hash_password`/`verify_password`/`authenticate_user` và dependency `get_current_user` (**401**), `require_admin` (**403**), `require_farmer`; router `POST /auth/login` (**200**/**401**) và `GET /users` (**200**, chỉ admin); áp `require_farmer` cho `GET /farms`, `POST /farms`, `POST /batches`. Cơ chế xác thực là **HTTP Basic** (Swagger có nút **Authorize**), không token/refresh token. |
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
+| S-18 | **Địa điểm / cửa hàng & vị trí hiện tại của lô:** model `Location` → bảng `locations` (`organization`, `name`, `address`; tên duy nhất trong một tổ chức) và cột `batches.current_location_id` (FK → `locations.id`, tự migrate cho DB cũ); router mới `app/routers/locations.py` với `POST /locations`, `GET /locations` (chỉ địa điểm của tổ chức đang gọi), `GET /locations/{id}/batches` (tra cứu thu hồi theo cửa hàng); `POST /batches/{batch_id}/location` ghi địa điểm hiện tại + sự kiện `LOCATION_CHANGED`; `POST /batches/{batch_id}/split` (S-17) nhận `location_id` trên từng dòng lô con. Frontend: tab **ĐỊA ĐIỂM**, bảng địa điểm, khối tra cứu thu hồi, cột địa điểm hiện tại trong bảng lô, modal **Chuyển lô về địa điểm** và cột chọn địa điểm trong modal tách lô. |

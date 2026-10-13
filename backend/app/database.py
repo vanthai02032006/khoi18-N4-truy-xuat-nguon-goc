@@ -355,6 +355,10 @@ def _migrate_sqlite_schema() -> None:
                     conn.exec_driver_sql(
                         "ALTER TABLE batches ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'available'"
                     )
+                if "current_location_id" not in existing_cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE batches ADD COLUMN current_location_id INTEGER REFERENCES locations(id) ON DELETE SET NULL"
+                    )
             conn.commit()
     except Exception:
         pass

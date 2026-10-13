@@ -9,6 +9,7 @@ Quan hệ giữa các bảng::
 
     Farm 1 ---- N Batch   (một vùng trồng có nhiều lô nông sản)
     User                  (bảng độc lập, dùng cho đăng nhập/phân quyền)
+    Location 1 ---- N Batch  (một địa điểm đang chứa nhiều lô - S-18)
 
 File này là điểm duy nhất (single source of truth) khai báo bảng dữ liệu.
 Mọi model đều kế thừa ``Base`` và bảng sẽ được ``init_db()`` trong
@@ -142,6 +143,15 @@ class Batch(Base):
         index=True,
     )
 
+    # Địa điểm hiện tại của lô (S-18): biết lô đang nằm ở cửa hàng nào trong hệ
+    # thống của tổ chức để thu hồi đúng điểm bán thay vì rà soát cả chuỗi.
+    current_location_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("locations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        default=None,
+    )
+
     # Phả hệ lô nông sản mẹ - con (T-39 / T-40 / T-41 / SCRUM-57)
     parent_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("batches.id", ondelete="SET NULL"),
@@ -157,6 +167,10 @@ class Batch(Base):
 
     # Quan hệ N-1: nhiều lô có thể thuộc về một vùng trồng.
     farm: Mapped["Farm"] = relationship(back_populates="batches")
+
+    # Quan hệ N-1 tới địa điểm đang chứa lô. `lazy="joined"` để danh sách lô
+    # không phát sinh thêm truy vấn cho từng dòng (tránh N+1).
+    current_location: Mapped[Optional["Location"]] = relationship(lazy="joined")
 
     # Quan hệ tự tham chiếu (self-referential) cho phả hệ mẹ - con:
     parent: Mapped[Any] = relationship(
@@ -195,6 +209,16 @@ class Batch(Base):
         self.current_owner = value
         if value:
             self.current_holder_org = value
+
+    @property
+    def current_location_name(self) -> Optional[str]:
+        """Tên địa điểm đang chứa lô (``None`` nếu chưa gắn địa điểm)."""
+        return self.current_location.name if self.current_location is not None else None
+
+    @property
+    def current_location_address(self) -> Optional[str]:
+        """Địa chỉ địa điểm đang chứa lô (``None`` nếu chưa gắn địa điểm)."""
+        return self.current_location.address if self.current_location is not None else None
 
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return (
@@ -525,6 +549,7 @@ EVENT_TYPE_HANDOVER_ACCEPTED: str = "HANDOVER_ACCEPTED"
 EVENT_TYPE_HANDOVER_REJECTED: str = "HANDOVER_REJECTED"
 EVENT_TYPE_OWNER_CHANGED: str = "OWNER_CHANGED"
 EVENT_TYPE_BATCH_CONSUMED: str = "BATCH_CONSUMED"
+EVENT_TYPE_LOCATION_CHANGED: str = "LOCATION_CHANGED"
 
 BATCH_STATUS_AVAILABLE: str = "available"
 BATCH_STATUS_CONSUMED: str = "consumed"
@@ -588,6 +613,45 @@ class Handover(Base):
         )
 
 
+# ----------------------------------------------------------------- Locations (S-18) ---
+class Location(Base):
+    """Địa điểm (cửa hàng / kho / điểm bán) **thuộc một tổ chức** - bảng ``locations``.
+
+    Nhà phân phối có nhiều địa điểm trong hệ thống của mình; mỗi địa điểm gồm
+    tên và địa chỉ. Cột ``organization`` gắn địa điểm với đúng tổ chức đã khai
+    báo nên tổ chức khác không đọc/nhìn thấy địa điểm này (cách ly đa tổ chức).
+
+    Nhờ địa điểm, lô hàng ghi rõ đang nằm ở cửa hàng nào
+    (``Batch.current_location_id``) và lệnh thu hồi chỉ cần nhắm đúng điểm bán
+    đó thay vì rà soát toàn chuỗi cung ứng.
+
+    Attributes:
+        id: Khoá chính, tự tăng.
+        organization: Tên tổ chức sở hữu địa điểm (có index để lọc nhanh).
+        name: Tên địa điểm (ví dụ: "Cửa hàng Mỹ Xương") - duy nhất trong một tổ chức.
+        address: Địa chỉ của địa điểm (số nhà/ấp/xã/huyện/tỉnh).
+        created_at: Thời điểm khai báo (giờ UTC, tự sinh khi ghi).
+    """
+
+    __tablename__ = "locations"
+    __table_args__ = (
+        UniqueConstraint("organization", "name", name="uq_locations_org_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    address: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Location id={self.id} org={self.organization!r} name={self.name!r}>"
+
+
 __all__ = [
     "Base",
     "Batch",
@@ -596,6 +660,7 @@ __all__ = [
     "ColdChainThreshold",
     "ColdChainViolation",
     "Farm",
+    "Location",
     "Organization",
     "RecallOrder",
     "RecallOrderTarget",
@@ -619,6 +684,7 @@ __all__ = [
     "EVENT_TYPE_HANDOVER_REJECTED",
     "EVENT_TYPE_OWNER_CHANGED",
     "EVENT_TYPE_BATCH_CONSUMED",
+    "EVENT_TYPE_LOCATION_CHANGED",
     "BATCH_STATUS_AVAILABLE",
     "BATCH_STATUS_CONSUMED",
 ]

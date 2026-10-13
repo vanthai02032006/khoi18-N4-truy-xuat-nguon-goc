@@ -33,13 +33,16 @@ from app.events import record_event
 from app.models import (
     BATCH_STATUS_CONSUMED,
     EVENT_TYPE_BATCH_CONSUMED,
+    EVENT_TYPE_LOCATION_CHANGED,
     Batch,
     BatchEvent,
     Farm,
+    Location,
     User,
 )
 from app.schemas import (
     BatchCreate,
+    BatchLocationTransferRequest,
     BatchMergeRequest,
     BatchMergeResponse,
     BatchResponse,
@@ -386,6 +389,147 @@ def consume_batch(
     return batch
 
 
+# =========================================================================
+# BATCH LOCATION TRACKING (S-18 - ghi nhận lô đang nằm ở cửa hàng nào)
+# =========================================================================
+
+
+def _require_owned_location(db: Session, location_id: int, organization: str) -> Location:
+    """Lấy địa điểm theo ``id`` và kiểm tra địa điểm thuộc đúng tổ chức (S-18).
+
+    Args:
+        db: Session SQLAlchemy hiện tại.
+        location_id: ID địa điểm cần lấy.
+        organization: Tổ chức của người gọi (header ``X-Organization-Id``).
+
+    Returns:
+        Location: Địa điểm thuộc tổ chức đang gọi.
+
+    Raises:
+        HTTPException: **404** nếu không có địa điểm với ``location_id``;
+            **403** nếu địa điểm thuộc tổ chức khác.
+    """
+    location = db.get(Location, location_id)
+    if location is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy địa điểm có id={location_id}.",
+        )
+    if location.organization != organization:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Địa điểm #{location_id} thuộc tổ chức '{location.organization}', "
+                "bạn không có quyền sử dụng."
+            ),
+        )
+    return location
+
+
+@router.post(
+    "/{batch_id}/location",
+    response_model=BatchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Chuyển lô về một địa điểm (S-18)",
+    description=(
+        "Ghi nhận lô đang nằm ở địa điểm nào: cập nhật `current_location_id` của "
+        "lô và **ghi thêm sự kiện `LOCATION_CHANGED`** vào chuỗi băm bất biến để "
+        "lịch sử di chuyển của lô không thể sửa lén.\n\n"
+        "**Ràng buộc:** địa điểm phải thuộc đúng tổ chức đang giữ lô `403`; lô đã "
+        "tiêu thụ không di chuyển được `400`."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Lô đã tiêu thụ (không di chuyển được)."},
+        status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
+        status.HTTP_403_FORBIDDEN: {"description": "Lô/địa điểm thuộc tổ chức khác."},
+        status.HTTP_404_NOT_FOUND: {"description": "Không tìm thấy lô hoặc địa điểm."},
+    },
+)
+def move_batch_to_location(
+    payload: BatchLocationTransferRequest,
+    batch_id: int = Path(..., ge=1, description="ID lô nông sản cần chuyển."),
+    current_user: User = Depends(require_farmer),
+    current_org: str = Depends(require_tenant_context),
+    db: Session = Depends(get_db),
+) -> Batch:
+    """Chuyển lô về địa điểm và ghi sự kiện ``LOCATION_CHANGED`` vào chuỗi.
+
+    Args:
+        payload: ``location_id`` địa điểm nhận lô.
+        batch_id: ID lô cần chuyển.
+        current_user: Tài khoản đã đăng nhập (farmer hoặc admin).
+        current_org: Tổ chức của người gọi - phải là bên đang giữ lô.
+        db: Session SQLAlchemy từ dependency ``get_db``.
+
+    Returns:
+        Batch: Lô sau khi cập nhật địa điểm hiện tại (HTTP 200).
+
+    Raises:
+        HTTPException: 404 nếu không tìm thấy lô/địa điểm; 400 nếu lô đã tiêu thụ;
+            403 nếu lô hoặc địa điểm thuộc tổ chức khác; 500 nếu ghi database thất bại.
+    """
+    batch = db.scalar(select(Batch).where(Batch.id == batch_id).with_for_update())
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản có id={batch_id}.",
+        )
+    if batch.status == BATCH_STATUS_CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lô nông sản #{batch_id} đã tiêu thụ nên không thể chuyển địa điểm.",
+        )
+
+    effective_holder = batch.current_holder_org or "HTX Nông Nghiệp Số 4"
+    if current_user.role != "admin" and current_org != effective_holder:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Lô hàng đang do '{effective_holder}' nắm giữ, bạn không có quyền di chuyển.",
+        )
+
+    location = _require_owned_location(db, payload.location_id, current_org)
+
+    if not batch.batch_code:
+        batch.batch_code = f"LOT-{batch.id:04d}"
+
+    previous_location_id = batch.current_location_id
+    previous_location_name = batch.current_location_name
+    batch.current_location_id = location.id
+    record_event(
+        db,
+        batch_id=batch.id,
+        event_type=EVENT_TYPE_LOCATION_CHANGED,
+        actor=current_user.username,
+        organization=current_org,
+        payload={
+            "action": "LOCATION_CHANGED",
+            "batch_code": batch.batch_code or f"LOT-{batch.id:04d}",
+            "from_location_id": previous_location_id,
+            "from_location_name": previous_location_name,
+            "to_location_id": location.id,
+            "to_location_name": location.name,
+            "to_location_address": location.address,
+            "holding_organization": effective_holder,
+            "description": (
+                f"Lô #{batch.id} được chuyển tới địa điểm '{location.name}' "
+                f"({location.address})."
+            ),
+        },
+    )
+
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Không thể ghi nhận địa điểm hiện tại của lô.",
+        ) from exc
+
+    db.refresh(batch)
+    return batch
+
+
 @router.delete(
     "/{batch_id}",
     response_model=DeleteResponse,
@@ -476,13 +620,17 @@ def delete_batch(
     description=(
         "Tách một lô nông sản mẹ thành nhiều lô con theo danh sách khối lượng gửi lên. "
         "Nếu tổng khối lượng nhập vượt quá số dư còn lại của lô mẹ, từ chối với lỗi 400 Bad Request. "
-        "Tự động trừ số lượng của lô mẹ và ghi nhận sự kiện SPLIT vào chuỗi bất biến."
+        "Tự động trừ số lượng của lô mẹ và ghi nhận sự kiện SPLIT vào chuỗi bất biến.\n\n"
+        "**Chia lô cho nhiều cửa hàng (S-18):** mỗi dòng lô con có thể kèm `location_id` "
+        "để gắn lô con vào một địa điểm thuộc tổ chức đang giữ lô mẹ; bỏ trống thì lô "
+        "con giữ địa điểm hiện tại của lô mẹ."
     ),
 )
 def split_batch(
     batch_id: int = Path(..., ge=1, description="ID lô nông sản mẹ cần tách."),
     payload: BatchSplitRequest = ...,
     current_user: User = Depends(require_farmer),
+    current_org: str = Depends(require_tenant_context),
     db: Session = Depends(get_db),
 ) -> BatchSplitResponse:
     """Tách một lô nông sản mẹ thành danh sách các lô con (T-40)."""
@@ -513,10 +661,20 @@ def split_batch(
             ),
         )
 
-    # 3. Trừ khối lượng của lô mẹ
+    # 3. Kiểm tra địa điểm nhận hàng của từng dòng lô con (S-18): mỗi lô con chỉ
+    #    được gắn vào địa điểm thuộc chính tổ chức đang gửi request.
+    requested_location_ids = {
+        item.location_id for item in payload.items if item.location_id is not None
+    }
+    locations_by_id: dict[int, Location] = {
+        location_id: _require_owned_location(db, location_id, current_org)
+        for location_id in requested_location_ids
+    }
+
+    # 4. Trừ khối lượng của lô mẹ
     batch.quantity = round(batch.quantity - total_requested, 4)
 
-    # 4. Tạo các lô con
+    # 5. Tạo các lô con (mỗi lô con mang địa điểm riêng, mặc định theo lô mẹ)
     child_batches: list[Batch] = []
     for item in payload.items:
         child_code = generate_unique_batch_code(db)
@@ -527,6 +685,9 @@ def split_batch(
             harvest_date=batch.harvest_date,
             batch_code=child_code,
             current_holder_org=batch.current_holder_org,
+            current_location_id=(
+                item.location_id if item.location_id is not None else batch.current_location_id
+            ),
         )
         db.add(child)
         child_batches.append(child)
@@ -561,6 +722,12 @@ def split_batch(
             "id": c.id,
             "batch_code": c.batch_code or f"LOT-{c.id:04d}",
             "quantity": c.quantity,
+            "location_id": c.current_location_id,
+            "location_name": (
+                locations_by_id[c.current_location_id].name
+                if c.current_location_id in locations_by_id
+                else c.current_location_name
+            ),
         }
         for c in child_batches
     ]
@@ -608,6 +775,12 @@ def split_batch(
             "parent_batch_id": batch.id,
             "parent_batch_code": parent_code,
             "initial_quantity": child.quantity,
+            "location_id": child.current_location_id,
+            "location_name": (
+                locations_by_id[child.current_location_id].name
+                if child.current_location_id in locations_by_id
+                else child.current_location_name
+            ),
         }
         birth_payload_str = json.dumps(birth_payload_dict, ensure_ascii=False)
         birth_prev_hash = "0" * 64

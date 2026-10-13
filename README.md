@@ -88,3 +88,10 @@ $env:PYTHONPATH='backend'
 python -m pytest tests/ -v
 ```
 Toàn bộ test suite kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
+
+### 5. Địa điểm / cửa hàng & vị trí hiện tại của lô (S-18 — ước lượng thô 3 SP)
+
+- **Story:** *Là nhà phân phối, tôi muốn ghi nhận lô đang nằm ở cửa hàng nào trong hệ thống của tôi để thu hồi chỉ đúng cửa hàng thay vì lục cả chuỗi.*
+- **Bảng dữ liệu:** `locations` (`organization`, `name`, `address` — tên duy nhất trong một tổ chức) và cột `batches.current_location_id`.
+- **Endpoint:** `POST /locations` (khai báo địa điểm thuộc tổ chức tôi), `GET /locations` (chỉ địa điểm của tổ chức tôi), `POST /batches/{id}/location` (ghi nhận lô đang ở cửa hàng nào + sự kiện `LOCATION_CHANGED` vào chuỗi băm), `GET /locations/{id}/batches` (tra cứu thu hồi đúng điểm bán). Phép tách ở S-17 nay nhận `location_id` trên từng dòng lô con.
+- **Kiểm thử:** [`tests/test_batch_location_tracking.py`](tests/test_batch_location_tracking.py) — 7 ca bám sát 3 tiêu chí nghiệm thu (khai báo địa điểm thuộc tổ chức tôi, chuyển lô ghi địa điểm + sự kiện, tách lô cho nhiều cửa hàng) kèm các ca bị chặn (`403`/`404`/`400`).
