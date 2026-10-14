@@ -56,6 +56,7 @@ from app.schemas import (
     BatchSplitRequest,
     BatchSplitResponse,
     BatchUpdate,
+    ConsumeBatchRequest,
     DeleteResponse,
     HandoverActionResponse,
     HandoverInitiateRequest,
@@ -330,19 +331,43 @@ def update_batch(
     "/{batch_id}/consume",
     response_model=BatchResponse,
     status_code=status.HTTP_200_OK,
-    summary="Đánh dấu lô đã bán hết",
+    summary="Ghi nhận lô đã bán cho người tiêu dùng (bán một phần hoặc bán hết)",
     description=(
-        "Đánh dấu lô đã tới tay người mua: đưa khối lượng còn lại về 0, "
-        "chuyển trạng thái sang `consumed` và ghi sự kiện vào chuỗi bất biến."
+        "Ghi nhận khối lượng của lô đã tới tay người mua (S-20):\n\n"
+        "- **Bán một phần** (`{\"quantity\": 60}`): phần đã bán cộng vào "
+        "`consumed_quantity` (đã ra thị trường), phần còn lại vẫn nằm ở cửa hàng "
+        "để thu hồi (`quantity` > 0, trạng thái giữ `available`).\n"
+        "- **Bán hết** (không gửi body hoặc bỏ trống `quantity`): khối lượng còn "
+        "lại về 0 và lô chuyển trạng thái `consumed`.\n\n"
+        "Mỗi lần ghi nhận đều thêm một sự kiện `BATCH_CONSUMED` (kèm khối lượng "
+        "đã bán / còn lại) vào chuỗi băm bất biến của lô."
     ),
 )
 def consume_batch(
-    batch_id: int = Path(..., ge=1, description="ID lô đã bán hết."),
+    payload: ConsumeBatchRequest | None = None,
+    batch_id: int = Path(..., ge=1, description="ID lô cần ghi nhận đã bán."),
     current_user: User = Depends(require_farmer),
     current_org: str = Depends(require_tenant_context),
     db: Session = Depends(get_db),
 ) -> Batch:
-    """Đánh dấu lô hiện tại đã bán hết và ghi nhận vào chuỗi sự kiện."""
+    """Ghi nhận khối lượng đã bán cho người tiêu dùng và ghi vào chuỗi sự kiện.
+
+    Args:
+        payload: Tuỳ chọn ``quantity`` (khối lượng bán lần này) và ``note``. Bỏ
+            trống nghĩa là bán hết phần còn lại của lô (hành vi cũ).
+        batch_id: ID lô cần ghi nhận.
+        current_user: Tài khoản đã đăng nhập (farmer hoặc admin).
+        current_org: Tổ chức của người gọi - phải là bên đang giữ lô.
+        db: Session SQLAlchemy từ dependency ``get_db``.
+
+    Returns:
+        Batch: Lô sau khi cập nhật (HTTP 200).
+
+    Raises:
+        HTTPException: 404 nếu không tìm thấy lô; 400 nếu lô đã tiêu thụ hoặc
+            ``quantity`` vượt quá khối lượng còn lại; 403 nếu lô thuộc tổ chức
+            khác; 500 nếu ghi database thất bại.
+    """
     batch = db.scalar(
         select(Batch).where(Batch.id == batch_id).with_for_update()
     )
@@ -365,10 +390,40 @@ def consume_batch(
         )
 
     previous_quantity = batch.quantity
+    sold_quantity = (
+        payload.quantity if payload is not None and payload.quantity else previous_quantity
+    )
+    if sold_quantity > previous_quantity:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Khối lượng bán ({sold_quantity} kg) vượt quá khối lượng còn lại "
+                f"của lô ({previous_quantity} kg)."
+            ),
+        )
+
     if not batch.batch_code:
         batch.batch_code = f"LOT-{batch.id:04d}"
-    batch.quantity = 0
-    batch.status = BATCH_STATUS_CONSUMED
+
+    sold_quantity = round(sold_quantity, 4)
+    batch.quantity = round(previous_quantity - sold_quantity, 4)
+    batch.consumed_quantity = round((batch.consumed_quantity or 0.0) + sold_quantity, 4)
+    is_sold_out = batch.quantity <= 0
+    if is_sold_out:
+        batch.quantity = 0
+        batch.status = BATCH_STATUS_CONSUMED
+
+    note = (payload.note or "").strip() if payload is not None else ""
+    if is_sold_out:
+        description = f"Lô #{batch.id} ({batch.product_name}) đã bán hết và tới tay người mua."
+    else:
+        description = (
+            f"Lô #{batch.id} ({batch.product_name}) đã bán {sold_quantity} kg cho "
+            f"người tiêu dùng, còn lại {batch.quantity} kg để thu hồi."
+        )
+    if note:
+        description = f"{description} Ghi chú: {note}"
+
     record_event(
         db,
         batch_id=batch.id,
@@ -378,9 +433,13 @@ def consume_batch(
         payload={
             "action": "BATCH_CONSUMED",
             "previous_quantity": previous_quantity,
-            "remaining_quantity": 0,
-            "status": BATCH_STATUS_CONSUMED,
-            "description": f"Lô #{batch.id} ({batch.product_name}) đã bán hết và tới tay người mua.",
+            "sold_quantity": sold_quantity,
+            "total_consumed_quantity": batch.consumed_quantity,
+            "remaining_quantity": batch.quantity,
+            "is_sold_out": is_sold_out,
+            "status": batch.status,
+            "note": note,
+            "description": description,
         },
     )
 

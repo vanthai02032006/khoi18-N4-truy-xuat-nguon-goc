@@ -101,3 +101,10 @@ Toàn bộ test suite kiểm tra song song (concurrency), kiểm chứng phả h
 - **Story:** *Là cán bộ kiểm tra, tôi muốn đánh dấu một lô có sự cố và mở lệnh thu hồi để bắt đầu quy trình xử lý ngay.*
 - **Endpoint:** `POST /batches/{id}/incident` (inspector **hoặc** admin) — đánh dấu lô có sự cố kèm lý do, tạo **lệnh thu hồi có mã riêng** (`ORD-REC-xxxx`) gắn lô và ghi sự kiện `INCIDENT_FLAGGED` vào chuỗi băm bất biến. Vai trò khác gọi → `403`; lô đã có lệnh `IN_PROGRESS` → `409` kèm mã lệnh đang mở (`open_order_code`) để tránh mở trùng.
 - **Kiểm thử:** [`tests/test_batch_incident_recall.py`](tests/test_batch_incident_recall.py) — 7 ca bám sát 3 tiêu chí nghiệm thu (tạo lệnh + sự kiện vào chuỗi, `403` với vai trò khác, `409` trỏ tới lệnh đang mở) kèm ca biên `401`/`404` và mở lệnh mới sau khi lệnh cũ hoàn tất.
+
+### 7. Kế hoạch thu hồi theo lô & cửa hàng (S-20 — ước lượng thô 3 SP)
+
+- **Story:** *Là nhà phân phối, tôi muốn biết chính xác lô nào ở cửa hàng nào và còn bao nhiêu để thu hồi đúng chỗ thay vì lục cả kho.*
+- **Bảng dữ liệu:** `recall_order_batches` (lệnh thu hồi ↔ nhiều lô) và cột `batches.consumed_quantity` (khối lượng đã bán cho người tiêu dùng — phần còn lại nằm ở `batches.quantity`).
+- **Endpoint:** `POST /orders` nhận `batch_ids` (nhiều lô) hoặc `product_name` (gom mọi lô cùng sản phẩm) và ghi sự kiện `RECALL_ISSUED` vào chuỗi băm của từng lô; `GET /orders/{id}/recovery-plan` trả **từng lô kèm tổ chức, địa điểm, khối lượng còn lại và khối lượng đã tiêu thụ**, phần tổng hợp **còn thu hồi được vs đã ra thị trường** (`recallable_quantity`/`consumed_quantity`/`recallable_ratio`) và danh sách lô **gom theo địa điểm** để đi thu hồi từng chỗ một; `POST /batches/{id}/consume` nhận `{"quantity": n}` để ghi **bán một phần** (bỏ trống = bán hết như trước).
+- **Kiểm thử:** [`tests/test_recall_recovery_plan.py`](tests/test_recall_recovery_plan.py) — 10 ca bám sát 2 tiêu chí nghiệm thu (lệnh 20 lô ở 3 cửa hàng, bán một phần/bán hết, gom theo tên sản phẩm, sự kiện ghi cho từng lô) kèm các ca bị chặn (`400`/`401`/`404`).

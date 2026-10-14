@@ -317,7 +317,22 @@ class BatchResponse(BaseModel):
     batch_code: str = Field(..., description="Mã lô sinh tự động (Unique Batch Code).", examples=["LOT-20261007-0001"])
     farm_id: int = Field(..., description="ID vùng trồng xuất xứ.", examples=[1])
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
-    quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
+    quantity: float = Field(..., description="Số lượng / khối lượng **còn lại** của lô (kg).")
+    consumed_quantity: float = Field(
+        default=0.0,
+        description="Khối lượng đã bán cho người tiêu dùng - đã ra thị trường (kg) - S-20.",
+        examples=[150.5],
+    )
+    remaining_quantity: float = Field(
+        default=0.0,
+        description="Khối lượng còn lại, còn thu hồi được (bằng `quantity`) - S-20.",
+        examples=[349.5],
+    )
+    total_quantity: float = Field(
+        default=0.0,
+        description="Tổng khối lượng của lô = còn lại + đã tiêu thụ (kg) - S-20.",
+        examples=[500.0],
+    )
     status: str = Field(..., description="Trạng thái lô: available (còn hàng) hoặc consumed (đã tiêu thụ).")
     harvest_date: date = Field(..., description="Ngày thu hoạch.")
     current_holder_org: str = Field(
@@ -555,6 +570,21 @@ class RecallOrderCreate(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500, description="Lý do ban hành lệnh.")
     description: str | None = Field(default=None, max_length=1000, description="Mô tả chi tiết và hướng dẫn xử lý.")
     batch_id: int | None = Field(default=None, description="ID lô nông sản liên quan (nếu có).")
+    batch_ids: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Danh sách nhiều lô thuộc phạm vi lệnh thu hồi (S-20) - ví dụ 20 lô "
+            "đang nằm ở nhiều cửa hàng."
+        ),
+    )
+    product_name: str | None = Field(
+        default=None,
+        max_length=255,
+        description=(
+            "Phạm vi theo tên sản phẩm (S-20): tự gom **mọi lô cùng tên sản phẩm** "
+            "vào lệnh thay vì liệt kê từng ID lô."
+        ),
+    )
     target_organizations: list[str] = Field(..., min_length=1, description="Danh sách các tổ chức liên quan phải xác nhận.")
 
 
@@ -603,6 +633,16 @@ class RecallOrderResponse(BaseModel):
     progress_ratio: str  # Ví dụ "3/5"
     is_completed: bool
     pending_organizations: list[str]  # Tên các bên chưa xong
+
+    # Phạm vi lô của lệnh (S-20): lệnh có thể trải trên nhiều lô ở nhiều cửa hàng.
+    batch_ids: list[int] = Field(
+        default_factory=list,
+        description="Danh sách ID các lô thuộc phạm vi lệnh thu hồi (S-20).",
+    )
+    batch_count: int = Field(
+        default=0,
+        description="Số lô thuộc phạm vi lệnh (1 với lệnh mở từ sự cố một lô ở S-19).",
+    )
 
 
 class RecallOrderConfirmResponse(BaseModel):
@@ -1165,4 +1205,106 @@ class LocationBatchesResponse(BaseModel):
     total_batches: int = Field(..., description="Số lô hiện có mặt tại địa điểm.")
     total_quantity: float = Field(..., description="Tổng khối lượng (kg) đang nằm tại địa điểm.")
     batches: list[BatchResponse] = Field(..., description="Danh sách lô hiện có mặt tại địa điểm.")
+
+
+# ------------------------------------------- Consume / Recall recovery plan (S-20) ---
+class ConsumeBatchRequest(BaseModel):
+    """Dữ liệu client gửi lên khi ghi nhận lô đã bán cho người tiêu dùng (S-20).
+
+    Bỏ trống ``quantity`` (hoặc không gửi body) = bán **hết** phần còn lại của lô,
+    giữ đúng hành vi cũ. Truyền ``quantity`` = bán **một phần**: phần còn lại vẫn
+    nằm trong kho để thu hồi, phần đã bán được cộng vào ``consumed_quantity``.
+
+    Ví dụ::
+
+        {"quantity": 60, "note": "Bán lẻ tại cửa hàng Mỹ Xương"}
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"quantity": 60, "note": "Bán lẻ tại cửa hàng"}}
+    )
+
+    quantity: float | None = Field(
+        default=None,
+        gt=0,
+        description="Khối lượng đã bán (kg); bỏ trống = bán hết phần còn lại của lô.",
+        examples=[60],
+    )
+    note: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Ghi chú cho lần bán (kênh bán, cửa hàng, hoá đơn...).",
+    )
+
+
+class RecallBatchResponse(BaseModel):
+    """Một lô trong phạm vi lệnh thu hồi, kèm chỗ đang để và khối lượng (S-20).
+
+    Nhà phân phối nhìn dòng này là biết **lô nào đang ở cửa hàng nào, còn bao
+    nhiêu để thu hồi và bao nhiêu đã ra thị trường** - không phải rà cả kho.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "batch_id": 12,
+                "batch_code": "LOT-0012",
+                "product_name": "Xoài Cát Chu",
+                "organization": "HTX Xoài Mỹ Xương",
+                "location_id": 3,
+                "location_name": "Cửa hàng Mỹ Xương",
+                "location_address": "Ấp Mỹ An, Xã Mỹ Xương, Đồng Tháp",
+                "remaining_quantity": 40.0,
+                "consumed_quantity": 60.0,
+                "total_quantity": 100.0,
+                "status": "available",
+                "is_recallable": True,
+            }
+        }
+    )
+
+    batch_id: int = Field(..., description="ID lô nông sản.")
+    batch_code: str = Field(..., description="Mã lô (mã in trên tem truy xuất).")
+    product_name: str = Field(..., description="Tên sản phẩm của lô.")
+    organization: str = Field(..., description="Tổ chức đang giữ lô.")
+    location_id: int | None = Field(default=None, description="ID địa điểm đang chứa lô.")
+    location_name: str | None = Field(default=None, description="Tên cửa hàng / kho đang chứa lô.")
+    location_address: str | None = Field(default=None, description="Địa chỉ địa điểm đang chứa lô.")
+    remaining_quantity: float = Field(..., description="Khối lượng còn lại, còn thu hồi được (kg).")
+    consumed_quantity: float = Field(..., description="Khối lượng đã bán cho người tiêu dùng (kg).")
+    total_quantity: float = Field(..., description="Tổng khối lượng của lô (kg).")
+    status: str = Field(..., description="Trạng thái lô: available hoặc consumed.")
+    is_recallable: bool = Field(..., description="Còn thu hồi được tại cửa hàng hay đã ra thị trường hết.")
+
+
+class RecallLocationGroupResponse(BaseModel):
+    """Nhóm lô thuộc lệnh theo **một địa điểm** - thu hồi đúng chỗ, không lục cả kho (S-20)."""
+
+    location_id: int | None = Field(default=None, description="ID địa điểm (null = lô chưa gắn địa điểm).")
+    location_name: str = Field(..., description="Tên cửa hàng / kho.")
+    location_address: str | None = Field(default=None, description="Địa chỉ địa điểm.")
+    batch_count: int = Field(..., description="Số lô của lệnh đang nằm tại địa điểm này.")
+    remaining_quantity: float = Field(..., description="Khối lượng còn thu hồi được tại địa điểm (kg).")
+    consumed_quantity: float = Field(..., description="Khối lượng đã ra thị trường từ địa điểm (kg).")
+
+
+class RecallRecoveryPlanResponse(BaseModel):
+    """Kế hoạch thu hồi của một lệnh: từng lô ở cửa hàng nào, còn/đã tiêu thụ bao nhiêu (S-20)."""
+
+    order_id: int = Field(..., description="ID lệnh thu hồi.")
+    order_code: str = Field(..., description="Mã lệnh thu hồi.")
+    status: str = Field(..., description="Trạng thái lệnh: IN_PROGRESS hoặc COMPLETED.")
+    total_batches: int = Field(..., description="Tổng số lô thuộc lệnh.")
+    recallable_batches: int = Field(..., description="Số lô còn hàng để thu hồi.")
+    consumed_batches: int = Field(..., description="Số lô đã bán hết, đã ra thị trường toàn bộ.")
+    total_quantity: float = Field(..., description="Tổng khối lượng của mọi lô trong lệnh (kg).")
+    recallable_quantity: float = Field(..., description="Khối lượng còn thu hồi được (kg).")
+    consumed_quantity: float = Field(..., description="Khối lượng đã ra thị trường (kg).")
+    recallable_ratio: str = Field(..., description='Tỷ lệ thu hồi được dạng "156/200" (kg còn lại / tổng).')
+    total_locations: int = Field(..., description="Số cửa hàng / kho phải cử người tới thu hồi.")
+    batches: list[RecallBatchResponse] = Field(..., description="Chi tiết từng lô trong lệnh.")
+    locations: list[RecallLocationGroupResponse] = Field(
+        ..., description="Các lô gom theo địa điểm để đi thu hồi từng chỗ một."
+    )
+
 

@@ -172,6 +172,8 @@ let editingBatchId = null;
 let editingProductId = null;
 let activeViewingOrderId = null;
 let editingThresholdId = null;
+// S-20: lô đang được ghi nhận bán cho người tiêu dùng trong modal.
+let activeConsumingBatchId = null;
 
 // Phiên đăng nhập hiện tại: { username, role, password } hoặc null (chưa đăng nhập).
 // Sprint 4 không dùng JWT: client giữ lại thông tin đăng nhập để gửi kèm header
@@ -638,7 +640,8 @@ function renderBatches() {
         </td>
         <td>${escapeHtml(farmLabel(batch.farm_id))}</td>
         <td><strong>${escapeHtml(batch.product_name)}</strong></td>
-        <td class="is-right font-mono">${formatNumber(batch.quantity)}</td>
+        <td class="is-right font-mono">${formatNumber(batch.remaining_quantity ?? batch.quantity)}</td>
+        <td class="is-right font-mono" style="color: ${batch.consumed_quantity > 0 ? "#c2410c" : "#94a3b8"};">${formatNumber(batch.consumed_quantity || 0)}</td>
         <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: ${batch.status === "consumed" ? "#f1f5f9" : "#ecfdf5"}; color: ${batch.status === "consumed" ? "#475569" : "#047857"}; border: 1px solid ${batch.status === "consumed" ? "#cbd5e1" : "#a7f3d0"};">${batch.status === "consumed" ? "Đã tiêu thụ" : "Còn hàng"}</span></td>
         <td>${escapeHtml(formatDate(batch.harvest_date))}</td>
         <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;">${escapeHtml(batch.current_holder_org || batch.owner || "HTX Nông Nghiệp Số 4")}</span></td>
@@ -674,7 +677,7 @@ function renderBatches() {
                     data-id="${escapeHtml(batch.id)}">Sửa</button>
                    <button class="btn btn--sm" style="background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa;"
                     data-action="consume" data-entity="batch" data-id="${escapeHtml(batch.id)}"
-                    title="Đánh dấu lô đã bán hết">Đã bán hết</button>`
+                    title="Ghi nhận khối lượng đã bán cho người tiêu dùng (bán một phần hoặc bán hết)">Ghi nhận bán</button>`
                 : ""
             }
             ${
@@ -820,21 +823,12 @@ async function deleteBatch(batchId) {
   }
 }
 
-/** Đánh dấu lô đã bán hết -> ``POST /batches/{id}/consume``. */
-async function consumeBatch(batchId) {
-  const batch = batches.find((item) => item.id === batchId);
-  const label = batch ? `#${batch.id} — ${batch.product_name}` : `#${batchId}`;
-  if (!window.confirm(`Xác nhận lô ${label} đã bán hết và tới tay người mua? Khối lượng sẽ về 0.`)) {
-    return;
-  }
-
-  try {
-    await apiRequest(`/batches/${batchId}/consume`, { method: "POST" });
-    toast(`Đã đánh dấu lô ${label} là đã tiêu thụ.`, "success");
-    await loadBatches($("batch-filter-search")?.value.trim() || "");
-  } catch (error) {
-    toast(`Không thể đánh dấu lô đã bán hết: ${error.message}`, "error");
-  }
+/**
+ * Ghi nhận lô đã bán cho người tiêu dùng (S-20).
+ * Mở modal để nhập khối lượng bán (một phần) hoặc để trống nghĩa là bán hết.
+ */
+function consumeBatch(batchId) {
+  openConsumeModal(batchId);
 }
 
 /**
@@ -866,6 +860,76 @@ async function flagBatchIncident(batchId) {
     await loadOrders();
   } catch (error) {
     toast(`Không thể mở lệnh thu hồi: ${error.message}`, "error");
+  }
+}
+
+/**
+ * Mở modal ghi nhận lô đã bán cho người tiêu dùng (S-20).
+ * Bán một phần thì lô vẫn còn hàng để thu hồi; bỏ trống khối lượng = bán hết.
+ */
+function openConsumeModal(batchId) {
+  const batch = batches.find((item) => item.id === batchId);
+  if (!batch) {
+    toast(`Không tìm thấy lô nông sản #${batchId}.`, "error");
+    return;
+  }
+
+  activeConsumingBatchId = batchId;
+  const remaining = batch.remaining_quantity ?? batch.quantity;
+  $("consume-modal-batch").textContent =
+    `LÔ ${batch.batch_code || `LOT-${batch.id}`} · ${batch.product_name} — còn lại ${formatNumber(remaining)} kg, đã bán ${formatNumber(batch.consumed_quantity || 0)} kg`;
+  $("consume-quantity").value = "";
+  $("consume-quantity").max = String(remaining);
+  $("consume-note").value = "";
+  $("consume-modal-hint").textContent =
+    `Bỏ trống: bán hết ${formatNumber(remaining)} kg và chuyển lô sang trạng thái “Đã tiêu thụ”.`;
+  $("consume-modal").hidden = false;
+}
+
+/** Đóng modal ghi nhận bán. */
+function closeConsumeModal() {
+  $("consume-modal").hidden = true;
+  activeConsumingBatchId = null;
+}
+
+/** Gửi khối lượng đã bán lên ``POST /batches/{id}/consume``. */
+async function confirmConsumeSale() {
+  if (activeConsumingBatchId === null) return;
+
+  const batch = batches.find((item) => item.id === activeConsumingBatchId);
+  const remaining = batch ? batch.remaining_quantity ?? batch.quantity : 0;
+  const raw = $("consume-quantity").value.trim();
+  const soldQuantity = raw ? Number(raw) : null;
+
+  if (raw && (!Number.isFinite(soldQuantity) || soldQuantity <= 0)) {
+    toast("Khối lượng bán phải là số lớn hơn 0.", "error");
+    return;
+  }
+  if (soldQuantity !== null && soldQuantity > remaining) {
+    toast(`Không thể bán ${formatNumber(soldQuantity)} kg vì lô chỉ còn ${formatNumber(remaining)} kg.`, "error");
+    return;
+  }
+
+  const note = $("consume-note").value.trim();
+  const confirmBtn = $("btn-confirm-consume");
+  setButtonLoading(confirmBtn, true, "Đang ghi nhận…", "Ghi nhận bán");
+  try {
+    const result = await apiRequest(`/batches/${activeConsumingBatchId}/consume`, {
+      method: "POST",
+      body: soldQuantity === null ? { note } : { quantity: soldQuantity, note },
+    });
+    toast(
+      result.status === "consumed"
+        ? `Lô ${result.batch_code} đã bán hết và tới tay người mua.`
+        : `Đã ghi nhận bán ${formatNumber(result.consumed_quantity)} kg — còn lại ${formatNumber(result.remaining_quantity)} kg để thu hồi.`,
+      "success"
+    );
+    closeConsumeModal();
+    await loadBatches($("batch-filter-search")?.value.trim() || "");
+  } catch (error) {
+    toast(`Không thể ghi nhận lô đã bán: ${error.message}`, "error");
+  } finally {
+    setButtonLoading(confirmBtn, false, "Đang ghi nhận…", "Ghi nhận bán");
   }
 }
 
@@ -1846,7 +1910,8 @@ async function loadLocationBatches(locationId) {
       <tr>
         <td class="id-cell font-mono" style="font-weight: 700; color: #047857;">${escapeHtml(batch.batch_code || `LOT-${batch.id}`)}</td>
         <td><strong>${escapeHtml(batch.product_name)}</strong></td>
-        <td class="is-right font-mono">${formatNumber(batch.quantity)}</td>
+        <td class="is-right font-mono">${formatNumber(batch.remaining_quantity ?? batch.quantity)}</td>
+        <td class="is-right font-mono" style="color: ${batch.consumed_quantity > 0 ? "#c2410c" : "#94a3b8"};">${formatNumber(batch.consumed_quantity || 0)}</td>
         <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: ${batch.status === "consumed" ? "#f1f5f9" : "#ecfdf5"}; color: ${batch.status === "consumed" ? "#475569" : "#047857"}; border: 1px solid ${batch.status === "consumed" ? "#cbd5e1" : "#a7f3d0"};">${batch.status === "consumed" ? "Đã tiêu thụ" : "Còn hàng"}</span></td>
       </tr>`
       )
@@ -1896,13 +1961,20 @@ function formatEventDetail(ev, payload) {
   } else if (t === "BATCH_CONSUMED") {
     badgeColor = "#c2410c";
     icon = "🛒";
-    title = "Đã bán hết / tới tay người mua";
+    const soldQty = payload.sold_quantity ?? payload.previous_quantity;
+    const soldOut = payload.is_sold_out ?? (payload.remaining_quantity === 0);
+    title = soldOut ? "Đã bán hết / tới tay người mua" : "Bán một phần cho người tiêu dùng (S-20)";
     bodyHtml = `
-      <div class="event-desc">Lô đã rời khỏi kệ phân phối và được chuyển sang trạng thái <strong>đã tiêu thụ</strong>.</div>
+      <div class="event-desc">${soldOut
+        ? "Lô đã rời khỏi kệ phân phối và được chuyển sang trạng thái <strong>đã tiêu thụ</strong>."
+        : `Đã bán <strong>${formatNumber(soldQty)} kg</strong>; phần còn lại vẫn đang ở cửa hàng để thu hồi.`}</div>
       <div class="event-chips">
-        <span class="event-chip">⚖️ Khối lượng trước khi bán hết: <strong>${formatNumber(payload.previous_quantity)} kg</strong></span>
-        <span class="event-chip">📦 Còn lại: <strong>0 kg</strong></span>
-      </div>`;
+        <span class="event-chip">⚖️ Khối lượng trước khi bán: <strong>${formatNumber(payload.previous_quantity)} kg</strong></span>
+        <span class="event-chip">🛒 Đã bán lần này: <strong>${formatNumber(soldQty)} kg</strong></span>
+        <span class="event-chip">📦 Còn lại: <strong>${formatNumber(payload.remaining_quantity ?? 0)} kg</strong></span>
+        ${payload.total_consumed_quantity !== undefined ? `<span class="event-chip">🏪 Tổng đã ra thị trường: <strong>${formatNumber(payload.total_consumed_quantity)} kg</strong></span>` : ""}
+      </div>
+      ${payload.note ? `<div class="event-subnote">Ghi chú: <strong>${escapeHtml(payload.note)}</strong></div>` : ""}`;
   } else if (t === "LOCATION_CHANGED") {
     badgeColor = "#0891b2";
     icon = "📍";
@@ -2261,6 +2333,10 @@ function renderOrders() {
         ? `<span style="color: #d97706; font-size: 0.82rem; font-weight: 600;">Chưa xong: ${escapeHtml(order.pending_organizations.join(", "))}</span>`
         : `<span style="color: #059669; font-size: 0.82rem; font-weight: 600;">✓ Tất cả đã xác nhận</span>`;
 
+      const scopeText = order.batch_count
+        ? `<span style="background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.78rem;">${order.batch_count} lô</span>`
+        : `<span style="color: #94a3b8; font-size: 0.8rem;">Chưa gắn lô</span>`;
+
       return `
         <tr>
           <td class="font-mono" style="font-weight: 700; color: #4338ca;">${escapeHtml(order.order_code)}</td>
@@ -2268,6 +2344,7 @@ function renderOrders() {
             <div style="font-weight: 600; color: #1e293b;">${escapeHtml(order.title)}</div>
             <div style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">Lý do: ${escapeHtml(order.reason)} ${order.batch_id ? `(Lô #${order.batch_id})` : ""}</div>
           </td>
+          <td class="is-center">${scopeText}</td>
           <td class="is-center font-mono" style="font-weight: 800; font-size: 1.05rem; color: ${progressColor};">
             ${escapeHtml(order.progress_ratio)}
           </td>
@@ -2293,10 +2370,22 @@ async function handleOrderSubmit(event) {
   const title = $("order-title").value.trim();
   const reason = $("order-reason").value.trim();
   const batchIdVal = $("order-batch-id").value.trim();
+  const batchIdsVal = $("order-batch-ids").value.trim();
+  const productScope = $("order-product-scope").value.trim();
   const targetsRaw = $("order-targets").value.trim();
 
   if (!title || !reason || !targetsRaw) {
     toast("Vui lòng điền đầy đủ tiêu đề, lý do và danh sách các bên liên quan.", "error");
+    return;
+  }
+
+  const batchIds = batchIdsVal
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map(Number);
+  if (batchIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+    toast("Danh sách ID lô chỉ nhận số nguyên dương, phân cách bằng dấu phẩy.", "error");
     return;
   }
 
@@ -2310,6 +2399,8 @@ async function handleOrderSubmit(event) {
     title,
     reason,
     batch_id: batchIdVal ? Number(batchIdVal) : null,
+    batch_ids: batchIds,
+    product_name: productScope || null,
     target_organizations: targetOrganizations,
   };
 
@@ -2321,7 +2412,8 @@ async function handleOrderSubmit(event) {
       method: "POST",
       body: payload,
     });
-    toast(`Đã ban hành lệnh ${res.order_code} thành công!`, "success");
+    const scopeText = res.batch_count ? ` (phạm vi ${res.batch_count} lô)` : "";
+    toast(`Đã ban hành lệnh ${res.order_code}${scopeText} thành công!`, "success");
     $("order-form").reset();
     $("order-targets").value = "HTX Trồng Trọt, Đơn Vị Vận Tải Lạnh, Kho Trung Chuyển, Nhà Máy Đóng Gói, Siêu Thị Phân Phối";
     await loadOrders();
@@ -2384,8 +2476,78 @@ async function openOrderModal(orderId) {
       .join("");
 
     backdrop.hidden = false;
+    await renderOrderRecoveryPlan(order.id);
   } catch (error) {
     toast(`Không tải được chi tiết lệnh: ${error.message}`, "error");
+  }
+}
+
+/**
+ * Vẽ **kế hoạch thu hồi** của lệnh (S-20): lô nào ở cửa hàng nào, còn bao nhiêu
+ * để thu hồi và bao nhiêu đã bán cho người tiêu dùng.
+ */
+async function renderOrderRecoveryPlan(orderId) {
+  const loading = $("order-plan-loading");
+  const block = $("order-plan-block");
+  if (!block) return;
+
+  block.hidden = true;
+  if (loading) {
+    loading.hidden = false;
+    loading.textContent = "Đang tải kế hoạch thu hồi…";
+  }
+
+  try {
+    const plan = await apiRequest(`/orders/${orderId}/recovery-plan`);
+    if (loading) loading.hidden = true;
+
+    $("order-plan-total-batches").textContent = plan.total_batches;
+    $("order-plan-recallable").textContent = `${formatNumber(plan.recallable_quantity)} kg`;
+    $("order-plan-consumed").textContent = `${formatNumber(plan.consumed_quantity)} kg`;
+    $("order-plan-locations").textContent = plan.total_locations;
+    $("order-plan-ratio").innerHTML =
+      `Còn thu hồi được <strong style="color:#047857;">${formatNumber(plan.recallable_quantity)} kg</strong> / tổng ` +
+      `<strong>${formatNumber(plan.total_quantity)} kg</strong> (${escapeHtml(plan.recallable_ratio)}) · ` +
+      `đã ra thị trường <strong style="color:#c2410c;">${formatNumber(plan.consumed_quantity)} kg</strong>. ` +
+      `${plan.consumed_batches} lô đã bán hết không còn gì để thu hồi.`;
+
+    const rows = Array.isArray(plan.batches) ? plan.batches : [];
+    $("order-plan-table-body").innerHTML = rows
+      .map(
+        (row) => `
+        <tr>
+          <td class="font-mono" style="font-weight: 700; color: #047857;">${escapeHtml(row.batch_code)}</td>
+          <td>${escapeHtml(row.product_name)}</td>
+          <td>${escapeHtml(row.organization || "—")}</td>
+          <td>${escapeHtml(row.location_name || "Chưa gắn địa điểm")}${row.location_address ? `<div style="font-size: 0.72rem; color: #94a3b8;">${escapeHtml(row.location_address)}</div>` : ""}</td>
+          <td class="is-right font-mono" style="font-weight: 700; color: ${row.is_recallable ? "#047857" : "#94a3b8"};">${formatNumber(row.remaining_quantity)}</td>
+          <td class="is-right font-mono" style="color: ${row.consumed_quantity > 0 ? "#c2410c" : "#94a3b8"};">${formatNumber(row.consumed_quantity)}</td>
+        </tr>`
+      )
+      .join("");
+    $("order-plan-empty").hidden = rows.length > 0;
+
+    const groups = Array.isArray(plan.locations) ? plan.locations : [];
+    $("order-plan-groups-wrap").hidden = groups.length === 0;
+    $("order-plan-groups").innerHTML = groups
+      .map(
+        (group) => `
+        <div style="display: flex; justify-content: space-between; gap: 10px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 6px; background: #f8fafc;">
+          <div style="font-size: 0.85rem; color: #1e293b;">
+            <strong>${escapeHtml(group.location_name)}</strong>
+            <span style="color: #64748b;"> · ${group.batch_count} lô</span>
+          </div>
+          <div class="font-mono" style="font-size: 0.82rem; white-space: nowrap;">
+            <span style="color: #047857; font-weight: 700;">còn ${formatNumber(group.remaining_quantity)} kg</span>
+            <span style="color: #c2410c;"> · đã bán ${formatNumber(group.consumed_quantity)} kg</span>
+          </div>
+        </div>`
+      )
+      .join("");
+
+    block.hidden = false;
+  } catch (error) {
+    if (loading) loading.textContent = `Không tải được kế hoạch thu hồi: ${error.message}`;
   }
 }
 
@@ -2845,6 +3007,24 @@ function bindEvents() {
   }
   if ($("btn-confirm-location-move")) {
     $("btn-confirm-location-move").addEventListener("click", confirmLocationMove);
+  }
+  // Ghi nhận bán cho người tiêu dùng (S-20)
+  if ($("btn-close-consume")) {
+    $("btn-close-consume").addEventListener("click", closeConsumeModal);
+  }
+  if ($("btn-cancel-consume")) {
+    $("btn-cancel-consume").addEventListener("click", closeConsumeModal);
+  }
+  if ($("btn-confirm-consume")) {
+    $("btn-confirm-consume").addEventListener("click", confirmConsumeSale);
+  }
+  if ($("consume-quantity")) {
+    $("consume-quantity").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        confirmConsumeSale();
+      }
+    });
   }
 
   // Sự kiện bàn giao chuỗi cung ứng (S-35)

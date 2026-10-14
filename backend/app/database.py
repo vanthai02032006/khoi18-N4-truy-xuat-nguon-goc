@@ -359,6 +359,25 @@ def _migrate_sqlite_schema() -> None:
                     conn.exec_driver_sql(
                         "ALTER TABLE batches ADD COLUMN current_location_id INTEGER REFERENCES locations(id) ON DELETE SET NULL"
                     )
+                if "consumed_quantity" not in existing_cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE batches ADD COLUMN consumed_quantity FLOAT NOT NULL DEFAULT 0"
+                    )
+                    # Lô đã bán hết trước khi có S-20: khôi phục lại khối lượng đã bán
+                    # từ sự kiện BATCH_CONSUMED gần nhất để báo cáo thu hồi không bị thiếu.
+                    try:
+                        conn.exec_driver_sql(
+                            "UPDATE batches SET consumed_quantity = COALESCE(("
+                            "  SELECT CAST(json_extract(payload, '$.previous_quantity') AS REAL)"
+                            "  FROM batch_events"
+                            "  WHERE batch_events.batch_id = batches.id"
+                            "    AND event_type = 'BATCH_CONSUMED'"
+                            "  ORDER BY batch_events.id DESC LIMIT 1"
+                            "), 0) WHERE status = 'consumed' AND consumed_quantity = 0"
+                        )
+                    except Exception:
+                        # SQLite không bật JSON1: bỏ qua bước khôi phục, cột vẫn có giá trị 0.
+                        pass
             conn.commit()
     except Exception:
         pass

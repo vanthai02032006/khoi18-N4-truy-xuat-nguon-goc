@@ -168,6 +168,9 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | GET | `/locations/{location_id}/batches` | Tra cứu lô đang nằm tại một địa điểm (thu hồi đúng cửa hàng) | farmer **hoặc** admin | `200` · `401` · `403` địa điểm của tổ chức khác · `404` không tìm thấy |
 | POST | `/batches/{batch_id}/location` | Ghi nhận lô đang ở địa điểm nào + ghi sự kiện `LOCATION_CHANGED` vào chuỗi | farmer **hoặc** admin | `200` · `400` lô đã tiêu thụ · `403` lô/địa điểm của tổ chức khác · `404` không tìm thấy |
 | POST | `/batches/{batch_id}/incident` | Đánh dấu lô có sự cố kèm lý do → mở lệnh thu hồi (mã riêng) + ghi sự kiện `INCIDENT_FLAGGED` | **inspector hoặc admin** | `201` · `401` · `403` sai vai trò · `404` không tìm thấy lô · `409` lô đã có lệnh đang mở |
+| POST | `/batches/{batch_id}/consume` | Ghi nhận lô đã bán cho người tiêu dùng: bán một phần (`{"quantity": 60}`) hoặc bán hết (bỏ trống body) + sự kiện `BATCH_CONSUMED` | farmer **hoặc** admin | `200` · `400` lô đã tiêu thụ / bán vượt khối lượng còn lại · `403` lô của tổ chức khác · `404` không tìm thấy |
+| POST | `/orders` | Ban hành lệnh kiểm tra / thu hồi, nhận `batch_id`, `batch_ids` (nhiều lô) hoặc `product_name` (gom theo sản phẩm) | **inspector hoặc admin** | `201` · `400` phạm vi không hợp lệ · `404` lô không tồn tại · `422` |
+| GET | `/orders/{order_id}/recovery-plan` | **Kế hoạch thu hồi:** từng lô kèm tổ chức, địa điểm, khối lượng còn lại & đã tiêu thụ; tổng còn thu hồi được / đã ra thị trường; nhóm theo cửa hàng | đã đăng nhập | `200` · `401` · `404` không tìm thấy lệnh |
 | GET | `/users` | Danh sách tài khoản (không kèm mật khẩu) | **chỉ admin** | `200` · `401` · `403` sai vai trò |
 
 > ✅ **Sprint 5 hoàn thiện CRUD:** cả Farm và Batch đều có đủ `POST` / `GET` /
@@ -229,14 +232,23 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | `id` | INTEGER | Khoá chính, tự tăng |
 | `farm_id` | INTEGER | **Khoá ngoại → `farms.id`**, bắt buộc, có index |
 | `product_name` | VARCHAR(255) | Bắt buộc |
-| `quantity` | FLOAT | Bắt buộc, **≥ 0** (đơn vị kg; 0 khi đã tiêu thụ) |
+| `quantity` | FLOAT | Bắt buộc, **≥ 0** (đơn vị kg; **khối lượng còn lại** - về 0 khi đã tiêu thụ hết) |
+| `consumed_quantity` | FLOAT | Bắt buộc, mặc định `0` - **khối lượng đã bán cho người tiêu dùng** (S-20) |
 | `status` | VARCHAR(20) | Bắt buộc: `available` (còn hàng) hoặc `consumed` (đã tiêu thụ) |
 | `harvest_date` | DATE | Bắt buộc, định dạng `yyyy-MM-dd` |
 
-`POST /batches/{batch_id}/consume` đánh dấu lô đã bán hết: đặt `quantity` về 0,
-chuyển `status` sang `consumed` và ghi sự kiện `BATCH_CONSUMED` vào chuỗi sự kiện.
-Lô đã tiêu thụ không thể sửa, tách hoặc bàn giao. Lô đang có từ trước được tự
-động bổ sung trạng thái `available` khi khởi động ứng dụng.
+`POST /batches/{batch_id}/consume` ghi nhận lô đã bán cho người tiêu dùng (S-20):
+
+- **Bán một phần** (`{"quantity": 60}`): `quantity` giảm còn phần để thu hồi,
+  `consumed_quantity` tăng lên phần đã ra thị trường, lô **vẫn** ở trạng thái
+  `available` vì còn hàng trong kho.
+- **Bán hết** (không gửi body hoặc bỏ trống `quantity`): `quantity` về 0 và
+  `status` chuyển sang `consumed`.
+
+Mỗi lần ghi nhận đều thêm sự kiện `BATCH_CONSUMED` (kèm `sold_quantity`,
+`total_consumed_quantity`, `remaining_quantity`) vào chuỗi sự kiện. Lô đã tiêu
+thụ không thể sửa, tách hoặc bàn giao. Lô đang có từ trước được tự động bổ sung
+trạng thái `available` và cột `consumed_quantity` khi khởi động ứng dụng.
 
 **Quan hệ:** `Farm 1 ---- N Batch`, khai báo 2 chiều trong `app/models.py` bằng
 `relationship(back_populates=...)`:
@@ -326,6 +338,56 @@ Nghiệp vụ dùng chung (`build_order_response`, `generate_unique_order_code`,
 **Kiểm thử:** [`tests/test_batch_incident_recall.py`](../tests/test_batch_incident_recall.py)
 — 7 ca bám sát 3 tiêu chí nghiệm thu kèm các ca biên (`401`, `403`, `404`, `409`,
 mở lệnh mới sau khi lệnh cũ đã hoàn tất).
+
+### Kế hoạch thu hồi theo lô & cửa hàng (S-20)
+
+Nhà phân phối phải đi thu hồi **đúng chỗ**, nên khi mở một lệnh thu hồi gồm nhiều
+lô, cần thấy từng lô **đang ở cửa hàng nào, còn bao nhiêu để thu hồi và bao nhiêu
+đã ra thị trường** - thay vì rà soát cả kho.
+
+| Tiêu chí | Cách hệ thống đáp ứng |
+| --- | --- |
+| Lệnh thu hồi có 20 lô, khi xem thì mỗi lô kèm tổ chức, địa điểm, khối lượng còn lại và khối lượng đã tiêu thụ | `POST /orders` nhận **`batch_ids`** (nhiều lô) hoặc **`product_name`** (gom mọi lô cùng sản phẩm); mỗi cặp (lệnh, lô) lưu vào bảng **`recall_order_batches`** và ghi sự kiện `RECALL_ISSUED` vào chuỗi băm của **từng lô**. `GET /orders/{id}/recovery-plan` trả `batches[]` với `organization` (tổ chức đang giữ), `location_name`/`location_address` (địa điểm hiện tại), `remaining_quantity` (còn lại) và `consumed_quantity` (đã tiêu thụ) |
+| Một phần đã bán cho người tiêu dùng, khi xem tổng thì thấy rõ bao nhiêu còn thu hồi được và bao nhiêu đã ra thị trường | `POST /batches/{id}/consume` nay nhận `{"quantity": n}` để ghi **bán một phần** (cộng dồn vào `batches.consumed_quantity`, phần còn lại vẫn để thu hồi). Kế hoạch thu hồi trả `recallable_quantity` / `consumed_quantity` / `total_quantity` kèm `recallable_ratio` dạng `"1835/2000"` và `consumed_batches` (số lô đã bán hết, hết đường thu hồi) |
+| Đi thu hồi đúng chỗ thay vì lục cả kho | `locations[]` trong phản hồi gom các lô của lệnh **theo từng địa điểm** (số lô, kg còn thu hồi được, kg đã bán), sắp xếp A→Z theo tên cửa hàng |
+
+Ví dụ `GET /orders/3/recovery-plan`:
+
+```json
+{
+  "order_id": 3, "order_code": "ORD-REC-0003", "status": "IN_PROGRESS",
+  "total_batches": 20, "recallable_batches": 19, "consumed_batches": 1,
+  "total_quantity": 2000.0,
+  "recallable_quantity": 1835.0,
+  "consumed_quantity": 165.0,
+  "recallable_ratio": "1835/2000",
+  "total_locations": 3,
+  "batches": [
+    {"batch_id": 12, "batch_code": "LOT-0012", "product_name": "Xoài Cát Chu",
+     "organization": "HTX Nông Nghiệp Số 4", "location_id": 1,
+     "location_name": "Cửa hàng Mỹ Xương", "location_address": "Ấp Mỹ An, Xã Mỹ Xương, Đồng Tháp",
+     "remaining_quantity": 60.0, "consumed_quantity": 40.0, "total_quantity": 100.0,
+     "status": "available", "is_recallable": true}
+  ],
+  "locations": [
+    {"location_id": 1, "location_name": "Cửa hàng Mỹ Xương", "location_address": "Ấp Mỹ An, Xã Mỹ Xương, Đồng Tháp",
+     "batch_count": 8, "remaining_quantity": 760.0, "consumed_quantity": 40.0}
+  ]
+}
+```
+
+**Ràng buộc & lỗi:** `batch_ids` có ID không tồn tại hoặc `product_name` không khớp
+lô nào → `400` kèm danh sách/tên không tìm thấy; bán vượt khối lượng còn lại → `400`;
+kế hoạch thu hồi yêu cầu đăng nhập (`401`) và trả `404` nếu lệnh không tồn tại.
+Lệnh cũ hoặc lệnh mở từ sự cố một lô (S-19) vẫn xem được kế hoạch với đúng lô đó
+(không cần migrate dữ liệu: `load_order_batches` đọc bảng liên kết, thiếu thì lấy `batch_id`).
+
+Khi lệnh hoàn tất (bên cuối cùng xác nhận), sự kiện `RECALL_COMPLETED` cũng được
+ghi vào chuỗi băm của **mọi lô** thuộc lệnh - nhờ vậy hồ sơ neo đúng ở từng cửa hàng.
+
+**Kiểm thử:** [`tests/test_recall_recovery_plan.py`](../tests/test_recall_recovery_plan.py)
+— 10 ca bám sát 2 tiêu chí nghiệm thu (lệnh 20 lô ở 3 cửa hàng, bán một phần/bán hết,
+gom theo tên sản phẩm, sự kiện ghi cho từng lô) kèm các ca chặn (`400`, `401`, `404`).
 
 ### Cấu trúc bảng `users` (Sprint 4)
 
@@ -649,3 +711,4 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
 | S-18 | **Địa điểm / cửa hàng & vị trí hiện tại của lô:** model `Location` → bảng `locations` (`organization`, `name`, `address`; tên duy nhất trong một tổ chức) và cột `batches.current_location_id` (FK → `locations.id`, tự migrate cho DB cũ); router mới `app/routers/locations.py` với `POST /locations`, `GET /locations` (chỉ địa điểm của tổ chức đang gọi), `GET /locations/{id}/batches` (tra cứu thu hồi theo cửa hàng); `POST /batches/{batch_id}/location` ghi địa điểm hiện tại + sự kiện `LOCATION_CHANGED`; `POST /batches/{batch_id}/split` (S-17) nhận `location_id` trên từng dòng lô con. Frontend: tab **ĐỊA ĐIỂM**, bảng địa điểm, khối tra cứu thu hồi, cột địa điểm hiện tại trong bảng lô, modal **Chuyển lô về địa điểm** và cột chọn địa điểm trong modal tách lô. |
 | S-19 | **Đánh dấu lô có sự cố & mở lệnh thu hồi (3 SP):** endpoint `POST /batches/{batch_id}/incident` (dependency `require_inspector` → `403` với vai trò khác) tạo `RecallOrder` mã riêng (`ORD-REC-xxxx`) gắn lô + ghi sự kiện `INCIDENT_FLAGGED` vào chuỗi băm; chặn mở trùng bằng `409` kèm mã lệnh đang mở. Gom nghiệp vụ dùng chung vào module mới `app/recall_orders.py` (`build_order_response`, `generate_unique_order_code`, `find_open_order_for_batch`, `open_recall_order_for_batch`); hằng số `EVENT_TYPE_INCIDENT_FLAGGED`; schema `BatchIncidentRequest`. Frontend: nút **Đánh dấu sự cố** trên bảng lô và nhánh hiển thị sự kiện `INCIDENT_FLAGGED` trong dòng thời gian. |
+| S-20 | **Kế hoạch thu hồi theo lô & cửa hàng (3 SP):** model `RecallOrderBatch` → bảng `recall_order_batches` (lệnh N-N lô) và cột `batches.consumed_quantity` (khối lượng đã bán ra thị trường, tự migrate + khôi phục từ sự kiện `BATCH_CONSUMED` cho DB cũ); `POST /orders` nhận `batch_ids`/`product_name` để gom phạm vi và ghi `RECALL_ISSUED` vào chuỗi băm của **từng lô** (khi hoàn tất cũng ghi `RECALL_COMPLETED` cho từng lô); endpoint mới `GET /orders/{order_id}/recovery-plan` trả từng lô kèm tổ chức, địa điểm, khối lượng còn lại/đã tiêu thụ, phần tổng hợp còn thu hồi được vs đã ra thị trường và nhóm theo địa điểm; `POST /batches/{batch_id}/consume` nhận `{"quantity": n}` để ghi **bán một phần**; `EVENT_TYPE_RECALL_ISSUED`, các schema `ConsumeBatchRequest`, `RecallBatchResponse`, `RecallLocationGroupResponse`, `RecallRecoveryPlanResponse`. Frontend: cột **Còn lại / Đã bán** trong bảng lô và bảng tra cứu thu hồi, ô nhập phạm vi nhiều lô/tên sản phẩm khi ban hành lệnh, khối **Kế hoạch thu hồi** trong modal chi tiết lệnh (thẻ tổng + bảng từng lô + gom theo cửa hàng), modal **Ghi nhận bán** (nhập khối lượng bán một phần + ghi chú) và thẻ sự kiện `BATCH_CONSUMED` hiển thị rõ đã bán / còn lại. |
