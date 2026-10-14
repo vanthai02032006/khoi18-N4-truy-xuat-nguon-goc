@@ -127,6 +127,11 @@ function describeError(data, status) {
       .join(" | ");
   }
 
+  // Lỗi nghiệp vụ dạng object (ví dụ 409 kèm con trỏ tới lệnh đang mở - S-19).
+  if (detail && typeof detail === "object" && typeof detail.message === "string") {
+    return detail.message;
+  }
+
   return `Yêu cầu thất bại (HTTP ${status}).`;
 }
 
@@ -645,6 +650,16 @@ function renderBatches() {
                     data-id="${escapeHtml(batch.id)}"
                     title="Xem dòng thời gian lịch sử & tính toàn vẹn chuỗi">Lịch sử</button>
             ${
+              session &&
+              (session.role === ROLE_INSPECTOR || session.role === ROLE_ADMIN) &&
+              batch.status !== "consumed"
+                ? `<button class="btn btn--sm" style="background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;" type="button"
+                    data-action="flag-incident" data-entity="batch"
+                    data-id="${escapeHtml(batch.id)}"
+                    title="Đánh dấu lô có sự cố và mở lệnh thu hồi (S-19)">Sự cố</button>`
+                : ""
+            }
+            ${
               session && session.role !== ROLE_INSPECTOR && batch.status !== "consumed"
                 ? `<button class="btn btn--sm btn-table-split" type="button"
                     data-action="split" data-entity="batch"
@@ -819,6 +834,38 @@ async function consumeBatch(batchId) {
     await loadBatches($("batch-filter-search")?.value.trim() || "");
   } catch (error) {
     toast(`Không thể đánh dấu lô đã bán hết: ${error.message}`, "error");
+  }
+}
+
+/**
+ * Đánh dấu lô có sự cố và mở ngay lệnh thu hồi (S-19) -> POST /batches/{id}/incident.
+ * Chỉ cán bộ kiểm tra hoặc admin gọi được (backend trả 403 với vai trò khác).
+ */
+async function flagBatchIncident(batchId) {
+  const batch = batches.find((item) => item.id === batchId);
+  const label = batch ? `#${batch.id} — ${batch.batch_code || batch.product_name}` : `#${batchId}`;
+
+  const reason = prompt(
+    `Nhập lý do đánh dấu lô ${label} có sự cố (hệ thống sẽ mở ngay lệnh thu hồi):`,
+    "Phát hiện dấu hiệu mất an toàn thực phẩm"
+  );
+  if (reason === null) {
+    return; // người dùng bấm Huỷ
+  }
+  if (!reason.trim()) {
+    toast("Cần nhập lý do đánh dấu sự cố.", "error");
+    return;
+  }
+
+  try {
+    const order = await apiRequest(`/batches/${batchId}/incident`, {
+      method: "POST",
+      body: { reason: reason.trim() },
+    });
+    toast(`Đã đánh dấu sự cố và mở lệnh thu hồi ${order.order_code}.`, "success");
+    await loadOrders();
+  } catch (error) {
+    toast(`Không thể mở lệnh thu hồi: ${error.message}`, "error");
   }
 }
 
@@ -1946,6 +1993,16 @@ function formatEventDetail(ev, payload) {
         <span class="event-chip">Ngưỡng chuẩn: <strong>${escapeHtml(payload.min_temp ?? '—')}°C - ${escapeHtml(payload.max_temp ?? '—')}°C</strong></span>
         ${payload.sensor_id ? `<span class="event-chip">Cảm biến: <code>${escapeHtml(payload.sensor_id)}</code></span>` : ""}
       </div>`;
+  } else if (t === "INCIDENT_FLAGGED") {
+    badgeColor = "#b91c1c";
+    icon = "⚠️";
+    title = "Đánh dấu lô có sự cố";
+    bodyHtml = `
+      <div class="event-desc" style="color: #991b1b; font-weight: 600;">Cán bộ kiểm tra đã đánh dấu lô có sự cố và mở lệnh thu hồi để xử lý.</div>
+      <div class="event-chips">
+        <span class="event-chip event-chip--danger">Mã lệnh: <strong>${escapeHtml(payload.order_code || '—')}</strong></span>
+        <span class="event-chip">Lý do: <strong>${escapeHtml(payload.reason || '—')}</strong></span>
+      </div>`;
   } else if (t === "RECALL_ISSUED") {
     badgeColor = "#b91c1c";
     icon = "🚨";
@@ -2932,6 +2989,11 @@ function handleTableAction(event) {
 
   if (action === "move") {
     openLocationMoveModal(id);
+    return;
+  }
+
+  if (action === "flag-incident") {
+    flagBatchIncident(id);
     return;
   }
 

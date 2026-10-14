@@ -167,6 +167,7 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | GET | `/locations` | Danh sách địa điểm của **chính tổ chức đang gọi** | farmer **hoặc** admin | `200` · `401` |
 | GET | `/locations/{location_id}/batches` | Tra cứu lô đang nằm tại một địa điểm (thu hồi đúng cửa hàng) | farmer **hoặc** admin | `200` · `401` · `403` địa điểm của tổ chức khác · `404` không tìm thấy |
 | POST | `/batches/{batch_id}/location` | Ghi nhận lô đang ở địa điểm nào + ghi sự kiện `LOCATION_CHANGED` vào chuỗi | farmer **hoặc** admin | `200` · `400` lô đã tiêu thụ · `403` lô/địa điểm của tổ chức khác · `404` không tìm thấy |
+| POST | `/batches/{batch_id}/incident` | Đánh dấu lô có sự cố kèm lý do → mở lệnh thu hồi (mã riêng) + ghi sự kiện `INCIDENT_FLAGGED` | **inspector hoặc admin** | `201` · `401` · `403` sai vai trò · `404` không tìm thấy lô · `409` lô đã có lệnh đang mở |
 | GET | `/users` | Danh sách tài khoản (không kèm mật khẩu) | **chỉ admin** | `200` · `401` · `403` sai vai trò |
 
 > ✅ **Sprint 5 hoàn thiện CRUD:** cả Farm và Batch đều có đủ `POST` / `GET` /
@@ -292,6 +293,39 @@ số lô + tổng khối lượng + danh sách lô đang nằm tại đó:
 **Cách ly đa tổ chức:** địa điểm của tổ chức khác trả `403 Forbidden` (không xem
 chéo dữ liệu); lô đang do tổ chức khác nắm giữ cũng không di chuyển được (`403`),
 lô đã tiêu thụ (`consumed`) không di chuyển được (`400`).
+
+### Đánh dấu sự cố & mở lệnh thu hồi ngay trên lô (S-19)
+
+Cán bộ kiểm tra phát hiện lô có vấn đề thì cần **đánh dấu lô có sự cố** và **mở
+ngay lệnh thu hồi** để khởi động quy trình xử lý, thay vì phải nhập tay danh sách
+bên liên quan như `POST /orders`.
+
+| Tiêu chí | Cách hệ thống đáp ứng |
+| --- | --- |
+| Đánh dấu lô có sự cố kèm lý do thì lệnh thu hồi được tạo với mã riêng và sự kiện được ghi vào chuỗi của lô | `POST /batches/{batch_id}/incident` tạo `RecallOrder` (`order_code` dạng `ORD-REC-0001`, `status="IN_PROGRESS"`) gắn `batch_id`, rồi ghi sự kiện `INCIDENT_FLAGGED` (kèm `order_code`) vào chuỗi băm bất biến qua `record_event`. Bỏ trống `target_organizations` thì mặc định nhắm **tổ chức đang giữ lô** (`batches.current_holder_org`) |
+| Vai trò khác thử mở lệnh thu hồi thì bị `403` | Endpoint dùng dependency `require_inspector` → `farmer` nhận `403`, chưa đăng nhập nhận `401` |
+| Lô đã có lệnh đang mở thì mở lệnh mới bị chặn và trỏ tới lệnh đang mở | Trước khi tạo, hệ thống tìm lệnh `IN_PROGRESS` của lô; nếu đã có thì trả `409` kèm `open_order_id`, `open_order_code`, `open_order_status` trong `detail` |
+
+Ví dụ phản hồi `409`:
+
+```json
+{
+  "detail": {
+    "message": "Lô #13 đã có lệnh thu hồi đang mở (ORD-REC-0001). Hãy hoàn tất lệnh đó trước khi mở lệnh mới.",
+    "open_order_id": 1,
+    "open_order_code": "ORD-REC-0001",
+    "open_order_status": "IN_PROGRESS"
+  }
+}
+```
+
+Nghiệp vụ dùng chung (`build_order_response`, `generate_unique_order_code`,
+`find_open_order_for_batch`, `open_recall_order_for_batch`) được gom trong
+`app/recall_orders.py` để cả `POST /orders` và S-19 dùng chung một nguồn.
+
+**Kiểm thử:** [`tests/test_batch_incident_recall.py`](../tests/test_batch_incident_recall.py)
+— 7 ca bám sát 3 tiêu chí nghiệm thu kèm các ca biên (`401`, `403`, `404`, `409`,
+mở lệnh mới sau khi lệnh cũ đã hoàn tất).
 
 ### Cấu trúc bảng `users` (Sprint 4)
 
@@ -614,3 +648,4 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 4 | **Đăng nhập + phân quyền cơ bản (không JWT):** model `User` → bảng `users` (`username` unique, mật khẩu băm SHA-256, `role`), `seed_default_users()` tạo sẵn `admin`/`farmer` (mật khẩu `123456`); module `app/security.py` với `hash_password`/`verify_password`/`authenticate_user` và dependency `get_current_user` (**401**), `require_admin` (**403**), `require_farmer`; router `POST /auth/login` (**200**/**401**) và `GET /users` (**200**, chỉ admin); áp `require_farmer` cho `GET /farms`, `POST /farms`, `POST /batches`. Cơ chế xác thực là **HTTP Basic** (Swagger có nút **Authorize**), không token/refresh token. |
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
 | S-18 | **Địa điểm / cửa hàng & vị trí hiện tại của lô:** model `Location` → bảng `locations` (`organization`, `name`, `address`; tên duy nhất trong một tổ chức) và cột `batches.current_location_id` (FK → `locations.id`, tự migrate cho DB cũ); router mới `app/routers/locations.py` với `POST /locations`, `GET /locations` (chỉ địa điểm của tổ chức đang gọi), `GET /locations/{id}/batches` (tra cứu thu hồi theo cửa hàng); `POST /batches/{batch_id}/location` ghi địa điểm hiện tại + sự kiện `LOCATION_CHANGED`; `POST /batches/{batch_id}/split` (S-17) nhận `location_id` trên từng dòng lô con. Frontend: tab **ĐỊA ĐIỂM**, bảng địa điểm, khối tra cứu thu hồi, cột địa điểm hiện tại trong bảng lô, modal **Chuyển lô về địa điểm** và cột chọn địa điểm trong modal tách lô. |
+| S-19 | **Đánh dấu lô có sự cố & mở lệnh thu hồi (3 SP):** endpoint `POST /batches/{batch_id}/incident` (dependency `require_inspector` → `403` với vai trò khác) tạo `RecallOrder` mã riêng (`ORD-REC-xxxx`) gắn lô + ghi sự kiện `INCIDENT_FLAGGED` vào chuỗi băm; chặn mở trùng bằng `409` kèm mã lệnh đang mở. Gom nghiệp vụ dùng chung vào module mới `app/recall_orders.py` (`build_order_response`, `generate_unique_order_code`, `find_open_order_for_batch`, `open_recall_order_for_batch`); hằng số `EVENT_TYPE_INCIDENT_FLAGGED`; schema `BatchIncidentRequest`. Frontend: nút **Đánh dấu sự cố** trên bảng lô và nhánh hiển thị sự kiện `INCIDENT_FLAGGED` trong dòng thời gian. |

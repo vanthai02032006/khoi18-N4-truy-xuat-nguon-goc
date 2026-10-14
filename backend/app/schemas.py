@@ -620,6 +620,51 @@ class RecallOrderConfirmResponse(BaseModel):
     event_hash: str | None = None
 
 
+class BatchIncidentRequest(BaseModel):
+    """Dữ liệu client gửi lên khi cán bộ kiểm tra đánh dấu lô có sự cố (S-19).
+
+    Thao tác này mở ngay một lệnh thu hồi gắn với lô (lệnh có mã riêng) và ghi
+    sự kiện ``INCIDENT_FLAGGED`` vào chuỗi băm bất biến của lô.
+
+    Ví dụ::
+
+        {"reason": "Phát hiện dư lượng thuốc BVTV vượt ngưỡng"}
+
+    Bỏ trống ``target_organizations`` thì lệnh mặc định nhắm tới tổ chức đang giữ
+    lô (``batches.current_holder_org``).
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "reason": "Phát hiện dư lượng thuốc bảo vệ thực vật vượt ngưỡng cho phép",
+                "target_organizations": ["HTX Nông Sản 1"],
+            }
+        }
+    )
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Lý do đánh dấu lô có sự cố.",
+    )
+    title: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Tiêu đề lệnh thu hồi (bỏ trống sẽ tự sinh theo mã lô).",
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="Mô tả chi tiết và hướng dẫn xử lý.",
+    )
+    target_organizations: list[str] | None = Field(
+        default=None,
+        description="Các tổ chức phải xác nhận; bỏ trống thì mặc định là tổ chức đang giữ lô.",
+    )
+
+
 # ------------------------------------------------------------- Cold Chain ---
 class ColdChainThresholdCreate(BaseModel):
     """Cấu hình ngưỡng nhiệt độ và độ trễ cho một loại sản phẩm mới."""

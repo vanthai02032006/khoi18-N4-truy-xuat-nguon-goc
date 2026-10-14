@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import cast, func, or_, select, String
 
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.events import record_event
@@ -38,10 +38,17 @@ from app.models import (
     BatchEvent,
     Farm,
     Location,
+    RecallOrder,
     User,
+)
+from app.recall_orders import (
+    build_order_response,
+    find_open_order_for_batch,
+    open_recall_order_for_batch,
 )
 from app.schemas import (
     BatchCreate,
+    BatchIncidentRequest,
     BatchLocationTransferRequest,
     BatchMergeRequest,
     BatchMergeResponse,
@@ -55,8 +62,9 @@ from app.schemas import (
     HandoverRejectRequest,
     MapWaypoint,
     PublicTrackingMapResponse,
+    RecallOrderResponse,
 )
-from app.security import compute_event_hash, require_admin, require_farmer
+from app.security import compute_event_hash, require_admin, require_farmer, require_inspector
 from app.tenant import get_tenant_org, require_tenant_context
 
 router = APIRouter(
@@ -528,6 +536,109 @@ def move_batch_to_location(
 
     db.refresh(batch)
     return batch
+
+
+# =========================================================================
+# ĐÁNH DẤU SỰ CỐ & MỞ LỆNH THU HỒI (S-19)
+# =========================================================================
+
+
+@router.post(
+    "/{batch_id}/incident",
+    response_model=RecallOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Đánh dấu lô có sự cố và mở lệnh thu hồi (Cán bộ kiểm tra / Admin)",
+    description=(
+        "Cán bộ kiểm tra đánh dấu một lô có sự cố kèm lý do: hệ thống **mở ngay "
+        "một lệnh thu hồi gắn với lô** (có mã lệnh riêng) và ghi sự kiện "
+        "`INCIDENT_FLAGGED` (kèm mã lệnh) vào **chuỗi băm bất biến** của lô.\n\n"
+        "**Ràng buộc:** mỗi lô chỉ có tối đa **một** lệnh đang mở - nếu lô đã có "
+        "lệnh `IN_PROGRESS`, API trả `409` kèm mã lệnh đang mở để tránh mở trùng.\n\n"
+        "**Phân quyền:** chỉ `inspector` hoặc `admin` (vai trò khác nhận `403`)."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Đã đăng nhập nhưng không phải cán bộ kiểm tra / admin.",
+        },
+        status.HTTP_404_NOT_FOUND: {"description": "Không tìm thấy lô nông sản."},
+        status.HTTP_409_CONFLICT: {"description": "Lô đã có lệnh thu hồi đang mở."},
+    },
+)
+def flag_batch_incident(
+    payload: BatchIncidentRequest,
+    batch_id: int = Path(..., ge=1, description="ID lô bị đánh dấu sự cố."),
+    current_user: User = Depends(require_inspector),
+    db: Session = Depends(get_db),
+) -> RecallOrderResponse:
+    """Đánh dấu lô có sự cố, mở lệnh thu hồi và ghi sự kiện vào chuỗi băm của lô.
+
+    Args:
+        payload: Lý do sự cố (bắt buộc) và tuỳ chọn tiêu đề/mô tả/bên liên quan.
+        batch_id: ID lô bị đánh dấu.
+        current_user: Tài khoản đã đăng nhập (inspector hoặc admin).
+        db: Session SQLAlchemy từ dependency ``get_db``.
+
+    Returns:
+        RecallOrderResponse: Lệnh thu hồi vừa mở kèm danh sách bên liên quan (HTTP 201).
+
+    Raises:
+        HTTPException: 401/403 nếu chưa đăng nhập / sai vai trò; 404 nếu không
+            tìm thấy lô; 409 nếu lô đã có lệnh đang mở; 500 nếu ghi database thất bại.
+    """
+    batch = db.scalar(select(Batch).where(Batch.id == batch_id).with_for_update())
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản có id={batch_id}.",
+        )
+
+    open_order = find_open_order_for_batch(db, batch_id)
+    if open_order is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    f"Lô #{batch_id} đã có lệnh thu hồi đang mở ({open_order.order_code}). "
+                    "Hãy hoàn tất lệnh đó trước khi mở lệnh mới."
+                ),
+                "open_order_id": open_order.id,
+                "open_order_code": open_order.order_code,
+                "open_order_status": open_order.status,
+            },
+        )
+
+    try:
+        order = open_recall_order_for_batch(
+            db,
+            batch=batch,
+            reason=payload.reason,
+            actor=current_user.username,
+            title=payload.title,
+            description=payload.description,
+            target_organizations=payload.target_organizations,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Không thể lưu lệnh thu hồi vào cơ sở dữ liệu.",
+        ) from exc
+
+    order = db.scalar(
+        select(RecallOrder)
+        .options(selectinload(RecallOrder.targets))
+        .where(RecallOrder.id == order.id)
+    )
+    return build_order_response(order)
 
 
 @router.delete(
