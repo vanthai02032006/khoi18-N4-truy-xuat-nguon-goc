@@ -167,3 +167,208 @@ def test_reject_invalid_items_quantity(split_test_env):
         auth=("farmer_split_test", "123456"),
     )
     assert res.status_code == 422
+
+
+def test_ac1_split_100kg_into_30_30_40_leaves_0kg_with_parent_id(split_test_env):
+    """AC 1: Giả sử tôi đang giữ một lô còn 100 kg,
+    Khi tách thành ba lô con 30, 30, 40 kg,
+    Thì ba lô con được tạo với mã riêng, mỗi lô ghi rõ lô mẹ, và lô mẹ còn lại 0 kg.
+    """
+    client = split_test_env["client"]
+    batch_id = split_test_env["batch_id"]
+
+    payload = {
+        "items": [
+            {"quantity": 30.0, "note": "Lô con 1"},
+            {"quantity": 30.0, "note": "Lô con 2"},
+            {"quantity": 40.0, "note": "Lô con 3"},
+        ]
+    }
+
+    res = client.post(
+        f"/batches/{batch_id}/split",
+        json=payload,
+        auth=("farmer_split_test", "123456"),
+    )
+    assert res.status_code == 201, res.text
+    data = res.json()
+
+    # 1. Lô mẹ còn lại đúng 0 kg
+    assert data["parent_remaining_quantity"] == 0.0
+    assert data["parent_batch_id"] == batch_id
+
+    # 2. Ba lô con được tạo
+    children = data["child_batches"]
+    assert len(children) == 3
+
+    # 3. Ba lô con có mã riêng (batch_code khác nhau và không rỗng)
+    codes = [c["batch_code"] for c in children]
+    assert len(set(codes)) == 3
+    for code in codes:
+        assert code and code.startswith("LOT-")
+
+    # 4. Mỗi lô ghi rõ lô mẹ (parent_id)
+    for c in children:
+        assert c["parent_id"] == batch_id
+
+    # 5. Kiểm tra đối chiếu trong cơ sở dữ liệu
+    with split_test_env["session_factory"]() as db:
+        parent = db.get(Batch, batch_id)
+        assert parent.quantity == 0.0
+
+        db_children = db.query(Batch).filter(Batch.parent_id == batch_id).all()
+        assert len(db_children) == 3
+        assert sorted([c.quantity for c in db_children]) == [30.0, 30.0, 40.0]
+        for child in db_children:
+            assert child.parent_id == batch_id
+
+
+def test_ac2_split_100kg_into_30_and_30_leaves_40kg_and_can_split_again(split_test_env):
+    """AC 2: Giả sử tôi tách 100 kg thành 30 và 30,
+    Khi lưu, Thì lô mẹ còn lại 40 kg và vẫn tách tiếp được.
+    """
+    client = split_test_env["client"]
+    batch_id = split_test_env["batch_id"]
+
+    # Đợt 1: Tách 30kg và 30kg
+    payload_1 = {
+        "items": [
+            {"quantity": 30.0, "note": "Đợt 1 - Phần A"},
+            {"quantity": 30.0, "note": "Đợt 1 - Phần B"},
+        ]
+    }
+    res_1 = client.post(
+        f"/batches/{batch_id}/split",
+        json=payload_1,
+        auth=("farmer_split_test", "123456"),
+    )
+    assert res_1.status_code == 201, res_1.text
+    data_1 = res_1.json()
+
+    # Lô mẹ còn lại đúng 40 kg
+    assert data_1["parent_remaining_quantity"] == 40.0
+    with split_test_env["session_factory"]() as db:
+        parent = db.get(Batch, batch_id)
+        assert parent.quantity == 40.0
+
+    # Đợt 2: Vẫn tiếp tục tách tiếp được từ lô mẹ đó (ví dụ tách tiếp 20kg và 20kg)
+    payload_2 = {
+        "items": [
+            {"quantity": 20.0, "note": "Đợt 2 - Phần C"},
+            {"quantity": 20.0, "note": "Đợt 2 - Phần D"},
+        ]
+    }
+    res_2 = client.post(
+        f"/batches/{batch_id}/split",
+        json=payload_2,
+        auth=("farmer_split_test", "123456"),
+    )
+    assert res_2.status_code == 201, res_2.text
+    data_2 = res_2.json()
+
+    # Lô mẹ sau đợt 2 còn lại đúng 0 kg
+    assert data_2["parent_remaining_quantity"] == 0.0
+    with split_test_env["session_factory"]() as db:
+        parent = db.get(Batch, batch_id)
+        assert parent.quantity == 0.0
+        # Tổng cộng đã tạo 4 lô con từ lô mẹ này
+        all_children = db.query(Batch).filter(Batch.parent_id == batch_id).all()
+        assert len(all_children) == 4
+
+
+def test_ac3_split_failure_at_second_child_rolls_back_completely(split_test_env):
+    """AC 3: Giả sử tạo lô con thứ hai thất bại giữa chừng,
+    Khi giao dịch bị huỷ, Thì không có lô con nào được tạo và lô mẹ giữ nguyên khối lượng.
+    """
+    client = split_test_env["client"]
+    batch_id = split_test_env["batch_id"]
+
+    # Thử qua API với simulate_error_at_index = 2
+    payload = {
+        "items": [
+            {"quantity": 30.0, "note": "Lô con 1 - thành công"},
+            {"quantity": 30.0, "note": "Lô con 2 - gặp sự cố"},
+            {"quantity": 40.0, "note": "Lô con 3 - chưa tới"},
+        ],
+        "simulate_error_at_index": 2,
+    }
+
+    res = client.post(
+        f"/batches/{batch_id}/split",
+        json=payload,
+        auth=("farmer_split_test", "123456"),
+    )
+    assert res.status_code == 500
+    assert "hủy" in res.json()["detail"].lower() or "lỗi" in res.json()["detail"].lower()
+
+    # Xác nhận tính toàn vẹn: Không có lô con nào được tạo, lô mẹ giữ nguyên 100 kg
+    with split_test_env["session_factory"]() as db:
+        parent = db.get(Batch, batch_id)
+        assert parent.quantity == 100.0
+
+        children_count = db.query(Batch).filter(Batch.parent_id == batch_id).count()
+        assert children_count == 0
+
+    # Thử trực tiếp qua service split_batch (app.batch_split)
+    from app.batch_split import split_batch as service_split_batch
+    with split_test_env["session_factory"]() as db:
+        with pytest.raises(RuntimeError):
+            service_split_batch(
+                db=db,
+                parent_batch_id=batch_id,
+                child_quantities=[30.0, 30.0, 40.0],
+                error_at_child_index=2,
+            )
+
+        # Sau khi service ném lỗi: lô mẹ vẫn 100kg, không lô con nào được tạo
+        parent_after = db.get(Batch, batch_id)
+        assert parent_after.quantity == 100.0
+        assert db.query(Batch).filter(Batch.parent_id == batch_id).count() == 0
+
+
+def test_ac4_split_batch_not_held_by_org_returns_403(split_test_env):
+    """AC 4: Giả sử lô không do tổ chức tôi giữ,
+    Khi tôi gọi API tách, Thì trả về 403.
+    """
+    client = split_test_env["client"]
+    batch_id = split_test_env["batch_id"]
+
+    # Đặt lô mẹ thuộc về "Cong Ty Xuat Khau VinEco"
+    with split_test_env["session_factory"]() as db:
+        parent = db.get(Batch, batch_id)
+        parent.current_holder_org = "Cong Ty Xuat Khau VinEco"
+        db.commit()
+
+    payload = {
+        "items": [
+            {"quantity": 30.0, "note": "Thử tách lô của tổ chức khác"},
+        ]
+    }
+
+    # 1. Gọi với context tổ chức khác ("HTX Sau Rieng Ben Tre") -> 403 Forbidden
+    res_diff_org = client.post(
+        f"/batches/{batch_id}/split",
+        json=payload,
+        auth=("farmer_split_test", "123456"),
+        headers={"X-Organization-Id": "HTX Sau Rieng Ben Tre"},
+    )
+    assert res_diff_org.status_code == 403
+    assert "nắm giữ" in res_diff_org.json()["detail"].lower()
+
+    # 2. Gọi không truyền header (mặc định tenant HTX Nông Nghiệp Số 4 != VinEco) -> 403 Forbidden
+    res_default_org = client.post(
+        f"/batches/{batch_id}/split",
+        json=payload,
+        auth=("farmer_split_test", "123456"),
+    )
+    assert res_default_org.status_code == 403
+
+    # 3. Gọi với đúng tổ chức đang giữ ("Cong Ty Xuat Khau VinEco") -> 201 Thành công
+    res_same_org = client.post(
+        f"/batches/{batch_id}/split",
+        json=payload,
+        auth=("farmer_split_test", "123456"),
+        headers={"X-Organization-Id": "Cong Ty Xuat Khau VinEco"},
+    )
+    assert res_same_org.status_code == 201
+    assert res_same_org.json()["parent_remaining_quantity"] == 70.0

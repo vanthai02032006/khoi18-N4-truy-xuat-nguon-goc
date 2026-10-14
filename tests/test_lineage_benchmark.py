@@ -11,7 +11,7 @@ import os
 import sqlite3
 import pytest
 
-from app.lineage import find_ancestors_bfs, LineageCycleError
+from app.lineage import find_ancestors_bfs, find_descendants_bfs, LineageCycleError
 
 
 @pytest.fixture
@@ -127,3 +127,64 @@ def test_lineage_simple_cycle_detection():
     ]
     with pytest.raises(LineageCycleError):
         find_ancestors_bfs("BATCH-A", cyclic_relations)
+
+
+def test_lineage_descendants_against_ground_truth(benchmark_data):
+    """AC: Truy xuôi hậu duệ (T-53) của từng lô trong bộ mẫu đối chiếu khớp 100% với đáp án đếm tay."""
+    relations = benchmark_data["graph_structure"]["relations"]
+    ground_truth_descendants = benchmark_data["ground_truth_descendants"]
+
+    for batch_code, expected_descendants in ground_truth_descendants.items():
+        computed_descendants = find_descendants_bfs(batch_code, relations)
+        assert set(computed_descendants) == set(expected_descendants), (
+            f"Lô {batch_code}: Kết quả hậu duệ tính ({computed_descendants}) "
+            f"không khớp đáp án đếm tay ({expected_descendants})"
+        )
+
+
+def test_four_tier_graph_benchmark_ancestors_and_descendants(benchmark_data):
+    """AC: Đồ thị mẫu 4 tầng đầy đủ của seed_lineage_graph khớp 100% cả tổ tiên và hậu duệ."""
+    four_tier = benchmark_data.get("four_tier_graph_benchmark")
+    assert four_tier is not None, "Tệp benchmark phải có dữ liệu four_tier_graph_benchmark"
+
+    expected_ancestors = four_tier["ground_truth_ancestors"]
+    expected_descendants = four_tier["ground_truth_descendants"]
+
+    # Xây dựng danh sách quan hệ từ đồ thị 4 tầng của seed_lineage_graph
+    relations_4tier = [
+        # Tầng 1 -> Tầng 2 (SPLIT)
+        {"parent": "LOT-GRAPH-F0-01", "child": "LOT-GRAPH-S1.01", "type": "SPLIT"},
+        {"parent": "LOT-GRAPH-F0-01", "child": "LOT-GRAPH-S1.02", "type": "SPLIT"},
+        {"parent": "LOT-GRAPH-F0-02", "child": "LOT-GRAPH-S2.01", "type": "SPLIT"},
+        {"parent": "LOT-GRAPH-F0-02", "child": "LOT-GRAPH-S2.02", "type": "SPLIT"},
+        {"parent": "LOT-GRAPH-F0-03", "child": "LOT-GRAPH-S3.01", "type": "SPLIT"},
+        {"parent": "LOT-GRAPH-F0-03", "child": "LOT-GRAPH-S3.02", "type": "SPLIT"},
+        # Tầng 2 -> Tầng 3 (MERGE)
+        {"parent": "LOT-GRAPH-S1.01", "child": "LOT-GRAPH-M01", "type": "MERGE"},
+        {"parent": "LOT-GRAPH-S2.01", "child": "LOT-GRAPH-M01", "type": "MERGE"},
+        {"parent": "LOT-GRAPH-S2.02", "child": "LOT-GRAPH-M02", "type": "MERGE"},
+        {"parent": "LOT-GRAPH-S3.01", "child": "LOT-GRAPH-M02", "type": "MERGE"},
+        {"parent": "LOT-GRAPH-S3.02", "child": "LOT-GRAPH-M03", "type": "MERGE"},
+        {"parent": "LOT-GRAPH-S1.02", "child": "LOT-GRAPH-M03", "type": "MERGE"},
+        # Tầng 3 -> Tầng 4 (SPLIT)
+        {"parent": "LOT-GRAPH-M01", "child": "LOT-GRAPH-FIN1.01", "type": "SPLIT"},
+        {"parent": "LOT-GRAPH-M01", "child": "LOT-GRAPH-FIN1.02", "type": "SPLIT"},
+        {"parent": "LOT-GRAPH-M02", "child": "LOT-GRAPH-FIN2.01", "type": "SPLIT"},
+        {"parent": "LOT-GRAPH-M02", "child": "LOT-GRAPH-FIN2.02", "type": "SPLIT"},
+        {"parent": "LOT-GRAPH-M03", "child": "LOT-GRAPH-FIN3.01", "type": "SPLIT"},
+        {"parent": "LOT-GRAPH-M03", "child": "LOT-GRAPH-FIN3.02", "type": "SPLIT"},
+    ]
+
+    # Khẳng định 18 lô đối chiếu tổ tiên
+    for batch_code, exp_anc in expected_ancestors.items():
+        comp_anc = find_ancestors_bfs(batch_code, relations_4tier)
+        assert set(comp_anc) == set(exp_anc), (
+            f"Lô {batch_code}: Tổ tiên ({comp_anc}) không khớp đáp án đếm tay ({exp_anc})"
+        )
+
+    # Khẳng định 18 lô đối chiếu hậu duệ
+    for batch_code, exp_desc in expected_descendants.items():
+        comp_desc = find_descendants_bfs(batch_code, relations_4tier)
+        assert set(comp_desc) == set(exp_desc), (
+            f"Lô {batch_code}: Hậu duệ ({comp_desc}) không khớp đáp án đếm tay ({exp_desc})"
+        )

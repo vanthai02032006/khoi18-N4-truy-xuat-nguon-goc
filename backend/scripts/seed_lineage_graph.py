@@ -46,7 +46,7 @@ from sqlalchemy.orm import Session
 from app.batch_merge import merge_batches
 from app.batch_split import split_batch
 from app.database import SessionLocal, init_db
-from app.models import Batch, BatchRelation, Farm
+from app.models import Batch, BatchRelation, Farm, Organization
 
 
 # Prefix định danh thống nhất cho mọi mã lô trong đồ thị mẫu
@@ -136,33 +136,48 @@ def seed_lineage_graph(db: Session) -> dict[str, Any]:
     Returns:
         dict: Báo cáo chi tiết các lô và quan hệ phả hệ đã dựng.
     """
-    # Bước 0: Đảm bảo có ít nhất 1 vùng trồng (Farm)
+    # Bước 0: Đảm bảo có 3 tổ chức trong chuỗi cung ứng: Vùng trồng, HTX Sơ chế, và Tổng kho phân phối
+    ORG_FARM = "Vùng Trồng Xoài Cao Lãnh"
+    ORG_COOP = "Hợp Tác Xã Sơ Chế Mỹ Xương"
+    ORG_DIST = "Tổng Kho Phân Phối Nông Sản Miền Nam"
+
+    for org_code, org_name, org_desc in [
+        ("ORG-FARM", ORG_FARM, "Tổ chức vùng trồng canh tác"),
+        ("ORG-COOP", ORG_COOP, "Hợp tác xã sơ chế và chế biến"),
+        ("ORG-DIST", ORG_DIST, "Doanh nghiệp phân phối và xuất khẩu"),
+    ]:
+        existing_org = db.scalar(select(Organization).where(Organization.code == org_code))
+        if not existing_org:
+            db.add(Organization(code=org_code, name=org_name, description=org_desc))
+    db.commit()
+
     farm = db.scalar(select(Farm).order_by(Farm.id.asc()))
     if farm is None:
         farm = Farm(
             name="Vùng Trồng Xoài Cát Chu Cao Lãnh (Thửa Đất Nghiên Cứu)",
             location="Xã Mỹ Xương, Huyện Cao Lãnh, Tỉnh Đồng Tháp",
             area=5.0,
-            owner="Hợp tác xã Xoài Mỹ Xương",
+            owner=ORG_FARM,
         )
         db.add(farm)
         db.commit()
         db.refresh(farm)
 
     farm_id = farm.id
-    print(f"🌱 Sử dụng vùng trồng xuất xứ: #{farm_id} - '{farm.name}'")
+    print(f"🌱 Sử dụng vùng trồng xuất xứ: #{farm_id} - '{farm.name}' (Tổ chức: {ORG_FARM})")
 
     # =========================================================================
-    # TẦNG 1: 3 LÔ THU HOẠCH F0 (1,200.0 kg mỗi lô)
+    # TẦNG 1: 3 LÔ THU HOẠCH F0 (1,200.0 kg mỗi lô) - Thuộc Tổ chức Vùng trồng
     # =========================================================================
-    print("\n📦 [TẦNG 1 - F0] Khởi tạo 3 lô thu hoạch ban đầu...")
+    print(f"\n📦 [TẦNG 1 - F0] Khởi tạo 3 lô thu hoạch ban đầu (Tổ chức: {ORG_FARM})...")
     f0_1 = Batch(
         farm_id=farm_id,
         product_name="Xoài Cát Chu Thu Hoạch Vườn A",
         quantity=Decimal("1200.0000"),
         harvest_date=date(2026, 10, 1),
         batch_code=f"{GRAPH_BATCH_PREFIX}F0-01",
-        current_owner="farmer",
+        current_owner=ORG_FARM,
+        current_holder_org=ORG_FARM,
     )
     f0_2 = Batch(
         farm_id=farm_id,
@@ -170,7 +185,8 @@ def seed_lineage_graph(db: Session) -> dict[str, Any]:
         quantity=Decimal("1200.0000"),
         harvest_date=date(2026, 10, 2),
         batch_code=f"{GRAPH_BATCH_PREFIX}F0-02",
-        current_owner="farmer",
+        current_owner=ORG_FARM,
+        current_holder_org=ORG_FARM,
     )
     f0_3 = Batch(
         farm_id=farm_id,
@@ -178,13 +194,14 @@ def seed_lineage_graph(db: Session) -> dict[str, Any]:
         quantity=Decimal("1200.0000"),
         harvest_date=date(2026, 10, 3),
         batch_code=f"{GRAPH_BATCH_PREFIX}F0-03",
-        current_owner="farmer",
+        current_owner=ORG_FARM,
+        current_holder_org=ORG_FARM,
     )
     db.add_all([f0_1, f0_2, f0_3])
     db.commit()
     for b in [f0_1, f0_2, f0_3]:
         db.refresh(b)
-        print(f"   + Lô F0: {b.batch_code} ({b.product_name}) - Khối lượng: {b.quantity} kg (ID: #{b.id})")
+        print(f"   + Lô F0: {b.batch_code} ({b.product_name}) - Khối lượng: {b.quantity} kg [{b.current_holder_org}]")
 
     # =========================================================================
     # TẦNG 2: TÁCH THÀNH 6 LÔ BẰNG HÀM `split_batch` CỦA ỨNG DỤNG
@@ -229,14 +246,20 @@ def seed_lineage_graph(db: Session) -> dict[str, Any]:
     )
     s3_01, s3_02 = s3_children[0], s3_children[1]
 
-    print(f"   + F0-01 tách ra {s1_01.batch_code} ({s1_01.quantity} kg) và {s1_02.batch_code} ({s1_02.quantity} kg) [Mẹ còn {f0_1_updated.quantity} kg]")
-    print(f"   + F0-02 tách ra {s2_01.batch_code} ({s2_01.quantity} kg) và {s2_02.batch_code} ({s2_02.quantity} kg) [Mẹ còn {f0_2_updated.quantity} kg]")
-    print(f"   + F0-03 tách ra {s3_01.batch_code} ({s3_01.quantity} kg) và {s3_02.batch_code} ({s3_02.quantity} kg) [Mẹ còn {f0_3_updated.quantity} kg]")
+    # Cập nhật tổ chức sở hữu cho Tầng 2 (F1): Chuyển giao sang Hợp Tác Xã Sơ Chế Mỹ Xương
+    for b in [s1_01, s1_02, s2_01, s2_02, s3_01, s3_02]:
+        b.current_owner = ORG_COOP
+        b.current_holder_org = ORG_COOP
+    db.commit()
+
+    print(f"   + F0-01 tách ra {s1_01.batch_code} ({s1_01.quantity} kg) và {s1_02.batch_code} ({s1_02.quantity} kg) [Mẹ còn {f0_1_updated.quantity} kg - Thuộc: {ORG_COOP}]")
+    print(f"   + F0-02 tách ra {s2_01.batch_code} ({s2_01.quantity} kg) và {s2_02.batch_code} ({s2_02.quantity} kg) [Mẹ còn {f0_2_updated.quantity} kg - Thuộc: {ORG_COOP}]")
+    print(f"   + F0-03 tách ra {s3_01.batch_code} ({s3_01.quantity} kg) và {s3_02.batch_code} ({s3_02.quantity} kg) [Mẹ còn {f0_3_updated.quantity} kg - Thuộc: {ORG_COOP}]")
 
     # =========================================================================
-    # TẦNG 3: GỘP CHÉO THÀNH 3 LÔ BẰNG HÀM `merge_batches` CỦA ỨNG DỤNG
+    # TẦNG 3: GỘP CHÉO THÀNH 3 LÔ BẰNG HÀM `merge_batches` CỦA ỨNG DỤNG (Hợp Tác Xã)
     # =========================================================================
-    print("\n🔄 [TẦNG 3 - F2] Gộp chéo thành 3 lô phối trộn bằng hàm `merge_batches`...")
+    print(f"\n🔄 [TẦNG 3 - F2] Gộp chéo thành 3 lô phối trộn bằng hàm `merge_batches` (Tổ chức: {ORG_COOP})...")
     # Lô gộp M01 (500 kg): lấy từ S1.01 (250 kg) + S2.01 (250 kg)
     m01, m01_relations = merge_batches(
         db=db,
@@ -246,6 +269,8 @@ def seed_lineage_graph(db: Session) -> dict[str, Any]:
         farm_id=farm_id,
         batch_code=f"{GRAPH_BATCH_PREFIX}M01",
     )
+    m01.current_owner = ORG_COOP
+    m01.current_holder_org = ORG_COOP
 
     # Lô gộp M02 (500 kg): lấy từ S2.02 (250 kg) + S3.01 (250 kg)
     m02, m02_relations = merge_batches(
@@ -256,6 +281,8 @@ def seed_lineage_graph(db: Session) -> dict[str, Any]:
         farm_id=farm_id,
         batch_code=f"{GRAPH_BATCH_PREFIX}M02",
     )
+    m02.current_owner = ORG_COOP
+    m02.current_holder_org = ORG_COOP
 
     # Lô gộp M03 (500 kg): lấy từ S3.02 (250 kg) + S1.02 (250 kg)
     m03, m03_relations = merge_batches(
@@ -266,15 +293,18 @@ def seed_lineage_graph(db: Session) -> dict[str, Any]:
         farm_id=farm_id,
         batch_code=f"{GRAPH_BATCH_PREFIX}M03",
     )
+    m03.current_owner = ORG_COOP
+    m03.current_holder_org = ORG_COOP
+    db.commit()
 
-    print(f"   + Lô gộp M01: {m01.batch_code} ({m01.quantity} kg) = S1.01 (250 kg) + S2.01 (250 kg)")
-    print(f"   + Lô gộp M02: {m02.batch_code} ({m02.quantity} kg) = S2.02 (250 kg) + S3.01 (250 kg)")
-    print(f"   + Lô gộp M03: {m03.batch_code} ({m03.quantity} kg) = S3.02 (250 kg) + S1.02 (250 kg)")
+    print(f"   + Lô gộp M01: {m01.batch_code} ({m01.quantity} kg) = S1.01 (250 kg) + S2.01 (250 kg) [{m01.current_holder_org}]")
+    print(f"   + Lô gộp M02: {m02.batch_code} ({m02.quantity} kg) = S2.02 (250 kg) + S3.01 (250 kg) [{m02.current_holder_org}]")
+    print(f"   + Lô gộp M03: {m03.batch_code} ({m03.quantity} kg) = S3.02 (250 kg) + S1.02 (250 kg) [{m03.current_holder_org}]")
 
     # =========================================================================
-    # TẦNG 4: TÁCH THÊM MỘT TẦNG THÀNH PHẨM BẰNG HÀM `split_batch` CỦA ỨNG DỤNG
+    # TẦNG 4: TÁCH THÊM MỘT TẦNG THÀNH PHẨM (Tổng Kho Phân Phối)
     # =========================================================================
-    print("\n🎯 [TẦNG 4 - F3] Tách thêm một tầng thành phẩm từ các lô gộp bằng hàm `split_batch`...")
+    print(f"\n🎯 [TẦNG 4 - F3] Tách thêm một tầng thành phẩm từ các lô gộp (Tổ chức: {ORG_DIST})...")
     # Tách M01 (500 kg) -> FIN1.01 (200 kg) & FIN1.02 (200 kg) (M01 còn 100 kg)
     m01_updated, fin1_children = split_batch(
         db=db,
@@ -314,9 +344,15 @@ def seed_lineage_graph(db: Session) -> dict[str, Any]:
     )
     fin3_01, fin3_02 = fin3_children[0], fin3_children[1]
 
-    print(f"   + M01 tách ra {fin1_01.batch_code} ({fin1_01.quantity} kg) và {fin1_02.batch_code} ({fin1_02.quantity} kg) [M01 còn {m01_updated.quantity} kg]")
-    print(f"   + M02 tách ra {fin2_01.batch_code} ({fin2_01.quantity} kg) và {fin2_02.batch_code} ({fin2_02.quantity} kg) [M02 còn {m02_updated.quantity} kg]")
-    print(f"   + M03 tách ra {fin3_01.batch_code} ({fin3_01.quantity} kg) và {fin3_02.batch_code} ({fin3_02.quantity} kg) [M03 còn {m03_updated.quantity} kg]")
+    # Cập nhật quyền sở hữu cho Tầng 4 (F3 Thành phẩm): Thuộc Tổng Kho Phân Phối
+    for b in [fin1_01, fin1_02, fin2_01, fin2_02, fin3_01, fin3_02]:
+        b.current_owner = ORG_DIST
+        b.current_holder_org = ORG_DIST
+    db.commit()
+
+    print(f"   + M01 tách ra {fin1_01.batch_code} ({fin1_01.quantity} kg) và {fin1_02.batch_code} ({fin1_02.quantity} kg) [{ORG_DIST}]")
+    print(f"   + M02 tách ra {fin2_01.batch_code} ({fin2_01.quantity} kg) và {fin2_02.batch_code} ({fin2_02.quantity} kg) [{ORG_DIST}]")
+    print(f"   + M03 tách ra {fin3_01.batch_code} ({fin3_01.quantity} kg) và {fin3_02.batch_code} ({fin3_02.quantity} kg) [{ORG_DIST}]")
 
     # Thống kê tổng kết
     report = {

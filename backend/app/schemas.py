@@ -349,6 +349,10 @@ class BatchResponse(BaseModel):
         default=None,
         description="Tổ chức hiện đang nắm giữ lô nông sản.",
     )
+    parent_id: int | None = Field(
+        default=None,
+        description="Mã định danh lô nông sản mẹ (nếu có).",
+    )
 
 
 # ----------------------------------------------------------------- Chung ---
@@ -445,6 +449,10 @@ class BatchSplitRequest(BaseModel):
     """Dữ liệu yêu cầu tách nhập nhiều dòng lô con (SCRUM-56 / T-40)."""
 
     items: list[BatchSplitItem] = Field(..., min_length=1, description="Danh sách các dòng khối lượng lô con.")
+    simulate_error_at_index: int | None = Field(
+        default=None,
+        description="Tham số kiểm thử mô phỏng lỗi ở lô con thứ N (1-indexed) để kiểm tra giao dịch rollback sạch sẽ.",
+    )
 
 
 class BatchSplitResponse(BaseModel):
