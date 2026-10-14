@@ -8,6 +8,7 @@ và mở lệnh thu hồi ngay trên chuỗi của lô):
 - :func:`generate_unique_order_code` - sinh mã lệnh riêng, không trùng.
 - :func:`find_open_order_for_batch` - tìm lệnh **đang mở** của một lô.
 - :func:`resolve_recall_lock` - lô có đang bị **đóng băng** vì thu hồi hay không (S-21).
+- :func:`ensure_batch_movable` - chặn thao tác di chuyển trên lô bị đóng băng (S-21).
 - :func:`mark_batch_incident_flagged` - đánh dấu lô có sự cố theo một lệnh thu hồi.
 - :func:`open_recall_order_for_batch` - tạo lệnh + các bên liên quan + sự kiện
   ``INCIDENT_FLAGGED`` trong **cùng một transaction** (hàm không tự commit).
@@ -23,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Sequence
 
+from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -215,6 +217,35 @@ def resolve_recall_lock(db: Session, batch: Batch) -> Optional[RecallLock]:
         )
 
     return None
+
+
+def ensure_batch_movable(db: Session, batch: Batch, action: str) -> None:
+    """Chặn thao tác di chuyển trên lô đang bị thu hồi (S-21).
+
+    Cán bộ kiểm tra cần lô đang bị thu hồi **không di chuyển được nữa** để vùng ảnh
+    hưởng không lan rộng trong lúc xử lý: mọi phép bàn giao, tách, gộp hay chuyển
+    địa điểm trên lô đều bị chặn kèm **mã lệnh thu hồi**; lô đã được đánh dấu có sự
+    cố vẫn bị chặn kể cả khi lệnh đã hoàn tất.
+
+    Hàm dùng chung cho mọi router có thao tác làm lô đổi chủ / đổi địa điểm
+    (``app/routers/batches.py`` và ``app/routers/handovers.py``) nên không thể lách
+    qua đường API còn lại.
+
+    Args:
+        db: Session SQLAlchemy hiện tại.
+        batch: Lô chuẩn bị bị di chuyển.
+        action: Tên thao tác hiển thị trong thông báo (ví dụ ``"bàn giao"``).
+
+    Raises:
+        HTTPException: **409** kèm mã lệnh thu hồi nếu lô đang bị đóng băng.
+    """
+    lock = resolve_recall_lock(db, batch)
+    if lock is None:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=lock.as_message(action),
+    )
 
 
 def mark_batch_incident_flagged(db: Session, batch: Batch, order: RecallOrder) -> None:
@@ -553,6 +584,7 @@ __all__ = [
     "attach_batches_to_order",
     "build_order_response",
     "build_recovery_plan",
+    "ensure_batch_movable",
     "find_open_order_for_batch",
     "generate_unique_order_code",
     "load_order_batches",

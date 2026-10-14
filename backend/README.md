@@ -401,12 +401,20 @@ hưởng không lan rộng trong lúc xử lý: mọi phép bàn giao / tách / 
 | Lệnh **đã hoàn tất**, khi thao tác thì vẫn bị chặn vì lô đã được đánh dấu có sự cố | Lô vào phạm vi lệnh (đánh dấu sự cố ở S-19 hoặc gắn vào lệnh nhiều lô ở S-20) được ghi cờ `batches.incident_flagged` kèm `incident_order_id`/`incident_order_code`/`incident_flagged_at`; cờ **không tự xoá** khi lệnh hoàn tất nên thao tác vẫn nhận `409`: `"Lô #13 đã được đánh dấu có sự cố theo lệnh thu hồi ORD-REC-0001 nên không thể tách lô."` |
 
 **Áp dụng cho:** `POST /batches/{id}/handover/initiate`, `POST /batches/{id}/handover/accept`,
+`POST /handovers` (tạo phiếu bàn giao theo luồng S-35), `POST /handovers/{id}/accept`,
 `POST /batches/{id}/split`, `POST /batches/merge` (chặn nếu **bất kỳ** lô mẹ nào bị
 đóng băng) và `POST /batches/{id}/location`.
 
-**Không chặn:** `POST /batches/{id}/handover/reject` (lô không di chuyển, chỉ dọn
-trạng thái chờ để bên nhận trả lô về bên giao) và `POST /batches/{id}/consume`
-(S-20 vẫn cần theo dõi phần đã bán). Lô chưa từng vào lệnh thu hồi giữ nguyên hành vi cũ.
+Luật đóng băng nằm ở **một chỗ duy nhất** - `app.recall_orders.ensure_batch_movable()`
+(trả `409` kèm mã lệnh) - và được cả `app/routers/batches.py` lẫn
+`app/routers/handovers.py` gọi, nên không lách được bằng cách đổi sang đường API
+bàn giao còn lại; phiếu bàn giao tạo **trước** khi lô bị đưa vào lệnh cũng không
+tiếp nhận được.
+
+**Không chặn:** `POST /batches/{id}/handover/reject` và `POST /handovers/{id}/reject`
+(lô không di chuyển, chỉ dọn trạng thái chờ để bên nhận trả lô về bên giao) và
+`POST /batches/{id}/consume` (S-20 vẫn cần theo dõi phần đã bán). Lô chưa từng vào
+lệnh thu hồi giữ nguyên hành vi cũ.
 
 `GET /batches/{id}` (và mọi phản hồi lô) trả thêm `incident_flagged`,
 `incident_order_id`, `incident_order_code`, `incident_flagged_at` để giao diện chặn
@@ -414,10 +422,11 @@ thao tác trước khi gọi API. DB cũ được `_migrate_sqlite_schema()` th�
 lại cờ từ sự kiện `INCIDENT_FLAGGED`/`RECALL_ISSUED` đã có.
 
 **Kiểm thử:** [`tests/test_recall_batch_lock.py`](../tests/test_recall_batch_lock.py)
-— 7 ca bám sát 2 tiêu chí nghiệm thu (lệnh đang mở chặn kèm mã lệnh, đóng băng cả
+— 10 ca bám sát 2 tiêu chí nghiệm thu (lệnh đang mở chặn kèm mã lệnh, đóng băng cả
 phạm vi lệnh nhiều lô, lệnh đã hoàn tất vẫn chặn, bàn giao đang chờ không hoàn tất
-được) kèm ca biên: thao tác bị chặn không đổi khối lượng / người giữ / địa điểm /
-chuỗi sự kiện, và lô ngoài phạm vi lệnh vẫn di chuyển bình thường.
+được, chặn trên cả đường API bàn giao cũ `POST /handovers`) kèm ca biên: thao tác bị
+chặn không đổi khối lượng / người giữ / địa điểm / chuỗi sự kiện, và lô ngoài phạm
+vi lệnh vẫn di chuyển bình thường.
 
 ### Kịch bản thu hồi mẫu & đáp án đếm tay (S-22)
 

@@ -16,13 +16,21 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Batch, Farm, Location, ROLE_FARMER, ROLE_INSPECTOR, User
+from app.models import (
+    HANDOVER_STATUS_PENDING,
+    Batch,
+    Farm,
+    Location,
+    ROLE_FARMER,
+    ROLE_INSPECTOR,
+    User,
+)
 from app.security import hash_password
 
 #: Tổ chức đang giữ lô (ASCII vì giá trị header ``X-Organization-Id`` chỉ nhận ASCII).
@@ -398,3 +406,102 @@ def test_blocked_movements_leave_quantities_and_history_untouched(lock_env):
     assert len(after["events"]) == event_count_before
     assert after["is_valid"] is True
     assert order["order_code"] == client.get(f"/batches/{main_id}").json()["incident_order_code"]
+
+
+# ---------------------------------------------------------------------------
+# Đường API bàn giao cũ (``POST /handovers``, ``POST /handovers/{id}/accept``)
+# cũng phải chịu đúng luật đóng băng - nếu không sẽ lách được qua đây.
+# ---------------------------------------------------------------------------
+def _create_pending_handover(client: TestClient, batch_id: int, receiver_id: int):
+    """Tạo phiếu bàn giao đang chờ qua ``POST /handovers`` (đã kiểm tra 201)."""
+    response = client.post(
+        "/handovers",
+        json={
+            "batch_id": batch_id,
+            "receiver_id": receiver_id,
+            "receiver_name": OTHER_ORG,
+            "notes": "Bàn giao lô xoài sang nhà phân phối.",
+        },
+        auth=INSPECTOR_AUTH,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _farmer_id(session_factory) -> int:
+    """ID tài khoản dùng làm bên nhận trong các phiếu bàn giao kiểm thử."""
+    with session_factory() as db:
+        return db.scalar(select(User.id).where(User.username == FARMER_AUTH[0]))
+
+
+def test_ac1_legacy_handover_route_is_blocked_while_order_open(lock_env):
+    """Lô trong lệnh đang mở thì không tạo được phiếu bàn giao ở đường API cũ."""
+    client = lock_env["client"]
+    main_id = lock_env["batch_ids"]["main"]
+    free_id = lock_env["batch_ids"]["free"]
+
+    order = _flag_incident(client, main_id)
+
+    blocked = client.post(
+        "/handovers",
+        json={
+            "batch_id": main_id,
+            "receiver_id": _farmer_id(lock_env["session_factory"]),
+            "receiver_name": OTHER_ORG,
+        },
+        auth=INSPECTOR_AUTH,
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert order["order_code"] in blocked.json()["detail"]
+    assert "đang nằm trong lệnh thu hồi" in blocked.json()["detail"]
+
+    # Không có phiếu nào được ghi cho lô đang bị thu hồi.
+    assert client.get("/handovers", params={"batch_id": main_id}, auth=INSPECTOR_AUTH).json() == []
+
+    # Lô tự do vẫn bàn giao bình thường: luật chặn không lan sang lô ngoài phạm vi.
+    pending = _create_pending_handover(client, free_id, _farmer_id(lock_env["session_factory"]))
+    assert pending["status"] == HANDOVER_STATUS_PENDING
+
+
+def test_ac1_legacy_handover_accept_is_blocked_when_recall_opens_after_initiation(lock_env):
+    """Phiếu đã tạo trước khi có lệnh vẫn không tiếp nhận được lô sau khi lô bị thu hồi."""
+    client = lock_env["client"]
+    free_id = lock_env["batch_ids"]["free"]
+    receiver_id = _farmer_id(lock_env["session_factory"])
+    handover = _create_pending_handover(client, free_id, receiver_id)
+
+    order = _create_recall_order(client, [free_id])
+
+    accepted = client.post(f"/handovers/{handover['id']}/accept", auth=FARMER_AUTH)
+    assert accepted.status_code == 409, accepted.text
+    assert order["order_code"] in accepted.json()["detail"]
+
+    # Quyền giữ lô không đổi và phiếu vẫn đang chờ xử lý.
+    with lock_env["session_factory"]() as db:
+        batch = db.get(Batch, free_id)
+        assert batch.current_owner == HOLDER_ORG
+    assert client.get(f"/handovers/{handover['id']}", auth=INSPECTOR_AUTH).json()[
+        "status"
+    ] == HANDOVER_STATUS_PENDING
+
+
+def test_ac2_legacy_handover_route_stays_blocked_after_order_completed(lock_env):
+    """Lệnh đã hoàn tất, lô vẫn mang dấu sự cố nên không bàn giao được ở đường API cũ."""
+    client = lock_env["client"]
+    main_id = lock_env["batch_ids"]["main"]
+
+    order = _flag_incident(client, main_id)
+    _complete_order(client, order)
+
+    blocked = client.post(
+        "/handovers",
+        json={
+            "batch_id": main_id,
+            "receiver_id": _farmer_id(lock_env["session_factory"]),
+            "receiver_name": OTHER_ORG,
+        },
+        auth=INSPECTOR_AUTH,
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert order["order_code"] in blocked.json()["detail"]
+    assert "đã được đánh dấu có sự cố" in blocked.json()["detail"]

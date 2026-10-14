@@ -1571,6 +1571,10 @@ function renderHandovers() {
 
       const matchingBatch = batches.find((b) => b.id === h.batch_id);
       const batchCode = matchingBatch ? (matchingBatch.batch_code || `LOT-${matchingBatch.id}`) : `Lô #${h.batch_id}`;
+      // Lô bị thu hồi (S-21) thì không tiếp nhận được: chặn trước khi gọi API,
+      // vẫn hiện lý do để người dùng hiểu vì sao; "Từ chối" vẫn dùng được để dọn
+      // trạng thái chờ vì thao tác đó không làm lô di chuyển.
+      const recallFrozen = isRecallFrozen(matchingBatch);
 
       return `
         <tr>
@@ -1586,6 +1590,7 @@ function renderHandovers() {
               isPending
                 ? `<div style="display: flex; gap: 6px; justify-content: center;">
                     <button class="btn btn--primary btn--sm" style="padding: 4px 10px; font-size: 12px; background: #059669;" type="button"
+                            ${recallFrozen ? `disabled title="${escapeHtml(recallFrozenLabel(matchingBatch))} — không tiếp nhận được"` : ""}
                             onclick="handleAcceptHandover(${h.id})">Tiếp nhận</button>
                     <button class="btn btn--sm" style="padding: 4px 10px; font-size: 12px; color: #dc2626; border-color: #fca5a5;" type="button"
                             onclick="openRejectModal(${h.id})">Từ chối</button>

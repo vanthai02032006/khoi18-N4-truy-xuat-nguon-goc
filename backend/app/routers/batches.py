@@ -43,9 +43,9 @@ from app.models import (
 )
 from app.recall_orders import (
     build_order_response,
+    ensure_batch_movable,
     find_open_order_for_batch,
     open_recall_order_for_batch,
-    resolve_recall_lock,
 )
 from app.schemas import (
     BatchCreate,
@@ -460,31 +460,8 @@ def consume_batch(
 # =========================================================================
 # ĐÓNG BĂNG LÔ ĐANG BỊ THU HỒI (S-21)
 # =========================================================================
-
-
-def _ensure_batch_movable(db: Session, batch: Batch, action: str) -> None:
-    """Chặn thao tác di chuyển trên lô đang bị thu hồi (S-21).
-
-    Cán bộ kiểm tra cần lô đang bị thu hồi **không di chuyển được nữa** để vùng ảnh
-    hưởng không lan rộng trong lúc xử lý: mọi phép bàn giao, tách, gộp hay chuyển
-    địa điểm trên lô đều bị chặn kèm **mã lệnh thu hồi**; lô đã được đánh dấu có sự
-    cố vẫn bị chặn kể cả khi lệnh đã hoàn tất.
-
-    Args:
-        db: Session SQLAlchemy hiện tại.
-        batch: Lô chuẩn bị bị di chuyển.
-        action: Tên thao tác hiển thị trong thông báo (ví dụ ``"bàn giao"``).
-
-    Raises:
-        HTTPException: **409** kèm mã lệnh thu hồi nếu lô đang bị đóng băng.
-    """
-    lock = resolve_recall_lock(db, batch)
-    if lock is None:
-        return
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail=lock.as_message(action),
-    )
+# Chặn nằm ở ``app/recall_orders.ensure_batch_movable`` để router bàn giao cũ
+# (``app/routers/handovers.py``) dùng đúng cùng một luật, không lách được.
 
 
 # =========================================================================
@@ -581,7 +558,7 @@ def move_batch_to_location(
             detail=f"Lô nông sản #{batch_id} đã tiêu thụ nên không thể chuyển địa điểm.",
         )
 
-    _ensure_batch_movable(db, batch, "chuyển địa điểm")
+    ensure_batch_movable(db, batch, "chuyển địa điểm")
 
     effective_holder = batch.current_holder_org or "HTX Nông Nghiệp Số 4"
     if current_user.role != "admin" and current_org != effective_holder:
@@ -864,7 +841,7 @@ def split_batch(
             detail=f"Lô nông sản mẹ #{batch_id} đã tiêu thụ nên không thể tách.",
         )
 
-    _ensure_batch_movable(db, batch, "tách lô")
+    ensure_batch_movable(db, batch, "tách lô")
 
     # 1. Tính tổng khối lượng các dòng lô con yêu cầu
     total_requested = round(sum(item.quantity for item in payload.items), 4)
@@ -1108,7 +1085,7 @@ def merge_batches(
             )
 
         # Lô đang bị thu hồi thì không gộp được (S-21): chặn kèm mã lệnh thu hồi.
-        _ensure_batch_movable(db, p_batch, "gộp lô")
+        ensure_batch_movable(db, p_batch, "gộp lô")
 
         # Trừ khối lượng của lô mẹ
         p_batch.quantity = round(p_batch.quantity - item.quantity, 4)
@@ -1282,7 +1259,7 @@ def initiate_handover(
             detail=f"Lô hàng #{batch_id} đã tiêu thụ nên không thể bàn giao.",
         )
 
-    _ensure_batch_movable(db, batch, "bàn giao")
+    ensure_batch_movable(db, batch, "bàn giao")
 
     # Kiểm tra quyền: người gọi phải thuộc tổ chức đang nắm giữ lô hàng (trừ admin)
     effective_holder = batch.current_holder_org or "HTX Nông Nghiệp Số 4"
@@ -1396,7 +1373,7 @@ def accept_handover(
             detail=f"Lô hàng #{batch_id} đã tiêu thụ nên không thể xác nhận bàn giao.",
         )
 
-    _ensure_batch_movable(db, batch, "xác nhận bàn giao")
+    ensure_batch_movable(db, batch, "xác nhận bàn giao")
 
     # Kiểm tra xem lô có đợt bàn giao nào đang chờ hay không
     if not batch.pending_receiver_org:
