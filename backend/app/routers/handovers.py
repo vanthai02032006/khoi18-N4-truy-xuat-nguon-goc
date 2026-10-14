@@ -58,7 +58,8 @@ from app.schemas import (
     HandoverResponse,
     HandoverWorkflowResponse,
 )
-from app.security import get_current_user
+from app.jobs.handover_overdue import is_handover_overdue, scan_and_flag_overdue_handovers
+from app.security import get_current_user, require_admin
 from app.services.authorization_service import viewable_batch_ids
 
 router = APIRouter(
@@ -77,6 +78,7 @@ def _to_response(handover: Handover, owner: str | None = None) -> HandoverRespon
         receiver_id=handover.receiver_id,
         receiver_name=handover.receiver_name,
         status=handover.status,
+        is_overdue=is_handover_overdue(handover),
         notes=handover.notes,
         created_at=handover.created_at,
         updated_at=handover.updated_at,
@@ -360,6 +362,7 @@ def accept_handover(
         )
     old_owner = batch.current_owner if batch else handover.sender_name
 
+    was_overdue = is_handover_overdue(handover)  # S-24: xác nhận muộn vẫn thành công
     handover.status = HANDOVER_STATUS_ACCEPTED
     if payload is not None and payload.notes and payload.notes.strip():
         handover.notes = _append_note(handover.notes, f"Tiếp nhận: {payload.notes.strip()}")
@@ -382,6 +385,7 @@ def accept_handover(
         actor=current_user.username,
         payload={
             "handover_id": handover.id,
+            "late": was_overdue,
             "sender": handover.sender_name,
             "receiver": handover.receiver_name,
             "receiver_id": handover.receiver_id,
@@ -523,3 +527,16 @@ __all__ = [
     "require_handover_receiver",
     "router",
 ]
+
+
+@router.post(
+    "/scan-overdue",
+    summary="Chạy ngay job đánh dấu bàn giao quá hạn (S-24, chỉ admin)",
+    description="Job tự chạy mỗi giờ; endpoint này để quản trị chạy tay khi cần.",
+)
+def scan_overdue_now(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    flagged = scan_and_flag_overdue_handovers(db)
+    return {"flagged": flagged}

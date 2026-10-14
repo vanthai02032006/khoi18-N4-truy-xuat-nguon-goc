@@ -17,13 +17,17 @@ Các sprint:
 """
 
 from collections.abc import AsyncIterator
+import asyncio
+import os
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.database import init_db
+from app.database import SessionLocal, init_db
+from app.jobs.handover_overdue import run_overdue_scheduler
 from app.routers import (
     auth,
     backups,
@@ -35,6 +39,7 @@ from app.routers import (
     health,
     integrity,
     invitations,
+    lineage,
     locations,
     orders,
     products,
@@ -50,7 +55,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     (``admin``/``farmer``) nếu chưa có - xem ``app/database.py``.
     """
     init_db()
+    # S-24: job đánh dấu bàn giao quá hạn chạy mỗi giờ. Tắt bằng AGRITRACE_JOBS=0
+    # (bộ test tắt để không chạm vào CSDL thật).
+    task = None
+    if os.environ.get("AGRITRACE_JOBS", "1") == "1" and "pytest" not in sys.modules:
+        task = asyncio.create_task(run_overdue_scheduler(SessionLocal))
     yield
+    if task is not None:
+        task.cancel()
 
 
 # ----------------------------------------------------------- Khởi tạo FastAPI ---
@@ -87,6 +99,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(farms.router)
 app.include_router(batches.router)
+app.include_router(lineage.router)
 app.include_router(locations.router)
 app.include_router(products.router)
 app.include_router(handovers.router)

@@ -1098,6 +1098,10 @@ class HandoverResponse(BaseModel):
         default=None,
         description="Ghi chú của phiếu; khi từ chối chứa lý do từ chối.",
     )
+    is_overdue: bool = Field(
+        default=False,
+        description="S-24: phiếu chờ quá ngưỡng (mặc định 48 giờ) chưa được bên nhận xử lý.",
+    )
     created_at: datetime = Field(..., description="Thời điểm tạo phiếu.")
     updated_at: datetime | None = Field(
         default=None,
@@ -1458,3 +1462,145 @@ class OrganizationAuditLogResponse(BaseModel):
     target_email_or_user: str | None
     details: str | None
     created_at: datetime
+
+
+# ------------------------------------------------ Phả hệ lô (Sprint 3-4) ---
+# Schema của Phan Quang (nhánh feature/phanquang-tasks), chuyển vào đúng vị trí.
+class DirectParentChildItem(BaseModel):
+    """Thông tin một lô mẹ hoặc lô con trực tiếp một tầng (T-39 / SCRUM-74)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    batch_id: int = Field(..., description="ID lô nông sản.")
+    batch_code: str = Field(..., description="Mã lô nông sản.")
+    product_name: str = Field(..., description="Tên sản phẩm.")
+    quantity: float = Field(..., description="Khối lượng của lô (kg).")
+    used_quantity: float | None = Field(
+        default=None,
+        description="Khối lượng đã trích xuất/gộp từ lô này (nếu có quan hệ nhiều-nhiều).",
+    )
+    relation_type: str = Field(
+        default="DIRECT",
+        description="Loại quan hệ: DIRECT (mẹ-con trực tiếp), SPLIT (tách lô), MERGE (gộp lô).",
+    )
+
+
+class BatchDirectSummaryResponse(BaseModel):
+    """Tổng hợp chi tiết lô kèm lô mẹ và lô con trực tiếp (SCRUM-74)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(..., description="ID lô nông sản.")
+    batch_code: str = Field(..., description="Mã lô nông sản.")
+    product_name: str = Field(..., description="Tên sản phẩm.")
+    quantity: float = Field(..., description="Khối lượng hiện tại (kg).")
+    harvest_date: str = Field(..., description="Ngày thu hoạch.")
+    is_restricted: bool = Field(..., description="Cờ hạn chế bảo mật T-54.")
+    current_holder_org: str = Field(..., description="Tổ chức đang giữ lô.")
+    current_owner: str | None = Field(default=None, description="Chủ sở hữu hiện tại.")
+    farm: dict = Field(..., description="Thông tin vùng trồng / thửa đất.")
+    product: dict = Field(..., description="Thông tin sản phẩm trong danh mục.")
+    holder_org: dict = Field(..., description="Thông tin chi tiết tổ chức đang giữ.")
+    direct_parents: list[DirectParentChildItem] = Field(
+        default_factory=list,
+        description="Danh sách các lô mẹ trực tiếp (1 tầng, T-39).",
+    )
+    direct_children: list[DirectParentChildItem] = Field(
+        default_factory=list,
+        description="Danh sách các lô con trực tiếp (1 tầng, T-39).",
+    )
+    events_count: int = Field(
+        ...,
+        description="Tổng số sự kiện trong nhật ký lô (chỉ COUNT(*), không tải dòng thời gian).",
+    )
+
+
+class OriginFarmItem(BaseModel):
+    """Thông tin lô thu hoạch gốc và vùng trồng/thửa xuất xứ (SCRUM-105)."""
+
+    batch_id: int
+    batch_code: str
+    product_name: str
+    harvest_date: str
+    initial_quantity: float
+    farm_id: int
+    farm_name: str
+    farm_location: str
+    farm_area: float
+    farm_owner: str
+    plot_name: str  # Thửa đất / Vùng trồng gốc
+
+
+class TraceBackResponse(BaseModel):
+    """Kết quả truy ngược nguồn gốc vùng trồng (SCRUM-105)."""
+
+    target_batch_id: int
+    target_batch_code: str
+    target_product_name: str
+    target_quantity: float
+    is_standalone: bool  # True nếu lô chưa từng tách hay gộp
+    depth: int  # Độ sâu phả hệ
+    all_ancestor_codes: list[str]
+    origin_farms: list[OriginFarmItem]
+
+
+class DescendantBatchItem(BaseModel):
+    """Thông tin chi tiết một lô hậu duệ khi truy xuôi (SCRUM-108)."""
+
+    batch_id: int
+    batch_code: str
+    product_name: str
+    current_holder_org: str
+    location: str  # Địa điểm / cửa hàng / kho / vùng trồng
+    remaining_quantity: float
+    status: str  # "CONSUMED" (Đã tiêu thụ) hoặc "IN_STOCK" (Còn hàng)
+    status_label: str  # Nhãn tiếng Việt
+    depth: int  # Tầng hậu duệ (1: con, 2: cháu, ...)
+    location_id: int | None = None  # Địa điểm cửa hàng/kho thật (S-30), None nếu chưa gắn
+    is_merged_from_multiple_sources: bool = False  # Lô gộp có nguồn khác trộn vào
+
+
+class TraceForwardResponse(BaseModel):
+    """Kết quả truy xuôi phả hệ hậu duệ (SCRUM-108)."""
+
+    target_batch_id: int
+    target_batch_code: str
+    target_product_name: str
+    total_descendants: int
+    descendants: list[DescendantBatchItem]
+    total_remaining_quantity: float = 0.0  # Tổng còn trên kệ/kho, chưa bán
+    consumed_count: int = 0  # Số lô hậu duệ đã bán hết
+    hidden_count: int = 0  # Số hậu duệ có nhưng tài khoản không được xem chi tiết
+
+
+class LineageGraphNode(BaseModel):
+    """Nút trên sơ đồ phả hệ (SCRUM-109)."""
+
+    id: str  # batch_code
+    batch_id: int
+    label: str
+    group: str  # "ancestor" | "current" | "descendant"
+    level: int  # < 0: tổ tiên (bên trái), 0: lô hiện tại (ở giữa), > 0: hậu duệ (bên phải)
+    product_name: str
+    quantity: float
+    holder_org: str
+    status: str
+    farm_name: str | None = None
+
+
+class LineageGraphEdge(BaseModel):
+    """Cạnh nối trên sơ đồ phả hệ (SCRUM-109)."""
+
+    from_node: str
+    to_node: str
+    label: str  # "SPLIT" | "MERGE" | "DIRECT"
+    quantity: float | None = None
+
+
+class LineageGraphResponse(BaseModel):
+    """Cấu trúc dữ liệu sơ đồ phả hệ 3 khu vực (Trái - Giữa - Phải) (SCRUM-109)."""
+
+    target_batch_code: str
+    target_batch_id: int
+    nodes: list[LineageGraphNode]
+    edges: list[LineageGraphEdge]

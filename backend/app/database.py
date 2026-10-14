@@ -476,6 +476,9 @@ def _migrate_sqlite_schema() -> None:
                     conn.exec_driver_sql(
                         "ALTER TABLE batches ADD COLUMN current_location_id INTEGER REFERENCES locations(id) ON DELETE SET NULL"
                     )
+            handover_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(handovers)").fetchall()}
+            if handover_cols and "is_overdue" not in handover_cols:
+                conn.exec_driver_sql("ALTER TABLE handovers ADD COLUMN is_overdue BOOLEAN NOT NULL DEFAULT 0")
             conn.commit()
     except Exception:
         pass

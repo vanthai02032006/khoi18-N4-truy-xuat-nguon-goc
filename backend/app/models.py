@@ -720,6 +720,8 @@ class Handover(Base):
         default=HANDOVER_STATUS_PENDING,
         index=True,
     )
+    # S-24: bàn giao chờ quá ngưỡng (mặc định 48 giờ). Chỉ là nhãn - không đổi trạng thái.
+    is_overdue: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     notes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
