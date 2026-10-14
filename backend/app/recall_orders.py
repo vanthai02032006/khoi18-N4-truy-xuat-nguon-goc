@@ -7,6 +7,8 @@ và mở lệnh thu hồi ngay trên chuỗi của lô):
 - :func:`build_order_response` - dựng model response kèm tiến độ xác nhận.
 - :func:`generate_unique_order_code` - sinh mã lệnh riêng, không trùng.
 - :func:`find_open_order_for_batch` - tìm lệnh **đang mở** của một lô.
+- :func:`resolve_recall_lock` - lô có đang bị **đóng băng** vì thu hồi hay không (S-21).
+- :func:`mark_batch_incident_flagged` - đánh dấu lô có sự cố theo một lệnh thu hồi.
 - :func:`open_recall_order_for_batch` - tạo lệnh + các bên liên quan + sự kiện
   ``INCIDENT_FLAGGED`` trong **cùng một transaction** (hàm không tự commit).
 
@@ -17,10 +19,11 @@ router gom toàn bộ thay đổi của một thao tác vào một transaction v
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.events import record_event
@@ -43,6 +46,15 @@ from app.schemas import (
 
 #: Trạng thái lệnh đang thực thi (chưa hoàn tất) - lệnh "đang mở".
 RECALL_STATUS_IN_PROGRESS: str = "IN_PROGRESS"
+
+#: Trạng thái lệnh đã xử lý xong - mọi bên liên quan đã xác nhận.
+RECALL_STATUS_COMPLETED: str = "COMPLETED"
+
+#: Lô bị chặn vì còn **lệnh thu hồi đang mở** bao phủ nó.
+LOCK_REASON_OPEN_ORDER: str = "OPEN_ORDER"
+
+#: Lô bị chặn vì **đã được đánh dấu có sự cố** (kể cả khi lệnh đã hoàn tất).
+LOCK_REASON_INCIDENT_FLAGGED: str = "INCIDENT_FLAGGED"
 
 #: Tổ chức ghi nhận sự kiện do cán bộ kiểm tra phát hành (khớp ``orders.py``).
 INSPECTOR_ORGANIZATION: str = "Cơ quan kiểm tra chất lượng"
@@ -102,20 +114,133 @@ def generate_unique_order_code(db: Session, prefix: str = "ORD-REC") -> str:
 
 
 def find_open_order_for_batch(db: Session, batch_id: int) -> Optional[RecallOrder]:
-    """Trả về lệnh **đang mở** (IN_PROGRESS) của một lô, hoặc ``None`` nếu không có.
+    """Trả về lệnh **đang mở** (IN_PROGRESS) bao phủ một lô, hoặc ``None`` nếu không có.
 
-    Dùng để chặn mở trùng: mỗi lô chỉ được có tối đa một lệnh thu hồi đang xử lý.
+    Lô có thể nằm trong lệnh theo hai đường: là **lô chính** của lệnh mở từ sự cố
+    một lô (``RecallOrder.batch_id`` - S-19) hoặc được gắn vào **phạm vi** lệnh
+    nhiều lô (bảng ``recall_order_batches`` - S-20). Cả hai đường đều được tính để
+    mỗi lô chỉ có tối đa một lệnh đang xử lý và không thể lách qua đường còn lại.
     """
     return db.scalar(
         select(RecallOrder)
         .options(selectinload(RecallOrder.targets))
+        .outerjoin(RecallOrderBatch, RecallOrderBatch.order_id == RecallOrder.id)
         .where(
-            RecallOrder.batch_id == batch_id,
             RecallOrder.status == RECALL_STATUS_IN_PROGRESS,
+            or_(
+                RecallOrder.batch_id == batch_id,
+                RecallOrderBatch.batch_id == batch_id,
+            ),
         )
         .order_by(RecallOrder.id.asc())
         .limit(1)
     )
+
+
+@dataclass(frozen=True)
+class RecallLock:
+    """Thông tin một lô đang bị **đóng băng** vì thu hồi (S-21).
+
+    Cán bộ kiểm tra cần lô đang bị thu hồi **không di chuyển được nữa** để vùng ảnh
+    hưởng không lan rộng trong lúc xử lý, nên mọi phép bàn giao / tách / gộp /
+    chuyển địa điểm trên lô đều bị chặn kèm **mã lệnh thu hồi**.
+
+    Attributes:
+        batch_id: Lô đang bị chặn di chuyển.
+        reason: ``OPEN_ORDER`` khi còn lệnh đang mở, ``INCIDENT_FLAGGED`` khi lệnh
+            đã hoàn tất nhưng lô vẫn mang dấu sự cố.
+        order_id: ID lệnh thu hồi liên quan (``None`` nếu dữ liệu cũ thiếu liên kết).
+        order_code: Mã lệnh thu hồi - phần người dùng cần thấy trong thông báo chặn.
+        order_status: Trạng thái lệnh (``IN_PROGRESS`` / ``COMPLETED``).
+    """
+
+    batch_id: int
+    reason: str
+    order_id: Optional[int] = None
+    order_code: Optional[str] = None
+    order_status: Optional[str] = None
+
+    def as_message(self, action: str) -> str:
+        """Câu giải thích vì sao lô không thể ``action`` (kèm mã lệnh thu hồi)."""
+        order_label = (
+            f"lệnh thu hồi {self.order_code}" if self.order_code else "lệnh thu hồi đang xử lý"
+        )
+        if self.reason == LOCK_REASON_OPEN_ORDER:
+            return (
+                f"Lô #{self.batch_id} đang nằm trong {order_label} (đang xử lý) nên không thể "
+                f"{action}. Hãy hoàn tất xử lý thu hồi trước khi di chuyển lô."
+            )
+        return (
+            f"Lô #{self.batch_id} đã được đánh dấu có sự cố theo {order_label} nên không thể "
+            f"{action}."
+        )
+
+    @property
+    def is_open_order(self) -> bool:
+        """``True`` nếu lô đang bị chặn bởi một lệnh còn mở."""
+        return self.reason == LOCK_REASON_OPEN_ORDER
+
+
+def resolve_recall_lock(db: Session, batch: Batch) -> Optional[RecallLock]:
+    """Cho biết lô có đang bị **đóng băng** vì thu hồi hay không (S-21).
+
+    Ưu tiên lệnh **đang mở** để thông báo nêu đúng mã lệnh cần hoàn tất; nếu không
+    còn lệnh nào mở mà lô vẫn mang cờ sự cố thì vẫn chặn - lô đã được đánh dấu có
+    sự cố thì không di chuyển được nữa kể cả sau khi lệnh hoàn tất.
+
+    Args:
+        db: Session SQLAlchemy đang mở transaction của request.
+        batch: Lô cần kiểm tra.
+
+    Returns:
+        RecallLock | None: Thông tin chặn, hoặc ``None`` nếu lô còn được di chuyển.
+    """
+    open_order = find_open_order_for_batch(db, batch.id)
+    if open_order is not None:
+        return RecallLock(
+            batch_id=batch.id,
+            reason=LOCK_REASON_OPEN_ORDER,
+            order_id=open_order.id,
+            order_code=open_order.order_code,
+            order_status=open_order.status,
+        )
+
+    if batch.incident_flagged:
+        return RecallLock(
+            batch_id=batch.id,
+            reason=LOCK_REASON_INCIDENT_FLAGGED,
+            order_id=batch.incident_order_id,
+            order_code=batch.incident_order_code,
+            order_status=RECALL_STATUS_COMPLETED,
+        )
+
+    return None
+
+
+def mark_batch_incident_flagged(db: Session, batch: Batch, order: RecallOrder) -> None:
+    """Đánh dấu lô "đã có sự cố" theo một lệnh thu hồi và đóng băng lô (chưa commit).
+
+    Mốc thời gian chỉ ghi **lần đầu** để dấu sự cố không bị đẩy về sau mỗi lần lô
+    vào thêm một lệnh thu hồi mới. Cờ này không bao giờ tự xoá: lô đã nhiễm sự cố
+    thì vẫn bị chặn di chuyển, kể cả khi lệnh đã hoàn tất.
+    """
+    batch.incident_flagged = True
+    batch.incident_order_id = order.id
+    batch.incident_order_code = order.order_code
+    if not batch.incident_flagged_at:
+        batch.incident_flagged_at = datetime.now(timezone.utc).isoformat()
+    db.add(batch)
+
+
+def lock_batches_under_order(db: Session, order: RecallOrder, batches: Sequence[Batch]) -> None:
+    """Đóng băng **mọi lô** thuộc phạm vi một lệnh thu hồi (chưa commit).
+
+    Nhờ vậy lô nằm trong lệnh thu hồi - dù lệnh mở từ sự cố một lô (S-19) hay lệnh
+    nhiều lô theo danh sách/sản phẩm (S-20) - đều không bàn giao, tách, gộp hay
+    chuyển địa điểm được nữa.
+    """
+    for batch in batches:
+        mark_batch_incident_flagged(db, batch, order)
 
 
 def open_recall_order_for_batch(
@@ -178,6 +303,11 @@ def open_recall_order_for_batch(
 
     for org_name in unique_orgs:
         db.add(RecallOrderTarget(order_id=order.id, org_name=org_name, status="PENDING"))
+
+    # Lưu lô vào phạm vi lệnh và đóng băng lô (S-21): từ đây lô không bàn giao, tách,
+    # gộp hay chuyển địa điểm được nữa để vùng ảnh hưởng không lan rộng.
+    attach_batches_to_order(db, order, [batch])
+    mark_batch_incident_flagged(db, batch, order)
 
     record_event(
         db,
@@ -414,14 +544,21 @@ def build_recovery_plan(db: Session, order: RecallOrder) -> RecallRecoveryPlanRe
 
 __all__ = [
     "INSPECTOR_ORGANIZATION",
+    "LOCK_REASON_INCIDENT_FLAGGED",
+    "LOCK_REASON_OPEN_ORDER",
+    "RECALL_STATUS_COMPLETED",
     "RECALL_STATUS_IN_PROGRESS",
     "UNKNOWN_LOCATION_NAME",
+    "RecallLock",
     "attach_batches_to_order",
     "build_order_response",
     "build_recovery_plan",
     "find_open_order_for_batch",
     "generate_unique_order_code",
     "load_order_batches",
+    "lock_batches_under_order",
+    "mark_batch_incident_flagged",
     "open_recall_order_for_batch",
     "resolve_recall_batches",
+    "resolve_recall_lock",
 ]

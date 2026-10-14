@@ -620,20 +620,37 @@ function farmLabel(farmId) {
   return farm ? `#${farmId} — ${farm.name}` : `#${farmId}`;
 }
 
+/** Lô đang bị thu hồi (S-21): bị đóng băng, không bàn giao/tách/gộp/chuyển địa điểm được. */
+function isRecallFrozen(batch) {
+  return Boolean(batch && batch.incident_flagged);
+}
+
+/** Nhãn cảnh báo kèm mã lệnh thu hồi để biết vì sao thao tác bị chặn (S-21). */
+function recallFrozenLabel(batch) {
+  const code = batch && batch.incident_order_code;
+  return code ? `Đang bị thu hồi theo lệnh ${code}` : "Đang bị thu hồi";
+}
+
 /** Vẽ bảng danh sách lô nông sản (kèm cột "Thao tác": Tách/Sửa/Xoá). */
 function renderBatches() {
   const tbody = $("batch-table-body");
   if (!tbody) return;
 
   tbody.innerHTML = batches
-    .map(
-      (batch) => `
+    .map((batch) => {
+      const frozen = isRecallFrozen(batch);
+      const frozenTitle = frozen
+        ? `${recallFrozenLabel(batch)} — không di chuyển được cho tới khi xử lý xong (S-21)`
+        : "";
+      return `
       <tr class="${batch.id === editingBatchId ? "is-editing" : ""}">
         <td class="id-cell font-mono" style="font-weight: 700; color: #047857;">
           ${
             isMergeMode
               ? `<input type="checkbox" class="batch-merge-cb" data-batch-id="${batch.id}"
-                        ${selectedBatchIds.has(batch.id) ? "checked" : ""} style="margin-right: 6px; cursor: pointer;" />`
+                        ${selectedBatchIds.has(batch.id) ? "checked" : ""}
+                        ${frozen ? "disabled" : ""}
+                        style="margin-right: 6px; cursor: ${frozen ? "not-allowed" : "pointer"};" />`
               : ""
           }
           ${escapeHtml(batch.batch_code || `LOT-${batch.id}`)}
@@ -642,7 +659,11 @@ function renderBatches() {
         <td><strong>${escapeHtml(batch.product_name)}</strong></td>
         <td class="is-right font-mono">${formatNumber(batch.remaining_quantity ?? batch.quantity)}</td>
         <td class="is-right font-mono" style="color: ${batch.consumed_quantity > 0 ? "#c2410c" : "#94a3b8"};">${formatNumber(batch.consumed_quantity || 0)}</td>
-        <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: ${batch.status === "consumed" ? "#f1f5f9" : "#ecfdf5"}; color: ${batch.status === "consumed" ? "#475569" : "#047857"}; border: 1px solid ${batch.status === "consumed" ? "#cbd5e1" : "#a7f3d0"};">${batch.status === "consumed" ? "Đã tiêu thụ" : "Còn hàng"}</span></td>
+        <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: ${batch.status === "consumed" ? "#f1f5f9" : "#ecfdf5"}; color: ${batch.status === "consumed" ? "#475569" : "#047857"}; border: 1px solid ${batch.status === "consumed" ? "#cbd5e1" : "#a7f3d0"};">${batch.status === "consumed" ? "Đã tiêu thụ" : "Còn hàng"}</span>${
+                frozen
+                  ? ` <span title="${escapeHtml(frozenTitle)}" style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;">Đang thu hồi</span>`
+                  : ""
+              }</td>
         <td>${escapeHtml(formatDate(batch.harvest_date))}</td>
         <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;">${escapeHtml(batch.current_holder_org || batch.owner || "HTX Nông Nghiệp Số 4")}</span></td>
         <td>${locationCellHtml(batch)}</td>
@@ -667,11 +688,13 @@ function renderBatches() {
                 ? `<button class="btn btn--sm btn-table-split" type="button"
                     data-action="split" data-entity="batch"
                     data-id="${escapeHtml(batch.id)}"
-                    title="Tách nhập nhiều dòng lô con (T-40)">Tách</button>
+                    ${frozen ? "disabled" : ""}
+                    title="${frozen ? escapeHtml(`${frozenTitle} - không tách được`) : "Tách nhập nhiều dòng lô con (T-40)"}">Tách</button>
                    <button class="btn btn--sm" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;" type="button"
                     data-action="move" data-entity="batch"
                     data-id="${escapeHtml(batch.id)}"
-                    title="Chuyển lô về một địa điểm / cửa hàng (S-18)">Vị trí</button>
+                    ${frozen ? "disabled" : ""}
+                    title="${frozen ? escapeHtml(`${frozenTitle} - không chuyển địa điểm được`) : "Chuyển lô về một địa điểm / cửa hàng (S-18)"}">Vị trí</button>
                    <button class="btn btn--primary btn--sm" type="button"
                     data-action="edit" data-entity="batch"
                     data-id="${escapeHtml(batch.id)}">Sửa</button>
@@ -689,8 +712,8 @@ function renderBatches() {
             }
           </div>
         </td>
-      </tr>`
-    )
+      </tr>`;
+    })
     .join("");
 
   $("batch-empty").hidden = batches.length > 0;
@@ -1504,10 +1527,14 @@ function populateHandoverBatches() {
     '<option value="">-- Chọn lô nông sản bàn giao --</option>' +
     batches
       .filter((batch) => batch.status !== "consumed")
-      .map(
-        (b) =>
-          `<option value="${b.id}">${escapeHtml(b.batch_code || ('LOT-' + b.id))} — ${escapeHtml(b.product_name)} (${formatNumber(b.quantity)} kg)</option>`
-      )
+      .map((b) => {
+        const frozen = isRecallFrozen(b);
+        const label = `${escapeHtml(b.batch_code || ('LOT-' + b.id))} — ${escapeHtml(b.product_name)} (${formatNumber(b.quantity)} kg)`;
+        if (!frozen) return `<option value="${b.id}">${label}</option>`;
+        // Lô đang bị thu hồi (S-21) không bàn giao được: vẫn hiển thị kèm lý do để
+        // người dùng hiểu vì sao không chọn được.
+        return `<option value="${b.id}" disabled>${label} — ${escapeHtml(recallFrozenLabel(b))}</option>`;
+      })
       .join("");
 }
 

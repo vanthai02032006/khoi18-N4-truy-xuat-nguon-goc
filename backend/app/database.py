@@ -330,6 +330,39 @@ def seed_default_thresholds() -> None:
         db.close()
 
 
+def _backfill_incident_flags(conn) -> None:
+    """Dựng lại cờ "đã đánh dấu sự cố" cho các lô có từ trước khi có S-21.
+
+    Lô đã được đánh dấu sự cố (``INCIDENT_FLAGGED`` - S-19) hoặc đã được đưa vào
+    lệnh thu hồi (``RECALL_ISSUED`` - S-20) thì cũng phải bị đóng băng như lô mới
+    để không di chuyển được nữa; lấy luôn mã lệnh và mốc thời gian từ sự kiện đầu tiên.
+
+    Bỏ qua êm nếu SQLite không bật JSON1 (cờ ở lại 0, không chặn nhầm lô cũ).
+    """
+    recall_event_filter = "('INCIDENT_FLAGGED', 'RECALL_ISSUED')"
+    try:
+        conn.exec_driver_sql(
+            "UPDATE batches SET incident_flagged = 1,"
+            " incident_order_id = COALESCE(incident_order_id, ("
+            "  SELECT CAST(json_extract(payload, '$.order_id') AS INTEGER)"
+            "  FROM batch_events WHERE batch_events.batch_id = batches.id"
+            f"   AND event_type IN {recall_event_filter}"
+            "  ORDER BY batch_events.id ASC LIMIT 1)),"
+            " incident_order_code = COALESCE(incident_order_code, ("
+            "  SELECT json_extract(payload, '$.order_code')"
+            "  FROM batch_events WHERE batch_events.batch_id = batches.id"
+            f"   AND event_type IN {recall_event_filter}"
+            "  ORDER BY batch_events.id ASC LIMIT 1)),"
+            " incident_flagged_at = COALESCE(incident_flagged_at, ("
+            "  SELECT timestamp FROM batch_events WHERE batch_events.batch_id = batches.id"
+            f"   AND event_type IN {recall_event_filter}"
+            "  ORDER BY batch_events.id ASC LIMIT 1))"
+            f" WHERE id IN (SELECT DISTINCT batch_id FROM batch_events WHERE event_type IN {recall_event_filter})"
+        )
+    except Exception:
+        pass
+
+
 def _migrate_sqlite_schema() -> None:
     """Tự động bổ sung các cột mới vào SQLite nếu database đã tồn tại từ trước."""
     try:
@@ -351,6 +384,15 @@ def _migrate_sqlite_schema() -> None:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN parent_id INTEGER REFERENCES batches(id) ON DELETE SET NULL")
                 if "is_restricted" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN is_restricted BOOLEAN DEFAULT 0")
+                if "incident_flagged" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN incident_flagged BOOLEAN NOT NULL DEFAULT 0")
+                if "incident_order_id" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN incident_order_id INTEGER")
+                if "incident_order_code" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN incident_order_code VARCHAR(50)")
+                if "incident_flagged_at" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN incident_flagged_at VARCHAR(50)")
+                    _backfill_incident_flags(conn)
                 if "status" not in existing_cols:
                     conn.exec_driver_sql(
                         "ALTER TABLE batches ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'available'"

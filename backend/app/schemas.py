@@ -343,6 +343,26 @@ class BatchResponse(BaseModel):
         default=None,
         description="Tổ chức đang được bàn giao (chờ xác nhận hoặc từ chối).",
     )
+    incident_flagged: bool = Field(
+        default=False,
+        description=(
+            "Lô đã được đánh dấu có sự cố và đang nằm trong lệnh thu hồi (S-21): lô bị "
+            "đóng băng, không bàn giao/tách/gộp/chuyển địa điểm được nữa."
+        ),
+    )
+    incident_order_id: int | None = Field(
+        default=None,
+        description="ID lệnh thu hồi đã đánh dấu lô có sự cố (null nếu lô chưa từng bị đánh dấu).",
+    )
+    incident_order_code: str | None = Field(
+        default=None,
+        description="Mã lệnh thu hồi đã đánh dấu lô có sự cố - S-21 (ví dụ `ORD-REC-0001`).",
+        examples=["ORD-REC-0001"],
+    )
+    incident_flagged_at: str | None = Field(
+        default=None,
+        description="Thời điểm lô bị đánh dấu sự cố lần đầu (ISO 8601).",
+    )
     current_location_id: int | None = Field(
         default=None,
         description="ID địa điểm hiện đang chứa lô (null nếu chưa gắn địa điểm - S-18).",

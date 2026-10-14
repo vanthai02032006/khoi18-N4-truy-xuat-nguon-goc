@@ -164,6 +164,37 @@ class Batch(Base):
         server_default="0",
     )
 
+    # Cờ "lô đã được đánh dấu có sự cố" (S-21). Một khi lô vào phạm vi một lệnh thu hồi
+    # (đánh dấu sự cố ở S-19 hoặc được gắn vào lệnh nhiều lô ở S-20), lô bị **đóng băng**:
+    # không bàn giao, tách, gộp hay chuyển địa điểm được nữa để vùng ảnh hưởng không lan
+    # rộng trong lúc xử lý. Cờ **không tự xoá** khi lệnh hoàn tất - lô đã nhiễm sự cố thì
+    # vẫn bị chặn, đúng nguyên tắc sổ chỉ thêm (đính chính bằng sự kiện mới, không xoá dấu).
+    incident_flagged: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="0",
+        index=True,
+    )
+    # Liên kết mềm tới lệnh thu hồi đã đánh dấu lô (không đặt khoá ngoại để tránh vòng
+    # tham chiếu `batches` <-> `recall_orders` khi tạo bảng).
+    incident_order_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        index=True,
+        default=None,
+    )
+    incident_order_code: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        default=None,
+    )
+    incident_flagged_at: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        default=None,
+    )
+
     # Phả hệ lô nông sản mẹ - con (T-39 / T-40 / T-41 / SCRUM-57)
     parent_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("batches.id", ondelete="SET NULL"),

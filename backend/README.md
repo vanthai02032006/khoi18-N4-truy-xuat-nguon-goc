@@ -166,8 +166,8 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | POST | `/locations` | Khai báo địa điểm / cửa hàng (tên + địa chỉ) cho tổ chức đang gọi | farmer **hoặc** admin | `201` · `401` · `409` trùng tên trong tổ chức · `422` dữ liệu sai |
 | GET | `/locations` | Danh sách địa điểm của **chính tổ chức đang gọi** | farmer **hoặc** admin | `200` · `401` |
 | GET | `/locations/{location_id}/batches` | Tra cứu lô đang nằm tại một địa điểm (thu hồi đúng cửa hàng) | farmer **hoặc** admin | `200` · `401` · `403` địa điểm của tổ chức khác · `404` không tìm thấy |
-| POST | `/batches/{batch_id}/location` | Ghi nhận lô đang ở địa điểm nào + ghi sự kiện `LOCATION_CHANGED` vào chuỗi | farmer **hoặc** admin | `200` · `400` lô đã tiêu thụ · `403` lô/địa điểm của tổ chức khác · `404` không tìm thấy |
-| POST | `/batches/{batch_id}/incident` | Đánh dấu lô có sự cố kèm lý do → mở lệnh thu hồi (mã riêng) + ghi sự kiện `INCIDENT_FLAGGED` | **inspector hoặc admin** | `201` · `401` · `403` sai vai trò · `404` không tìm thấy lô · `409` lô đã có lệnh đang mở |
+| POST | `/batches/{batch_id}/location` | Ghi nhận lô đang ở địa điểm nào + ghi sự kiện `LOCATION_CHANGED` vào chuỗi | farmer **hoặc** admin | `200` · `400` lô đã tiêu thụ · `403` lô/địa điểm của tổ chức khác · `404` không tìm thấy · `409` lô đang bị thu hồi (kèm mã lệnh) |
+| POST | `/batches/{batch_id}/incident` | Đánh dấu lô có sự cố kèm lý do → mở lệnh thu hồi (mã riêng) + ghi sự kiện `INCIDENT_FLAGGED`; lô bị **đóng băng** không bàn giao/tách/gộp/chuyển địa điểm được nữa | **inspector hoặc admin** | `201` · `401` · `403` sai vai trò · `404` không tìm thấy lô · `409` lô đã có lệnh đang mở |
 | POST | `/batches/{batch_id}/consume` | Ghi nhận lô đã bán cho người tiêu dùng: bán một phần (`{"quantity": 60}`) hoặc bán hết (bỏ trống body) + sự kiện `BATCH_CONSUMED` | farmer **hoặc** admin | `200` · `400` lô đã tiêu thụ / bán vượt khối lượng còn lại · `403` lô của tổ chức khác · `404` không tìm thấy |
 | POST | `/orders` | Ban hành lệnh kiểm tra / thu hồi, nhận `batch_id`, `batch_ids` (nhiều lô) hoặc `product_name` (gom theo sản phẩm) | **inspector hoặc admin** | `201` · `400` phạm vi không hợp lệ · `404` lô không tồn tại · `422` |
 | GET | `/orders/{order_id}/recovery-plan` | **Kế hoạch thu hồi:** từng lô kèm tổ chức, địa điểm, khối lượng còn lại & đã tiêu thụ; tổng còn thu hồi được / đã ra thị trường; nhóm theo cửa hàng | đã đăng nhập | `200` · `401` · `404` không tìm thấy lệnh |
@@ -388,6 +388,36 @@ ghi vào chuỗi băm của **mọi lô** thuộc lệnh - nhờ vậy hồ sơ 
 **Kiểm thử:** [`tests/test_recall_recovery_plan.py`](../tests/test_recall_recovery_plan.py)
 — 10 ca bám sát 2 tiêu chí nghiệm thu (lệnh 20 lô ở 3 cửa hàng, bán một phần/bán hết,
 gom theo tên sản phẩm, sự kiện ghi cho từng lô) kèm các ca chặn (`400`, `401`, `404`).
+
+### Đóng băng lô đang bị thu hồi (S-21)
+
+Cán bộ kiểm tra cần lô **đang bị thu hồi không di chuyển được nữa** để vùng ảnh
+hưởng không lan rộng trong lúc xử lý: mọi phép bàn giao / tách / gộp / chuyển địa
+điểm trên lô đều bị chặn kèm **mã lệnh thu hồi**.
+
+| Tiêu chí | Cách hệ thống đáp ứng |
+| --- | --- |
+| Lô nằm trong lệnh thu hồi **đang mở**, khi ai đó bàn giao, tách hoặc gộp nó thì bị chặn kèm mã lệnh thu hồi | `resolve_recall_lock` tìm lệnh `IN_PROGRESS` bao phủ lô (lô chính của lệnh S-19 **hoặc** lô trong bảng `recall_order_batches` của lệnh S-20) rồi trả `409` với `detail` nêu mã lệnh: `"Lô #13 đang nằm trong lệnh thu hồi ORD-REC-0001 (đang xử lý) nên không thể bàn giao. Hãy hoàn tất xử lý thu hồi trước khi di chuyển lô."` |
+| Lệnh **đã hoàn tất**, khi thao tác thì vẫn bị chặn vì lô đã được đánh dấu có sự cố | Lô vào phạm vi lệnh (đánh dấu sự cố ở S-19 hoặc gắn vào lệnh nhiều lô ở S-20) được ghi cờ `batches.incident_flagged` kèm `incident_order_id`/`incident_order_code`/`incident_flagged_at`; cờ **không tự xoá** khi lệnh hoàn tất nên thao tác vẫn nhận `409`: `"Lô #13 đã được đánh dấu có sự cố theo lệnh thu hồi ORD-REC-0001 nên không thể tách lô."` |
+
+**Áp dụng cho:** `POST /batches/{id}/handover/initiate`, `POST /batches/{id}/handover/accept`,
+`POST /batches/{id}/split`, `POST /batches/merge` (chặn nếu **bất kỳ** lô mẹ nào bị
+đóng băng) và `POST /batches/{id}/location`.
+
+**Không chặn:** `POST /batches/{id}/handover/reject` (lô không di chuyển, chỉ dọn
+trạng thái chờ để bên nhận trả lô về bên giao) và `POST /batches/{id}/consume`
+(S-20 vẫn cần theo dõi phần đã bán). Lô chưa từng vào lệnh thu hồi giữ nguyên hành vi cũ.
+
+`GET /batches/{id}` (và mọi phản hồi lô) trả thêm `incident_flagged`,
+`incident_order_id`, `incident_order_code`, `incident_flagged_at` để giao diện chặn
+thao tác trước khi gọi API. DB cũ được `_migrate_sqlite_schema()` thêm cột và dựng
+lại cờ từ sự kiện `INCIDENT_FLAGGED`/`RECALL_ISSUED` đã có.
+
+**Kiểm thử:** [`tests/test_recall_batch_lock.py`](../tests/test_recall_batch_lock.py)
+— 7 ca bám sát 2 tiêu chí nghiệm thu (lệnh đang mở chặn kèm mã lệnh, đóng băng cả
+phạm vi lệnh nhiều lô, lệnh đã hoàn tất vẫn chặn, bàn giao đang chờ không hoàn tất
+được) kèm ca biên: thao tác bị chặn không đổi khối lượng / người giữ / địa điểm /
+chuỗi sự kiện, và lô ngoài phạm vi lệnh vẫn di chuyển bình thường.
 
 ### Cấu trúc bảng `users` (Sprint 4)
 
@@ -712,3 +742,4 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | S-18 | **Địa điểm / cửa hàng & vị trí hiện tại của lô:** model `Location` → bảng `locations` (`organization`, `name`, `address`; tên duy nhất trong một tổ chức) và cột `batches.current_location_id` (FK → `locations.id`, tự migrate cho DB cũ); router mới `app/routers/locations.py` với `POST /locations`, `GET /locations` (chỉ địa điểm của tổ chức đang gọi), `GET /locations/{id}/batches` (tra cứu thu hồi theo cửa hàng); `POST /batches/{batch_id}/location` ghi địa điểm hiện tại + sự kiện `LOCATION_CHANGED`; `POST /batches/{batch_id}/split` (S-17) nhận `location_id` trên từng dòng lô con. Frontend: tab **ĐỊA ĐIỂM**, bảng địa điểm, khối tra cứu thu hồi, cột địa điểm hiện tại trong bảng lô, modal **Chuyển lô về địa điểm** và cột chọn địa điểm trong modal tách lô. |
 | S-19 | **Đánh dấu lô có sự cố & mở lệnh thu hồi (3 SP):** endpoint `POST /batches/{batch_id}/incident` (dependency `require_inspector` → `403` với vai trò khác) tạo `RecallOrder` mã riêng (`ORD-REC-xxxx`) gắn lô + ghi sự kiện `INCIDENT_FLAGGED` vào chuỗi băm; chặn mở trùng bằng `409` kèm mã lệnh đang mở. Gom nghiệp vụ dùng chung vào module mới `app/recall_orders.py` (`build_order_response`, `generate_unique_order_code`, `find_open_order_for_batch`, `open_recall_order_for_batch`); hằng số `EVENT_TYPE_INCIDENT_FLAGGED`; schema `BatchIncidentRequest`. Frontend: nút **Đánh dấu sự cố** trên bảng lô và nhánh hiển thị sự kiện `INCIDENT_FLAGGED` trong dòng thời gian. |
 | S-20 | **Kế hoạch thu hồi theo lô & cửa hàng (3 SP):** model `RecallOrderBatch` → bảng `recall_order_batches` (lệnh N-N lô) và cột `batches.consumed_quantity` (khối lượng đã bán ra thị trường, tự migrate + khôi phục từ sự kiện `BATCH_CONSUMED` cho DB cũ); `POST /orders` nhận `batch_ids`/`product_name` để gom phạm vi và ghi `RECALL_ISSUED` vào chuỗi băm của **từng lô** (khi hoàn tất cũng ghi `RECALL_COMPLETED` cho từng lô); endpoint mới `GET /orders/{order_id}/recovery-plan` trả từng lô kèm tổ chức, địa điểm, khối lượng còn lại/đã tiêu thụ, phần tổng hợp còn thu hồi được vs đã ra thị trường và nhóm theo địa điểm; `POST /batches/{batch_id}/consume` nhận `{"quantity": n}` để ghi **bán một phần**; `EVENT_TYPE_RECALL_ISSUED`, các schema `ConsumeBatchRequest`, `RecallBatchResponse`, `RecallLocationGroupResponse`, `RecallRecoveryPlanResponse`. Frontend: cột **Còn lại / Đã bán** trong bảng lô và bảng tra cứu thu hồi, ô nhập phạm vi nhiều lô/tên sản phẩm khi ban hành lệnh, khối **Kế hoạch thu hồi** trong modal chi tiết lệnh (thẻ tổng + bảng từng lô + gom theo cửa hàng), modal **Ghi nhận bán** (nhập khối lượng bán một phần + ghi chú) và thẻ sự kiện `BATCH_CONSUMED` hiển thị rõ đã bán / còn lại. |
+| S-21 | **Đóng băng lô đang bị thu hồi (2 SP):** cột `batches.incident_flagged` + `incident_order_id`/`incident_order_code`/`incident_flagged_at` (tự migrate cho DB cũ, dựng lại cờ từ sự kiện `INCIDENT_FLAGGED`/`RECALL_ISSUED`); `resolve_recall_lock` (module `app/recall_orders.py`) + `find_open_order_for_batch` nay nhận cả lô nằm trong bảng liên kết `recall_order_batches` của lệnh nhiều lô; `POST /batches/{id}/handover/initiate`, `.../handover/accept`, `.../split`, `POST /batches/merge` và `POST /batches/{id}/location` trả `409` kèm **mã lệnh thu hồi** khi lô đang bị đóng băng (lệnh đang mở, hoặc lệnh đã hoàn tất nhưng lô vẫn mang dấu sự cố); `BatchResponse` trả thêm các trường dấu sự cố để giao diện chặn thao tác. Frontend: huy hiệu **Đang thu hồi** (kèm mã lệnh) trong bảng lô, khoá nút **Tách** / **Vị trí**, ô tích gộp lô và lựa chọn bàn giao của lô đang bị thu hồi. |

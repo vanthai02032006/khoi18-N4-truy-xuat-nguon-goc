@@ -32,6 +32,7 @@ from app.recall_orders import (
     build_recovery_plan,
     generate_unique_order_code,
     load_order_batches,
+    lock_batches_under_order,
     record_recall_issued,
     resolve_recall_batches,
 )
@@ -65,6 +66,9 @@ def create_recall_order(
     lô đang nằm ở nhiều cửa hàng) hoặc **cả một sản phẩm** (`product_name`); mọi
     lô trong phạm vi được lưu vào bảng liên kết và ghi sự kiện `RECALL_ISSUED`
     vào chuỗi băm riêng của lô đó (S-20).
+
+    Mọi lô trong phạm vi cũng bị **đóng băng** (S-21): không bàn giao, tách, gộp
+    hay chuyển địa điểm được nữa để vùng ảnh hưởng không lan rộng trong lúc xử lý.
     """
     unique_orgs = list(dict.fromkeys([o.strip() for o in payload.target_organizations if o.strip()]))
     if not unique_orgs:
@@ -130,6 +134,9 @@ def create_recall_order(
         actor=current_user.username,
         target_organizations=unique_orgs,
     )
+    # Đóng băng mọi lô trong phạm vi lệnh (S-21): lô đang bị thu hồi thì không bàn giao,
+    # tách, gộp hay chuyển địa điểm được nữa để vùng ảnh hưởng không lan rộng.
+    lock_batches_under_order(db, order, scoped_batches)
 
     try:
         db.commit()
