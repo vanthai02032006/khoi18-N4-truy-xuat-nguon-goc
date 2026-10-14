@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=3.0" />
+  <link rel="stylesheet" href="css/style.css?v=3.1" />
 </head>
 <body>
   <!-- Persistent SVG Fractal Noise Overlay (4% opacity) -->
@@ -41,6 +41,10 @@
           <span class="tab-icon">📦</span>
           <span>LÔ HÀNG</span>
         </button>
+        <button type="button" class="nav-tab-pill" data-tab="lineage">
+          <span class="tab-icon">🌳</span>
+          <span>PHẢ HỆ</span>
+        </button>
         <button type="button" class="nav-tab-pill" data-tab="locations">
           <span class="tab-icon">🏬</span>
           <span>ĐỊA ĐIỂM</span>
@@ -60,6 +64,10 @@
         <button type="button" class="nav-tab-pill" data-tab="orders">
           <span class="tab-icon">🚨</span>
           <span>THU HỒI</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="audit" id="tab-audit-btn" hidden>
+          <span class="tab-icon">📜</span>
+          <span>NHẬT KÝ</span>
         </button>
         <button type="button" class="nav-tab-pill" data-tab="users" id="tab-users-btn" hidden>
           <span class="tab-icon">👥</span>
@@ -344,6 +352,13 @@
             </div>
           </div>
         </header>
+        <div id="csv-import-farms" class="csv-import" hidden>
+          <strong>Nhập hàng loạt từ CSV</strong>
+          <span>Cột bắt buộc: <code>name, location, area, owner</code>. Ví dụ: <code>Thửa A3,Mỹ Xương - Cao Lãnh,2.5,HTX Mỹ Xương</code>. Một dòng sai thì không dòng nào được tạo.</span>
+          <input id="csv-file-farms" type="file" accept=".csv,text/csv" />
+          <button id="btn-csv-farms" type="button" class="btn btn--secondary btn--sm">Nhập CSV</button>
+          <div id="csv-report-farms" class="csv-report" hidden></div>
+        </div>
 
         <div id="farm-inspector-note" style="padding: 12px 18px; background: #eef2ff; border: 1.5px solid #c7d2fe; border-radius: 8px; margin: 16px 20px; color: #3730a3; font-size: 0.9rem; display: flex; align-items: center; gap: 10px;" hidden>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -626,7 +641,8 @@
           </div>
 
           <!-- Empty State (SCRUM-50) -->
-          <div id="batch-empty" class="empty-placeholder" hidden>
+          <button id="btn-batch-more" type="button" class="btn btn--secondary btn--sm batch-more" hidden onclick="loadMoreBatches()">Xem thêm 20 lô cũ hơn</button>
+            <div id="batch-empty" class="empty-placeholder" hidden>
             <div class="empty-icon-wrap">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
             </div>
@@ -637,6 +653,48 @@
       </section>
 
       <!-- Section 3: Địa Điểm / Cửa Hàng Trong Hệ Thống & Vị Trí Hiện Tại Của Lô (S-18) -->
+      <!-- ===== Sprint 3–4: Chi tiết & phả hệ lô (S-21, S-25, S-26, S-27, S-28) ===== -->
+      <section id="lineage-card" class="content-card" hidden>
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar module-avatar--batch">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M6 9v1a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V9M12 13v2"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title" id="lineage-title">Chi tiết & phả hệ lô hàng</h3>
+              <p class="card-subtitle">Lô này đến từ đâu, đã đi tới đâu, đang nằm ở tổ chức và địa điểm nào.</p>
+            </div>
+          </div>
+        </header>
+        <form id="lineage-lookup-form" class="lineage-lookup">
+          <label for="lineage-batch-input" class="input-label">Mã lô hoặc #ID</label>
+          <input id="lineage-batch-input" class="input" type="text" placeholder="VD: LOT-20261014-A9F3 hoặc #12" autocomplete="off" />
+          <button type="submit" class="btn btn--primary btn--sm">Tra cứu</button>
+        </form>
+        <p id="lineage-empty" class="lineage-note">Nhập mã lô, hoặc bấm <strong>Xem</strong> ở một dòng trong bảng lô hàng.</p>
+        <div id="lineage-body" hidden>
+          <div class="lineage-tabs" role="tablist">
+            <button type="button" role="tab" data-lineage-view="overview">Tổng quan</button>
+            <button type="button" role="tab" data-lineage-view="origin">Nguồn gốc</button>
+            <button type="button" role="tab" data-lineage-view="descendants">Hậu duệ & nơi giữ</button>
+            <button type="button" role="tab" data-lineage-view="graph">Sơ đồ phả hệ</button>
+            <button type="button" role="tab" data-lineage-view="timeline">Dòng thời gian</button>
+          </div>
+          <div class="lineage-panel" data-panel="overview" id="lineage-panel-overview"></div>
+          <div class="lineage-panel" data-panel="origin" id="lineage-panel-origin" hidden></div>
+          <div class="lineage-panel" data-panel="descendants" id="lineage-panel-descendants" hidden></div>
+          <div class="lineage-panel" data-panel="graph" id="lineage-panel-graph" hidden>
+            <div class="lineage-graph-bar">
+              <span id="lineage-graph-note" class="lineage-note"></span>
+              <span class="lineage-legend"><i class="lg-anc"></i>Tổ tiên <i class="lg-cur"></i>Lô đang xem <i class="lg-desc"></i>Hậu duệ</span>
+              <button id="btn-lineage-fit" type="button" class="btn btn--secondary btn--sm">Vừa khung</button>
+            </div>
+            <div class="lineage-scroll"><div id="lineage-graph" class="lineage-graph"></div></div>
+          </div>
+          <div class="lineage-panel" data-panel="timeline" id="lineage-panel-timeline" hidden></div>
+        </div>
+      </section>
+
       <section id="locations-card" class="content-card">
         <header class="card-header">
           <div class="header-left">
@@ -760,6 +818,13 @@
             </div>
           </div>
         </header>
+        <div id="csv-import-products" class="csv-import" hidden>
+          <strong>Nhập hàng loạt từ CSV</strong>
+          <span>Cột: <code>name</code>, <code>unit</code> (kg, g, ton, box…) bắt buộc; <code>description</code> tuỳ chọn. Ví dụ: <code>Thanh Long Ruột Đỏ,kg,Bình Thuận</code>. Một dòng sai thì không dòng nào được tạo.</span>
+          <input id="csv-file-products" type="file" accept=".csv,text/csv" />
+          <button id="btn-csv-products" type="button" class="btn btn--secondary btn--sm">Nhập CSV</button>
+          <div id="csv-report-products" class="csv-report" hidden></div>
+        </div>
 
         <form id="product-form" class="form-wrapper" novalidate>
           <input type="hidden" id="product-id" />
@@ -1194,6 +1259,35 @@
       </section>
 
       <!-- Section 8: Quản trị Tài Khoản (Admin Only) -->
+      <!-- ===== Sprint 4: Nhật ký thao tác (S-31) - chỉ admin ===== -->
+      <section id="audit-card" class="content-card" hidden>
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar module-avatar--batch">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">Nhật ký thao tác</h3>
+              <p class="card-subtitle">Ai làm gì, lúc nào, từ địa chỉ nào. Nhật ký chỉ ghi thêm, không sửa hay xoá được.</p>
+            </div>
+          </div>
+        </header>
+        <form id="audit-filter-form" class="lineage-lookup">
+          <input id="audit-filter-user" class="input" type="text" placeholder="Tên đăng nhập" />
+          <input id="audit-filter-action" class="input" type="text" placeholder="Hành động, VD: Tách lô" />
+          <label class="audit-check"><input id="audit-filter-failed" type="checkbox" /> Chỉ thao tác bị từ chối</label>
+          <button type="submit" class="btn btn--primary btn--sm">Lọc</button>
+        </form>
+        <div class="table-wrapper lineage-scroll">
+          <table class="data-table">
+            <thead><tr><th>THỜI ĐIỂM</th><th>NGƯỜI / TỔ CHỨC</th><th>HÀNH ĐỘNG</th><th>ĐỐI TƯỢNG</th><th>ĐỊA CHỈ IP</th><th class="is-center">KẾT QUẢ</th></tr></thead>
+            <tbody id="audit-table-body"></tbody>
+          </table>
+        </div>
+        <p id="audit-empty" class="lineage-note">Chưa có dòng nhật ký nào khớp bộ lọc.</p>
+        <button id="audit-more" type="button" class="btn btn--secondary btn--sm" hidden>Xem thêm</button>
+      </section>
+
       <section id="users-card" class="content-card" hidden>
         <header class="card-header">
           <div class="header-left">
@@ -2168,6 +2262,8 @@
       }
     }
   </script>
-  <script src="js/app.js?v=3.1"></script>
+  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js" defer></script>
+  <script src="js/app.js?v=3.2"></script>
+  <script src="js/lineage.js?v=1.0"></script>
 </body>
 </html>

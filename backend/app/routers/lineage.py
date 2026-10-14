@@ -242,6 +242,13 @@ def get_batch_trace_forward(
         if b is None:
             continue
         consumed = _is_consumed(b)
+        remaining = _remaining(b)
+        if consumed:
+            st, label = "CONSUMED", "Đã tiêu thụ"
+        elif remaining <= 0:
+            st, label = "DEPLETED", "Đã chuyển hết sang lô con"
+        else:
+            st, label = "IN_STOCK", "Còn hàng"
         items.append(
             DescendantBatchItem(
                 batch_id=b.id,
@@ -250,9 +257,9 @@ def get_batch_trace_forward(
                 current_holder_org=b.current_holder_org,
                 location=_location_label(b),
                 location_id=b.current_location_id,
-                remaining_quantity=_remaining(b),
-                status="CONSUMED" if consumed else "IN_STOCK",
-                status_label="Đã tiêu thụ" if consumed else "Còn hàng",
+                remaining_quantity=remaining,
+                status=st,
+                status_label=label,
                 depth=desc[i],
                 is_merged_from_multiple_sources=len(graph.parents_of.get(i, [])) > 1,
             )

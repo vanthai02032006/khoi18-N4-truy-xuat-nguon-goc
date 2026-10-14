@@ -277,6 +277,8 @@ function applySessionToUi() {
     }
   }
 
+  if (typeof applySprint34Roles === "function") applySprint34Roles();
+
   // 1. Quản trị tài khoản: chỉ admin
   if ($("tab-users-btn")) {
     $("tab-users-btn").hidden = !isAdmin;
@@ -624,7 +626,14 @@ let batchFilterProduct = "";
 let knownProductNames = new Set();
 
 /** GET /batches -> cập nhật bảng danh sách lô kèm search, filter và phân quyền SCRUM-70. */
-async function loadBatches(search = "") {
+let batchNextCursor = null; // SCRUM-49: phân trang con trỏ, 20 lô mỗi trang
+
+async function loadMoreBatches() {
+  if (!batchNextCursor) return;
+  await loadBatches("", batchNextCursor);
+}
+
+async function loadBatches(search = "", cursor = null) {
   const loadingEl = $("batch-loading");
   const errorEl = $("batch-error");
   const emptyEl = $("batch-empty");
@@ -644,11 +653,16 @@ async function loadBatches(search = "") {
     params.set("product_name", batchFilterProduct.trim());
   }
 
+  params.set("limit", "20");
+  if (cursor) params.set("cursor", String(cursor));
   const queryStr = params.toString() ? `?${params.toString()}` : "";
 
   try {
     const data = await apiRequest(`/batches${queryStr}`);
-    batches = Array.isArray(data) ? data : [];
+    const page = Array.isArray(data) ? data : [];
+    batches = cursor ? batches.concat(page) : page;
+    batchNextCursor = page.length === 20 ? page[page.length - 1].id : null;
+    if ($("btn-batch-more")) $("btn-batch-more").hidden = !batchNextCursor;
 
     // Tích luỹ danh sách các loại sản phẩm để đổ vào bộ lọc
     batches.forEach((b) => {
@@ -1573,7 +1587,10 @@ function renderHandovers() {
       const isRejected = h.status === "rejected";
 
       let statusBadge = "";
-      if (isPending) {
+      if (isPending && h.is_overdue) {
+        // S-24 / T-57: nhãn có chữ lẫn màu để người mù màu vẫn đọc được.
+        statusBadge = `<span class="handover-badge handover-badge--overdue">⚠ Quá hạn — chờ nhận</span>`;
+      } else if (isPending) {
         statusBadge = `<span class="handover-badge handover-badge--pending">⏳ Chờ nhận</span>`;
       } else if (isAccepted) {
         statusBadge = `<span class="handover-badge handover-badge--accepted">✓ Đã nhận</span>`;
@@ -1739,6 +1756,8 @@ function switchTab(tab) {
     handovers: $("handovers-card"),
     coldchain: $("coldchain-card"),
     orders: $("orders-card"),
+    lineage: $("lineage-card"),
+    audit: $("audit-card"),
     users: $("users-card"),
   };
 
@@ -1746,7 +1765,7 @@ function switchTab(tab) {
 
   Object.entries(cards).forEach(([key, el]) => {
     if (!el) return;
-    if (key === "users" && !isAdmin) {
+    if ((key === "users" || key === "audit") && !isAdmin) {
       el.hidden = true;
       return;
     }
@@ -1756,6 +1775,7 @@ function switchTab(tab) {
       el.hidden = key !== tab;
     }
   });
+  if (tab === "audit" && isAdmin && typeof loadAuditLogs === "function") loadAuditLogs(false);
 }
 
 /* ------------------- 8g. Địa điểm / cửa hàng & vị trí hiện tại của lô (S-18) --- */
@@ -3312,7 +3332,9 @@ function handleTableAction(event) {
   const action = button.dataset.action;
 
   if (action === "view" && entity === "batch") {
-    openBatchDetail(id);
+    // Sprint 3–4: trang chi tiết & phả hệ (S-25, S-21, S-26, S-28).
+    if (typeof openLineage === "function") openLineage(id, "overview");
+    else openBatchDetail(id);
     return;
   }
 

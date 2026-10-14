@@ -532,8 +532,11 @@ class BatchDetailResponse(BaseModel):
     current_location_id: int | None = None
     current_location_name: str | None = None
     current_location_address: str | None = None
-    parents: list[ParentRemainingResponse] = []
-    children: list[BatchRelationResponse] = []
+    # Đọc từ Batch.parent_relations / child_relations (bảng batch_relations).
+    # Trước đây khai báo `children: list[BatchRelationResponse]` nên Pydantic lấy nhầm
+    # quan hệ Batch.children (danh sách LÔ) -> mọi lô từng tách trả lỗi 500.
+    parent_relations: list[BatchRelationResponse] = []
+    child_relations: list[BatchRelationResponse] = []
 
 class BatchMergeItem(BaseModel):
     """Dòng đóng góp từ một lô mẹ vào mẻ gộp."""
@@ -1553,7 +1556,7 @@ class DescendantBatchItem(BaseModel):
     current_holder_org: str
     location: str  # Địa điểm / cửa hàng / kho / vùng trồng
     remaining_quantity: float
-    status: str  # "CONSUMED" (Đã tiêu thụ) hoặc "IN_STOCK" (Còn hàng)
+    status: str  # "CONSUMED" (Đã tiêu thụ), "DEPLETED" (đã chuyển hết sang lô con) hoặc "IN_STOCK"
     status_label: str  # Nhãn tiếng Việt
     depth: int  # Tầng hậu duệ (1: con, 2: cháu, ...)
     location_id: int | None = None  # Địa điểm cửa hàng/kho thật (S-30), None nếu chưa gắn

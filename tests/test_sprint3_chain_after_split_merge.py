@@ -81,3 +81,16 @@ def test_full_chain_split_merge_trace(client):
     # Lô gộp vẫn thuộc tổ chức đã gộp -> xem được trong danh sách đang giữ.
     holding = client.get("/batches?holding=true", auth=HTX).json()
     assert m["id"] in [x["id"] for x in holding]
+
+
+def test_batch_detail_of_split_parent_does_not_crash(client):
+    """Hồi quy: GET /batches/{id} của lô đã tách từng trả 500 (lệch schema children)."""
+    a = _create(client, 1, 100)
+    split = client.post(f"/batches/{a['id']}/split", auth=HTX, json={"items": [{"quantity": 40}]})
+    assert split.status_code in (200, 201), split.text
+    child_id = split.json()["child_batches"][0]["id"]
+    res = client.get(f"/batches/{a['id']}", auth=HTX)
+    assert res.status_code == 200, res.text
+    assert [r["child_batch_id"] for r in res.json()["child_relations"]] == [child_id]
+    child = client.get(f"/batches/{child_id}", auth=HTX).json()
+    assert [r["parent_batch_id"] for r in child["parent_relations"]] == [a["id"]]
