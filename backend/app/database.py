@@ -12,6 +12,7 @@ Sprint 4: thêm `seed_default_users()` - tạo sẵn 2 tài khoản demo
 (`admin`/`farmer`, mật khẩu `123456`) mỗi khi khởi động nếu chưa có.
 """
 
+import os
 from collections.abc import Generator
 from pathlib import Path
 
@@ -30,7 +31,10 @@ BASE_DIR: Path = Path(__file__).resolve().parent.parent
 
 # Đường dẫn file SQLite: backend/ttcs.db
 DATABASE_FILE: Path = BASE_DIR / "ttcs.db"
-DATABASE_URL: str = f"sqlite:///{DATABASE_FILE.as_posix()}"
+
+# Biến môi trường TTCS_DATABASE_URL cho phép trỏ sang CSDL khác (ví dụ file tạm khi chạy
+# seed/test); không đặt biến thì dùng nguyên backend/ttcs.db như trước.
+DATABASE_URL: str = os.getenv("TTCS_DATABASE_URL") or f"sqlite:///{DATABASE_FILE.as_posix()}"
 
 # -------------------------------------------------------------- SQLAlchemy ---
 # `check_same_thread=False` là bắt buộc với SQLite khi dùng cùng FastAPI,
