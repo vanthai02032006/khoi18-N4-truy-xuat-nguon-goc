@@ -84,10 +84,21 @@ trồng, tổng lô nông sản, tổng sản lượng kg) và 2 bảng dữ li�
 
 ### 4. Hướng dẫn chạy kiểm thử tự động
 ```powershell
-$env:PYTHONPATH='backend'
+$env:PYTHONPATH='backend;tests'
 python -m pytest tests/ -v
 ```
+Bộ test nằm ở `tests/` tại gốc repo và import trực tiếp `conftest`, nên `PYTHONPATH` phải có **cả** `backend` lẫn `tests` (trên Linux/macOS dùng dấu `:` thay cho `;`).
+
 Toàn bộ test suite kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
+
+### 4.1. CI Pipeline (GitHub Actions)
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) tự chạy khi mở Pull Request vào `main`/`develop` (và khi push vào 2 nhánh này), gồm 2 job bắt buộc theo ruleset của nhóm:
+
+| Job | Nội dung |
+| --- | --- |
+| `Backend Quality & Tests` | `flake8` (E9/F63/F7/F82) + `pytest tests` |
+| `Security & Compliance Scan` | Quét secret (Gitleaks), phát hiện log PII nông hộ, `pip-audit` phụ thuộc |
+
 
 ### 5. Địa điểm / cửa hàng & vị trí hiện tại của lô (S-18 — ước lượng thô 3 SP)
 
