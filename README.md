@@ -82,9 +82,18 @@ trồng, tổng lô nông sản, tổng sản lượng kg) và 2 bảng dữ li�
 ### 3. Phân giải tổ chức đa người dùng (Multi-tenant - SCRUM-27..29)
 - ContextVar tự động tiêm điều kiện lọc `organization` cho các câu truy vấn, đảm bảo các bên trong chuỗi cung ứng không xem chéo dữ liệu của nhau.
 
-### 4. Hướng dẫn chạy kiểm thử tự động
+### 4. Quy ước Bảng chỉ thêm (Append-Only Ledger - Bảo vệ bất biến ở CSDL)
+- **Bảng quy ước:** `batch_events` (nằm trong `APPEND_ONLY_TABLES` tại `backend/app/append_only.py`).
+- **Vì sao cần:** Nhật ký hành trình lô nông sản là bằng chứng truy xuất nguồn gốc có giá trị pháp lý. Nếu sửa được nhiệt độ chuỗi lạnh hay xoá dấu vết bàn giao thì toàn bộ hồ sơ mất giá trị.
+- **Rào chắn đa tầng không phụ thuộc vào code ứng dụng:**
+  1. **Không có API sửa/xoá:** Hệ thống không cung cấp bất kỳ endpoint nào (`PUT`/`DELETE`) đối với sự kiện.
+  2. **Tài khoản ứng dụng bị chặn ở CSDL:** PostgreSQL dùng `REVOKE UPDATE, DELETE, TRUNCATE`; SQLite dùng `sqlite3.Connection.set_authorizer` để từ chối ngay (`SQLITE_DENY`).
+  3. **Trigger CSDL (Van an toàn):** Trigger `BEFORE UPDATE` và `BEFORE DELETE` từ chối mọi câu lệnh sửa/xoá kể cả từ tài khoản quản trị hay kết nối trực tiếp.
+
+### 5. Hướng dẫn chạy kiểm thử tự động
 ```powershell
-$env:PYTHONPATH='backend'
-python -m pytest tests/ -v
+$env:PYTHONPATH='backend;tests'
+py -3.9 -m pytest tests/ -v
 ```
-Toàn bộ test suite kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
+Toàn bộ test suite kiểm tra bất biến (append-only immutability: 17/17 passed), kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
+
