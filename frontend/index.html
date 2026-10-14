@@ -41,6 +41,10 @@
           <span class="tab-icon">📦</span>
           <span>LÔ HÀNG</span>
         </button>
+        <button type="button" class="nav-tab-pill" data-tab="locations">
+          <span class="tab-icon">🏬</span>
+          <span>ĐỊA ĐIỂM</span>
+        </button>
         <button type="button" class="nav-tab-pill" data-tab="products">
           <span class="tab-icon">🏷️</span>
           <span>DANH MỤC</span>
@@ -401,7 +405,7 @@
                   <th>VỊ TRÍ THỬA ĐẤT</th>
                   <th class="is-right" style="width: 160px;">DIỆN TÍCH (HA)</th>
                   <th>CHỦ THỬA ĐẤT</th>
-                  <th class="is-center" style="width: 160px;">THAO TÁC</th>
+                  <th class="is-center" style="width: 260px;">THAO TÁC</th>
                 </tr>
               </thead>
               <tbody id="farm-table-body"></tbody>
@@ -552,8 +556,10 @@
                   <th>THỬA ĐẤT XUẤT XỨ</th>
                   <th>CÂY TRỒNG / NÔNG SẢN</th>
                   <th class="is-right" style="width: 150px;">SẢN LƯỢNG (KG)</th>
+                  <th style="width: 125px;">TRẠNG THÁI</th>
                   <th style="width: 130px;">NGÀY THU HOẠCH</th>
                   <th style="width: 170px;">TỔ CHỨC ĐANG GIỮ</th>
+                  <th style="width: 190px;">ĐỊA ĐIỂM HIỆN TẠI (S-18)</th>
                   <th class="is-center" style="width: 160px;">THAO TÁC</th>
                 </tr>
               </thead>
@@ -570,7 +576,116 @@
         </div>
       </section>
 
-      <!-- Section 3: Danh Mục Sản Phẩm Chuẩn Toàn Hệ Thống (S-16) -->
+      <!-- Section 3: Địa Điểm / Cửa Hàng Trong Hệ Thống & Vị Trí Hiện Tại Của Lô (S-18) -->
+      <section id="locations-card" class="content-card">
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar module-avatar--location">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l1-5h16l1 5"/><path d="M4 9v11h16V9"/><path d="M9 20v-6h6v6"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">3. Địa điểm / cửa hàng & vị trí hiện tại của lô</h3>
+              <p class="card-subtitle">
+                Khai báo địa điểm (tên + địa chỉ) thuộc tổ chức của bạn, ghi nhận lô đang nằm ở cửa hàng nào và tra cứu nhanh để thu hồi đúng điểm bán thay vì rà soát cả chuỗi.
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <form id="location-form" class="form-wrapper">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="location-name" class="input-label">
+                Tên địa điểm / cửa hàng <span class="required">*</span>
+              </label>
+              <input id="location-name" type="text" maxlength="255" required
+                     placeholder="Ví dụ: Cửa hàng Mỹ Xương" />
+            </div>
+
+            <div class="form-group">
+              <label for="location-address" class="input-label">
+                Địa chỉ địa điểm <span class="required">*</span>
+              </label>
+              <input id="location-address" type="text" maxlength="255" required
+                     placeholder="Ví dụ: Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp" />
+            </div>
+          </div>
+
+          <div class="form-buttons">
+            <button id="location-submit" class="btn-action-primary" type="submit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+              <span>Khai báo địa điểm</span>
+            </button>
+          </div>
+        </form>
+
+        <div class="table-container">
+          <div class="table-subhead">
+            <span class="table-heading">Địa điểm trong hệ thống của tổ chức tôi</span>
+            <span class="table-tag">Địa điểm thuộc tổ chức tôi</span>
+          </div>
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 80px;">MÃ ĐĐ</th>
+                  <th>TÊN ĐỊA ĐIỂM</th>
+                  <th>ĐỊA CHỈ</th>
+                  <th style="width: 210px;">TỔ CHỨC</th>
+                  <th class="is-center" style="width: 150px;">THAO TÁC</th>
+                </tr>
+              </thead>
+              <tbody id="location-table-body"></tbody>
+            </table>
+          </div>
+          <div id="location-empty" class="empty-placeholder" hidden>
+            <div class="empty-icon-wrap">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.8"><path d="M3 9l1-5h16l1 5"/><path d="M4 9v11h16V9"/><path d="M9 20v-6h6v6"/></svg>
+            </div>
+            <h4>Chưa có địa điểm nào trong hệ thống của bạn</h4>
+            <p>Vui lòng khai báo địa điểm bằng biểu mẫu phía trên.</p>
+          </div>
+        </div>
+
+        <!-- Tra cứu thu hồi: lô đang nằm tại một cửa hàng -->
+        <div class="table-container" style="margin-top: 24px;">
+          <div class="table-subhead" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div>
+              <span class="table-heading">Tra cứu thu hồi: lô đang nằm tại một cửa hàng</span>
+              <span class="table-tag" style="margin-left: 8px; background: #fef2f2; color: #dc2626; border-color: #fecaca;">Thu hồi đúng điểm bán</span>
+            </div>
+            <div class="filter-controls" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <select id="recall-location-select"
+                      style="padding: 7px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px; min-width: 260px;">
+                <option value="">— Chọn địa điểm cần thu hồi —</option>
+              </select>
+              <button id="btn-recall-lookup" class="btn-action-primary" type="button" style="background: #dc2626; padding: 7px 14px; font-size: 13px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <span>Tra cứu lô tại đây</span>
+              </button>
+            </div>
+          </div>
+
+          <div id="recall-result" hidden>
+            <div id="recall-summary" style="margin: 0 20px 14px; padding: 12px 16px; border-radius: 8px; background: #fef2f2; border: 1.5px solid #fecaca; color: #991b1b; font-size: 0.9rem; font-weight: 600;">—</div>
+            <div class="responsive-table">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th style="width: 150px;">MÃ LÔ</th>
+                    <th>SẢN PHẨM</th>
+                    <th class="is-right" style="width: 130px;">KHỐI LƯỢNG (KG)</th>
+                    <th style="width: 130px;">TRẠNG THÁI</th>
+                  </tr>
+                </thead>
+                <tbody id="recall-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 4: Danh Mục Sản Phẩm Chuẩn Toàn Hệ Thống (S-16) -->
       <section id="products-card" class="content-card">
         <header class="card-header">
           <div class="header-left">
@@ -578,7 +693,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
             </div>
             <div>
-              <h3 class="card-title">3. Danh mục sản phẩm chuẩn toàn hệ thống</h3>
+              <h3 class="card-title">4. Danh mục sản phẩm chuẩn toàn hệ thống</h3>
               <p class="card-subtitle">
                 Danh mục nông sản chuẩn dùng chung cho tất cả tổ chức. Quản trị viên (Admin) có quyền thêm mới hoặc chỉnh sửa.
               </p>
@@ -666,7 +781,7 @@
         </div>
       </section>
 
-      <!-- Section 4: Quản Lý Phiếu Bàn Giao & Chuỗi Cung Ứng (S-35) -->
+      <!-- Section 5: Quản Lý Phiếu Bàn Giao & Chuỗi Cung Ứng (S-35) -->
       <section id="handovers-card" class="content-card">
         <header class="card-header">
           <div class="header-left">
@@ -674,7 +789,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 16l4-4-4-4"/><path d="M20 12H8"/><path d="M4 4v16"/></svg>
             </div>
             <div>
-              <h3 class="card-title">4. Tạo phiếu bàn giao & Xác nhận chuyển giao lô</h3>
+              <h3 class="card-title">5. Tạo phiếu bàn giao & Xác nhận chuyển giao lô</h3>
               <p class="card-subtitle">
                 Thiết lập đợt bàn giao cho đối tác chuỗi cung ứng. Bên nhận có quyền Tiếp nhận hoặc Từ chối kèm lý do. Giao dịch ghi nhận chuỗi hash bất biến.
               </p>
@@ -762,7 +877,7 @@
         </div>
       </section>
 
-      <!-- Section 5: Cấu Hình Ngưỡng Chuỗi Lạnh & Chuyến Hàng Nhiều Sản Phẩm (Cold Chain Policy) -->
+      <!-- Section 6: Cấu Hình Ngưỡng Chuỗi Lạnh & Chuyến Hàng Nhiều Sản Phẩm (Cold Chain Policy) -->
       <section id="coldchain-card" class="content-card">
         <header class="card-header">
           <div class="header-left">
@@ -770,7 +885,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>
             </div>
             <div>
-              <h3 class="card-title">5. Cấu hình Ngưỡng & Độ Trễ Chuỗi Lạnh Từng Loại Sản Phẩm</h3>
+              <h3 class="card-title">6. Cấu hình Ngưỡng & Độ Trễ Chuỗi Lạnh Từng Loại Sản Phẩm</h3>
               <p class="card-subtitle">
                 Thiết lập ngưỡng trên, ngưỡng dưới và độ trễ riêng; tính ngưỡng chặt nhất cho chuyến hàng chở nhiều sản phẩm và bảo toàn các vi phạm đã ghi.
               </p>
@@ -918,7 +1033,7 @@
         </div>
       </section>
 
-      <!-- Section 6: Giám Sát Lệnh Kiểm Tra & Thu Hồi Khẩn Cấp (Cán bộ kiểm tra / Inspector) -->
+      <!-- Section 7: Giám Sát Lệnh Kiểm Tra & Thu Hồi Khẩn Cấp (Cán bộ kiểm tra / Inspector) -->
       <section id="orders-card" class="content-card">
         <header class="card-header">
           <div class="header-left">
@@ -926,7 +1041,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
             </div>
             <div>
-              <h3 class="card-title">6. Giám sát Lệnh Kiểm Tra & Thu Hồi Khẩn Cấp</h3>
+              <h3 class="card-title">7. Giám sát Lệnh Kiểm Tra & Thu Hồi Khẩn Cấp</h3>
               <p class="card-subtitle">
                 Theo dõi tiến độ xác nhận từ từng bên liên quan và tự động đóng hồ sơ khi hoàn tất.
               </p>
@@ -1018,7 +1133,7 @@
         </div>
       </section>
 
-      <!-- Section 7: Quản trị Tài Khoản (Admin Only) -->
+      <!-- Section 8: Quản trị Tài Khoản (Admin Only) -->
       <section id="users-card" class="content-card" hidden>
         <header class="card-header">
           <div class="header-left">
@@ -1026,7 +1141,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </div>
             <div>
-              <h3 class="card-title">7. Quản trị thành viên hệ thống</h3>
+              <h3 class="card-title">8. Quản trị thành viên hệ thống</h3>
               <p class="card-subtitle">
                 Danh sách tài khoản và phân quyền truy cập hệ thống canh tác.
               </p>
@@ -1125,6 +1240,7 @@
                 <tr>
                   <th style="width: 50px;">STT</th>
                   <th style="width: 170px;">KHỐI LƯỢNG (KG) <span class="required">*</span></th>
+                  <th style="width: 210px;">ĐỊA ĐIỂM NHẬN LÔ CON (S-18)</th>
                   <th>GHI CHÚ / QUY CÁCH ĐÓNG GÓI</th>
                   <th style="width: 60px;" class="is-center">XOÁ</th>
                 </tr>
@@ -1452,6 +1568,37 @@
         <button id="btn-cancel-reject-modal" class="btn-action-ghost" type="button">Hủy bỏ</button>
         <button id="btn-confirm-reject" class="btn-action-primary" type="button" style="background: #dc2626;">
           Xác nhận từ chối
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Chuyển Lô Về Địa Điểm / Cửa Hàng (S-18) -->
+  <div id="location-move-modal" class="modal-backdrop" hidden>
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title" style="color: #0369a1;">Chuyển lô về địa điểm</h3>
+          <p class="card-subtitle">Ghi nhận lô đang nằm ở cửa hàng nào; sự kiện <code>LOCATION_CHANGED</code> được ghi tiếp vào chuỗi băm của lô.</p>
+        </div>
+        <button id="btn-close-location-move" class="modal-close" type="button" aria-label="Đóng modal">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 20px;">
+        <div id="location-move-batch" style="margin-bottom: 14px; font-size: 0.9rem; color: #334155; font-weight: 600;">LÔ —</div>
+        <div class="form-group">
+          <label for="location-move-select" class="input-label">
+            Địa điểm nhận lô <span class="required">*</span>
+          </label>
+          <select id="location-move-select" required
+                  style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 14px;"></select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-location-move" class="btn-action-ghost" type="button">Hủy bỏ</button>
+        <button id="btn-confirm-location-move" class="btn-action-primary" type="button">
+          Xác nhận chuyển
         </button>
       </div>
     </div>

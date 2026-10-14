@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.database import init_db
-from app.routers import auth, batches, cold_chain, events, farms, handovers, health, orders, products, users
+from app.routers import auth, batches, cold_chain, events, farms, handovers, health, locations, orders, products, users
 
 
 # ------------------------------------------------------------------ Lifespan ---
@@ -82,6 +82,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(farms.router)
 app.include_router(batches.router)
+app.include_router(locations.router)
 app.include_router(products.router)
 app.include_router(handovers.router)
 app.include_router(events.router)
