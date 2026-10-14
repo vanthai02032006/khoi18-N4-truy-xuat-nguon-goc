@@ -51,7 +51,7 @@ from app.schemas import (
     PublicTrackingMapResponse,
 )
 from app.security import compute_event_hash, get_current_user, get_optional_current_user, require_admin, require_farmer
-from app.services.authorization_service import can_user_view_batch, filter_viewable_batches
+from app.services.authorization_service import can_user_view_batch, filter_viewable_batches, user_org_key, viewable_batch_ids
 from app.tenant import get_tenant_org, require_tenant_context
 
 router = APIRouter(
@@ -139,7 +139,7 @@ def create_batch(
     if "remaining_quantity" not in batch_data or batch_data.get("remaining_quantity") is None:
         batch_data["remaining_quantity"] = payload.quantity
     if not batch_data.get("organization_id"):
-        batch_data["organization_id"] = getattr(current_user, "organization_id", None) or "ORG_MY_XUONG"
+        batch_data["organization_id"] = user_org_key(current_user)
 
     batch = Batch(**batch_data, batch_code=code, current_holder_org=holder_org)
     db.add(batch)
@@ -171,12 +171,22 @@ def list_batches(
     product_name: str | None = Query(None, description="Bộ lọc theo tên loại nông sản."),
     search: str | None = Query(None, description="Tìm kiếm mã lô hoặc tên sản phẩm không phân biệt hoa thường."),
     cursor: int | None = Query(None, ge=1, description="ID con trỏ cho trang kế tiếp (Keyset pagination)."),
-    limit: int = Query(50, ge=1, le=100, description="Số lượng bản ghi tối đa trả về."),
-    current_user: User | None = Depends(get_optional_current_user),
+    limit: int = Query(20, ge=1, le=100, description="Số lượng bản ghi tối đa trả về (mặc định 20 - SCRUM-49)."),
+    holding: bool = Query(False, description="Chỉ lấy lô tổ chức của tôi ĐANG giữ (S-14), bỏ lô từng giữ và lô tổ tiên."),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[Batch]:
-    """Lấy danh sách lô nông sản có hỗ trợ bộ lọc và phân quyền."""
+    """Danh sách lô mới nhất trước, phân trang con trỏ (SCRUM-49 / S-14).
+
+    Bắt buộc đăng nhập (S-05): trước đây gọi không cần đăng nhập vẫn lộ toàn bộ lô.
+    Quyền xem lọc ngay trong SQL để phân trang không bị hụt trang.
+    """
     stmt = select(Batch)
+    allowed_ids = viewable_batch_ids(db, current_user)
+    if allowed_ids is not None:
+        stmt = stmt.where(Batch.id.in_(allowed_ids))
+    if holding:
+        stmt = stmt.where(Batch.organization_id == user_org_key(current_user))
 
     # Lọc theo sản phẩm
     filter_prod = product or product_name
@@ -193,30 +203,22 @@ def list_batches(
             Batch.batch_code.ilike(f"%{search_term}%"),
             cast(Batch.id, String).ilike(f"%{search_term}%"),
         ]
-        digits = re.findall(r"\d+", search_term)
-        if digits:
-            try:
-                num_id = int(digits[-1])
-                conditions.append(Batch.id == num_id)
-                conditions.append(Batch.batch_code.ilike(f"LOT-%{num_id:04d}%"))
-            except ValueError:
-                pass
+        # Chỉ coi là tìm theo ID khi người dùng gõ toàn số hoặc "#số"; trước đây chữ số
+        # trong mã lô (vd "VT0003") bị đem so với ID nên trả về cả lô không liên quan.
         if clean_id.isdigit():
             conditions.append(Batch.id == int(clean_id))
         stmt = stmt.where(or_(*conditions))
 
-    # Phân trang con trỏ (keyset cursor)
+    # Phân trang con trỏ, mới nhất trước: trang sau có id nhỏ hơn cursor (SCRUM-49).
     if cursor:
-        stmt = stmt.where(Batch.id > cursor)
+        stmt = stmt.where(Batch.id < cursor)
 
-    stmt = stmt.order_by(Batch.id.asc()).limit(limit)
+    stmt = stmt.order_by(Batch.id.desc()).limit(limit)
     batches_list = list(db.scalars(stmt).all())
     # Backfill batch_code nếu có bản ghi cũ chưa có mã
     for b in batches_list:
         if not b.batch_code:
             b.batch_code = f"LOT-{b.id:04d}"
-    if current_user:
-        return filter_viewable_batches(db, current_user, batches_list)
     return batches_list
 
 
@@ -244,10 +246,10 @@ def list_batches(
 )
 def get_batch(
     batch_id: int = Path(..., ge=1, description="ID lô nông sản cần xem."),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Batch:
-    """Lấy chi tiết một lô nông sản theo ``id`` có kiểm tra quyền SCRUM-70."""
+    """Lấy chi tiết một lô nông sản theo ``id`` có kiểm tra quyền SCRUM-70 (bắt buộc đăng nhập - S-05)."""
     batch = db.get(Batch, batch_id)
     if batch is None:
         raise HTTPException(
@@ -257,20 +259,11 @@ def get_batch(
     if not batch.batch_code:
         batch.batch_code = f"LOT-{batch.id:04d}"
 
-    if current_user:
-        if not can_user_view_batch(db, current_user, batch_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Tài khoản hoặc tổ chức của bạn không có quyền xem thông tin lô nông sản này.",
-            )
-    else:
-        if getattr(batch, "organization_id", None) in ("ORG_A", "ORG_B"):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Chưa đăng nhập hoặc thông tin đăng nhập không đúng.",
-                headers={"WWW-Authenticate": "Basic"},
-            )
-
+    if not can_user_view_batch(db, current_user, batch_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản hoặc tổ chức của bạn không có quyền xem thông tin lô nông sản này.",
+        )
     return batch
 
 

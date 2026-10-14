@@ -451,19 +451,19 @@ def test_lich_su_ban_giao_loc_theo_lo_va_trang_thai(session, batch, sender, rece
     handover = _create_pending_handover(session, batch, sender, receiver)
     accept_handover(payload=None, handover=handover, current_user=receiver, db=session)
 
-    all_rows = list_handovers(batch_id=batch.id, status_filter=None, db=session)
+    all_rows = list_handovers(batch_id=batch.id, status_filter=None, current_user=sender, db=session)
     assert [row.status for row in all_rows] == [HANDOVER_STATUS_ACCEPTED]
     assert all_rows[0].current_batch_owner == RECEIVER_NAME
 
-    pending_rows = list_handovers(batch_id=batch.id, status_filter="pending", db=session)
+    pending_rows = list_handovers(batch_id=batch.id, status_filter="pending", current_user=sender, db=session)
     assert pending_rows == []
 
 
-def test_danh_sach_rong_khi_chua_co_ban_giao(session, batch) -> None:
+def test_danh_sach_rong_khi_chua_co_ban_giao(session, batch, sender) -> None:
     """Chưa có phiếu nào -> danh sách rỗng (không lỗi)."""
     from app.routers.handovers import list_handovers
 
-    assert list_handovers(batch_id=batch.id, status_filter=None, db=session) == []
+    assert list_handovers(batch_id=batch.id, status_filter=None, current_user=sender, db=session) == []
 
 
 def test_thoi_diem_xu_ly_khong_o_tuong_lai(session, batch, sender, receiver) -> None:

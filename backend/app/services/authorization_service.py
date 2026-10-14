@@ -19,7 +19,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import ROLE_ADMIN, Batch, BatchCustodyHistory, BatchRelation, User
+from app.models import ROLE_ADMIN, ROLE_INSPECTOR, Batch, BatchCustodyHistory, BatchRelation, User
 
 
 def get_batches_held_by_org(db: Session, org_id: str) -> set[int]:
@@ -118,8 +118,8 @@ def can_user_view_batch(db: Session, user: User, batch_id: int) -> bool:
     - Tài khoản `admin`: toàn quyền xem mọi lô trong hệ thống.
     - Tài khoản khác: áp dụng quy tắc `can_view` dựa trên `organization_id` của tài khoản.
     """
-    if getattr(user, "role", None) == ROLE_ADMIN:
-        # Admin có toàn quyền quản trị
+    if getattr(user, "role", None) in (ROLE_ADMIN, ROLE_INSPECTOR):
+        # Admin toàn quyền; cán bộ kiểm tra xem được mọi lô ở chế độ chỉ đọc (S-05).
         return db.get(Batch, batch_id) is not None
 
     org_id = getattr(user, "organization_id", None) or getattr(user, "username", None)
@@ -145,7 +145,29 @@ def filter_viewable_batches(db: Session, user: User, batches: list[Batch]) -> li
     return [b for b in batches if b.id in allowed_ids]
 
 
+def user_org_key(user: User) -> str | None:
+    """Khoá tổ chức của tài khoản dùng cho quyền giữ/xem lô (một chỗ duy nhất)."""
+    return getattr(user, "organization_id", None) or getattr(user, "username", None)
+
+
+def viewable_batch_ids(db: Session, user: User) -> set[int] | None:
+    """Tập ID lô người dùng được xem; ``None`` nghĩa là xem được tất cả.
+
+    Admin và cán bộ kiểm tra (chỉ đọc, theo S-05) xem mọi lô. Tài khoản khác chỉ
+    xem lô tổ chức mình đang/từng giữ và tổ tiên của chúng (S-23 / SCRUM-70).
+    """
+    if getattr(user, "role", None) in (ROLE_ADMIN, ROLE_INSPECTOR):
+        return None
+    org_id = user_org_key(user)
+    held = get_batches_held_by_org(db, org_id) if org_id else set()
+    if not held:
+        return set()
+    return held | get_all_ancestor_ids(db, held)
+
+
 __all__ = [
+    "user_org_key",
+    "viewable_batch_ids",
     "can_user_view_batch",
     "can_view",
     "filter_viewable_batches",

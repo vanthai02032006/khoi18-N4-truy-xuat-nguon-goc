@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,7 @@ from app.models import (
     HANDOVER_STATUS_PENDING,
     HANDOVER_STATUS_REJECTED,
     Batch,
+    BatchCustodyHistory,
     Handover,
     User,
 )
@@ -57,6 +58,7 @@ from app.schemas import (
     HandoverWorkflowResponse,
 )
 from app.security import get_current_user
+from app.services.authorization_service import viewable_batch_ids
 
 router = APIRouter(
     prefix="/handovers",
@@ -263,12 +265,25 @@ def list_handovers(
         alias="status",
         description="Lọc theo trạng thái: `pending` / `accepted` / `rejected`.",
     ),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[HandoverResponse]:
-    """Danh sách phiếu bàn giao, mới nhất trước."""
+    """Danh sách phiếu bàn giao, mới nhất trước (bắt buộc đăng nhập - S-05).
+
+    Tài khoản thường chỉ thấy phiếu mình gửi/nhận hoặc phiếu của lô mình được xem.
+    """
     stmt = select(Handover, Batch.current_owner).join(
         Batch, Batch.id == Handover.batch_id, isouter=True
     )
+    allowed_ids = viewable_batch_ids(db, current_user)
+    if allowed_ids is not None:
+        stmt = stmt.where(
+            or_(
+                Handover.sender_id == current_user.id,
+                Handover.receiver_id == current_user.id,
+                Handover.batch_id.in_(allowed_ids),
+            )
+        )
     if batch_id is not None:
         stmt = stmt.where(Handover.batch_id == batch_id)
     if status_filter:
@@ -290,6 +305,7 @@ def list_handovers(
 )
 def get_handover(
     handover_id: int = Path(..., ge=1, description="ID phiếu bàn giao."),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> HandoverResponse:
     """Xem chi tiết một phiếu bàn giao kèm chủ sở hữu hiện tại của lô."""
@@ -340,6 +356,12 @@ def accept_handover(
     # Đổi "tổ chức đang giữ" của lô sang bên nhận.
     if batch is not None:
         batch.current_owner = handover.receiver_name
+        # Đồng bộ mã tổ chức giữ lô theo tài khoản bên nhận, để quy tắc quyền xem
+        # (S-23 / SCRUM-70) và danh sách "đang giữ" (S-14 / SCRUM-49) thấy đúng chủ mới.
+        receiver_org = getattr(current_user, "organization_id", None)
+        if receiver_org:
+            batch.organization_id = receiver_org
+            db.add(BatchCustodyHistory(batch_id=batch.id, organization_id=receiver_org))
 
     # Sự kiện 1/2: bên nhận xác nhận tiếp nhận.
     record_event(
