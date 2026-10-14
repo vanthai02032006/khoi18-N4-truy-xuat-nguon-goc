@@ -116,7 +116,7 @@ def can_view(db: Session, org_id: str | None, batch_id: int) -> bool:
     return False
 
 
-def can_user_view_batch(db: Session, user: User, batch_id: int) -> bool:
+def can_user_view_batch(db: Session, user: User, batch_id: int, request_org: str | None = None) -> bool:
     """Kiểm tra quyền xem lô của một người dùng đăng nhập.
 
     - Tài khoản `admin`: toàn quyền xem mọi lô trong hệ thống.
@@ -126,8 +126,8 @@ def can_user_view_batch(db: Session, user: User, batch_id: int) -> bool:
         # Admin toàn quyền; cán bộ kiểm tra xem được mọi lô ở chế độ chỉ đọc (S-05).
         return db.get(Batch, batch_id) is not None
 
-    allowed = viewable_batch_ids(db, user)
-    return batch_id in allowed
+    allowed = viewable_batch_ids(db, user, request_org)
+    return allowed is None or batch_id in allowed
 
 
 def filter_viewable_batches(db: Session, user: User, batches: list[Batch]) -> list[Batch]:

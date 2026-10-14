@@ -86,4 +86,6 @@ jobs:
       # 5. Unit test & Test Coverage (DoD: Unit test cho nhánh logic mới; độ phủ không giảm)
       - name: Run Unit Tests & Check Coverage (pytest)
         run: |
-          PYTHONPATH=backend pytest backend/tests -v
+          # Hai thư mục test đều có __init__.py tên "tests" nên chạy tách riêng.
+          PYTHONPATH=backend:tests pytest tests -v -p no:cacheprovider
+          cd backend && PYTHONPATH=. pytest tests -v -p no:cacheprovider

@@ -12,7 +12,8 @@ from fastapi import Header, HTTPException, status
 from sqlalchemy import Select
 
 # ContextVar lưu trữ tổ chức của request hiện tại
-_current_tenant_org: ContextVar[str] = ContextVar("current_tenant_org", default="HTX Nông Nghiệp Số 4")
+DEFAULT_TENANT_ORG = "HTX Nông Nghiệp Số 4"
+_current_tenant_org: ContextVar[str] = ContextVar("current_tenant_org", default=DEFAULT_TENANT_ORG)
 
 
 def set_tenant_org(org_name: str) -> None:
@@ -27,12 +28,11 @@ def get_tenant_org() -> str:
 
 def require_tenant_context(x_organization: str | None = Header(None, alias="X-Organization-Id")) -> str:
     """Dependency kiểm tra bắt buộc có header tổ chức hợp lệ (SCRUM-27)."""
-    if x_organization and x_organization.strip():
-        set_tenant_org(x_organization.strip())
-        return x_organization.strip()
-    # Mặc định lấy tổ chức tiêu chuẩn nếu không chỉ định header riêng
-    default_org = get_tenant_org()
-    return default_org
+    # Không có header -> LUÔN về tổ chức mặc định. Trước đây trả lại giá trị còn sót
+    # trong ContextVar nên tổ chức của request trước "dính" sang request sau.
+    org = x_organization.strip() if x_organization and x_organization.strip() else DEFAULT_TENANT_ORG
+    set_tenant_org(org)
+    return org
 
 
 def scope_query_by_tenant(stmt: Select, model_cls) -> Select:

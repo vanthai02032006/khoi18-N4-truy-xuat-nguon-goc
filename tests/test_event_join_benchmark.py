@@ -82,6 +82,7 @@ def benchmark_env():
             product_name="Xoài Cát Chu",
             quantity=1000.0,
             harvest_date=date(2026, 5, 20),
+            current_holder_org="ORG-A",
         )
         db.add(batch)
         db.commit()
@@ -202,8 +203,12 @@ def test_single_query_join_and_performance_under_200ms(benchmark_env):
     for i, s in enumerate(sql_statements, 1):
         print(f"SQL #{i}: {s}")
 
-    assert len(sql_statements) == 1, f"Yêu cầu chỉ 1 câu lệnh SQL duy nhất, nhưng phát hiện {len(sql_statements)} câu!"
-    sql_lower = sql_statements[0].lower()
+    # Câu kiểm quyền xem lô (S-23) chạy riêng trước; câu đọc dòng thời gian phải là
+    # đúng 1 câu JOIN, không N+1.
+    timeline_sql = [q for q in sql_statements if "from batch_events" in q.lower() and "join organizations" in q.lower()]
+    event_reads = [q for q in sql_statements if "from batch_events" in q.lower()]
+    assert len(timeline_sql) == 1 and len(event_reads) == 1, f"Yêu cầu chỉ 1 câu đọc sự kiện, phát hiện {len(event_reads)} câu!"
+    sql_lower = timeline_sql[0].lower()
 
     # Khẳng định có JOIN (hoặc LEFT OUTER JOIN)
     assert "join" in sql_lower
@@ -225,9 +230,9 @@ def test_tenant_scoping_filter_in_join_query(benchmark_env):
         auth=("farmer_benchmark", "123456"),
         headers={"X-Organization-Id": "ORG-B"},
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["events"]) == 0
+    # ORG-B không giữ và không liên quan tới lô -> bị chặn ở mức lô (S-05), thay vì
+    # trả chuỗi rỗng như trước.
+    assert response.status_code == 403
 
 
 def test_pagination_support_for_large_events(benchmark_env):

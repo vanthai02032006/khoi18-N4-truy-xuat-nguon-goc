@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Batch, BatchEvent, Organization, User
 from app.schemas import BatchEventCreate, BatchEventResponse, BatchTimelineResponse
+from app.services.authorization_service import can_user_view_batch
+from app.tenant import require_tenant_context
 from app.security import compute_event_hash, get_current_user, require_farmer
 from app.tenant import scope_query_by_tenant
 
@@ -86,6 +88,7 @@ def get_batch_timeline(
     limit: Optional[int] = Query(None, ge=1, description="Số lượng sự kiện tối đa trên mỗi trang (Hỗ trợ phân trang khi > 500 sự kiện)"),
     offset: int = Query(0, ge=0, description="Vị trí bắt đầu lấy sự kiện"),
     current_user: User = Depends(get_current_user),
+    request_org: str = Depends(require_tenant_context),
     db: Session = Depends(get_db),
 ) -> BatchTimelineResponse:
     """Truy xuất toàn bộ chuỗi sự kiện của lô hàng kèm tên tổ chức trong 1 lượt truy vấn (JOIN).
@@ -109,10 +112,14 @@ def get_batch_timeline(
         .where(BatchEvent.batch_id == batch_id)
     )
 
-    # 2. Lọc theo quyền xem qua hàm phân quyền tổ chức ở T-12 (Data isolation)
-    # Riêng tài khoản admin và cán bộ kiểm tra (inspector) có thẩm quyền giám sát toàn bộ chuỗi
-    if current_user.role not in ("admin", "inspector"):
-        stmt = scope_query_by_tenant(stmt, BatchEvent)
+    # 2. Quyền xem theo LÔ (S-05, S-23 / SCRUM-70): ai xem được lô thì thấy đủ chuỗi
+    # sự kiện của lô - kể cả bước do tổ chức khác thực hiện. Trước đây lọc từng sự
+    # kiện theo tổ chức trong header nên chuỗi bị cắt (hiện rỗng, báo đứt mạch giả).
+    if not can_user_view_batch(db, current_user, batch_id, request_org):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản hoặc tổ chức của bạn không có quyền xem dòng thời gian của lô này.",
+        )
 
     # 3. Dùng chỉ mục ở T-23: sắp xếp theo đúng thứ tự thời gian (timestamp.asc(), id.asc())
     stmt = stmt.order_by(BatchEvent.timestamp.asc(), BatchEvent.id.asc())

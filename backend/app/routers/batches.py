@@ -168,6 +168,22 @@ def create_batch(
     try:
         db.flush()
         db.add(BatchCustodyHistory(batch_id=batch.id, organization_id=batch.organization_id))
+        # S-10 / T-25: sự kiện thu hoạch ghi trong CÙNG giao dịch với tạo lô.
+        record_event(
+            db,
+            batch_id=batch.id,
+            event_type="HARVEST",
+            actor=current_user.username,
+            organization=holder_org,
+            payload={
+                "action": "HARVEST",
+                "batch_code": batch.batch_code,
+                "farm_id": batch.farm_id,
+                "product_name": batch.product_name,
+                "quantity": batch.quantity,
+                "harvest_date": str(batch.harvest_date),
+            },
+        )
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()
@@ -1157,12 +1173,17 @@ def merge_batches(
         batch_code=new_batch_code,
         current_holder_org=primary_parent.current_holder_org,
         current_owner=primary_parent.current_owner,
+        organization_id=primary_parent.organization_id or user_org_key(current_user),
+        current_location_id=primary_parent.current_location_id,
         is_restricted=any(pb.is_restricted for pb in parent_batches),
     )
     db.add(merged_batch)
 
     try:
         db.flush()
+
+        if merged_batch.organization_id:
+            db.add(BatchCustodyHistory(batch_id=merged_batch.id, organization_id=merged_batch.organization_id))
 
         # 6. Ghi nhận quan hệ phả hệ cha - con nhiều-nhiều qua BatchRelation
         for item in payload.items:

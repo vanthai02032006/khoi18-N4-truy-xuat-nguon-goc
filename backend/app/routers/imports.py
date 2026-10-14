@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Callable
-
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -128,7 +126,8 @@ async def import_products(
         name = _required(errors, row, rec, "name", 255)
         unit = _required(errors, row, rec, "unit", 20)
         if unit and unit.lower() not in PRODUCT_UNITS:
-            errors.append(ImportRowError(row=row, column="unit", message=f"Đơn vị '{unit}' không hợp lệ; chọn một trong: {', '.join(PRODUCT_UNITS)}"))
+            allowed = ", ".join(PRODUCT_UNITS)
+            errors.append(ImportRowError(row=row, column="unit", message=f"Đơn vị '{unit}' không hợp lệ; chọn: {allowed}"))
             unit = None
         if name:
             key = name.lower()
