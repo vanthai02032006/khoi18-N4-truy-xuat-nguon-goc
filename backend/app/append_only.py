@@ -42,7 +42,7 @@ from sqlalchemy.engine import Connection, Engine
 # ------------------------------------------------------------------ Quy ước ---
 #: Các bảng chỉ thêm của hệ thống. Thêm bảng mới vào đây thì cả 2 lớp bảo vệ
 #: (authorizer + trigger) và bộ test bất biến sẽ tự áp dụng cho bảng đó.
-APPEND_ONLY_TABLES: tuple[str, ...] = ("batch_events",)
+APPEND_ONLY_TABLES: tuple[str, ...] = ("batch_events", "audit_logs")
 
 #: Thông điệp CSDL trả về khi từ chối sửa/xoá bảng chỉ thêm.
 REJECTION_MESSAGE_TEMPLATE: str = (

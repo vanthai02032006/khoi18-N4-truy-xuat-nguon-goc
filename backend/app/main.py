@@ -27,8 +27,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.database import SessionLocal, init_db
+from app.audit import audit_middleware
 from app.jobs.handover_overdue import run_overdue_scheduler
 from app.routers import (
+    audit_logs,
     auth,
     backups,
     batches,
@@ -36,6 +38,7 @@ from app.routers import (
     events,
     farms,
     handovers,
+    imports,
     health,
     integrity,
     invitations,
@@ -83,6 +86,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# S-31: nhật ký thao tác ghi tập trung ở middleware.
+app.middleware("http")(audit_middleware)
+
 # CORS: cho phép frontend (chạy ở cổng khác) gọi API khi phát triển.
 # Sprint sau cần thay "*" bằng danh sách domain cụ thể trước khi deploy production.
 app.add_middleware(
@@ -100,6 +106,8 @@ app.include_router(auth.router)
 app.include_router(farms.router)
 app.include_router(batches.router)
 app.include_router(lineage.router)
+app.include_router(audit_logs.router)
+app.include_router(imports.router)
 app.include_router(locations.router)
 app.include_router(products.router)
 app.include_router(handovers.router)

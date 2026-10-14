@@ -744,6 +744,33 @@ class Handover(Base):
 
 
 # ----------------------------------------------------------------- Locations (S-18) ---
+class AuditLog(Base):
+    """Nhật ký thao tác: ai làm gì, lúc nào, từ địa chỉ nào (S-31 / SCRUM-90).
+
+    Bảng **chỉ thêm** giống ``batch_events`` (xem ``app/append_only.py``). Không bao
+    giờ lưu mật khẩu, token hay nội dung request.
+    """
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False, index=True)
+    username: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    organization_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    method: Mapped[str] = mapped_column(String(10), nullable=False)
+    path: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    object_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    detail: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<AuditLog {self.created_at} {self.username} {self.action} {self.object_id}>"
+
+
 class Location(Base):
     """Địa điểm (cửa hàng / kho / điểm bán) **thuộc một tổ chức** - bảng ``locations``.
 
@@ -794,6 +821,7 @@ __all__ = [
     "Farm",
     "HourlyTemperatureSummary",
     "IntegrityCheckLog",
+    "AuditLog",
     "Location",
     "Organization",
     "OrganizationAuditLog",

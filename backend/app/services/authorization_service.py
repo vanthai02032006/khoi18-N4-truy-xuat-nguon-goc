@@ -154,7 +154,7 @@ def user_org_key(user: User) -> str | None:
     return getattr(user, "organization_id", None) or getattr(user, "username", None)
 
 
-def user_org_keys(user: User) -> set[str]:
+def user_org_keys(user: User, request_org: str | None = None) -> set[str]:
     """Mọi khoá tổ chức đại diện cho tài khoản.
 
     Tài khoản đã có ``organization_id`` chỉ dùng đúng mã đó - header
@@ -165,11 +165,23 @@ def user_org_keys(user: User) -> set[str]:
     if not getattr(user, "organization_id", None):
         from app.tenant import get_tenant_org
 
-        keys.add(get_tenant_org())
+        keys.add(request_org or get_tenant_org())
     return keys
 
 
-def viewable_batch_ids(db: Session, user: User) -> set[int] | None:
+def user_holds_batch(user: User, batch: Batch, request_org: str | None = None) -> bool:
+    """Quyền GHI trên lô (tách, gộp, bàn giao, chuyển địa điểm...): tổ chức đang giữ lô.
+
+    Một quy tắc duy nhất cho mọi thao tác ghi, khớp cả ``organization_id`` lẫn
+    ``current_holder_org``. Admin luôn được phép.
+    """
+    if getattr(user, "role", None) == ROLE_ADMIN:
+        return True
+    keys = user_org_keys(user, request_org)
+    return (batch.organization_id in keys) or (batch.current_holder_org in keys)
+
+
+def viewable_batch_ids(db: Session, user: User, request_org: str | None = None) -> set[int] | None:
     """Tập ID lô người dùng được xem; ``None`` nghĩa là xem được tất cả.
 
     Admin và cán bộ kiểm tra (chỉ đọc, theo S-05) xem mọi lô. Tài khoản khác chỉ
@@ -177,13 +189,14 @@ def viewable_batch_ids(db: Session, user: User) -> set[int] | None:
     """
     if getattr(user, "role", None) in (ROLE_ADMIN, ROLE_INSPECTOR):
         return None
-    held = get_batches_held_by_org(db, user_org_keys(user))
+    held = get_batches_held_by_org(db, user_org_keys(user, request_org))
     if not held:
         return set()
     return held | get_all_ancestor_ids(db, held)
 
 
 __all__ = [
+    "user_holds_batch",
     "user_org_keys",
     "user_org_key",
     "viewable_batch_ids",

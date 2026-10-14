@@ -72,7 +72,7 @@ from app.schemas import (
     RecallOrderResponse,
 )
 from app.security import compute_event_hash, get_current_user, get_optional_current_user, require_admin, require_farmer, require_inspector
-from app.services.authorization_service import can_user_view_batch, filter_viewable_batches, user_org_key, user_org_keys, viewable_batch_ids
+from app.services.authorization_service import can_user_view_batch, filter_viewable_batches, user_holds_batch, user_org_key, user_org_keys, viewable_batch_ids
 from app.tenant import get_tenant_org, require_tenant_context
 
 router = APIRouter(
@@ -195,6 +195,7 @@ def list_batches(
     limit: int = Query(20, ge=1, le=100, description="Số lượng bản ghi tối đa trả về (mặc định 20 - SCRUM-49)."),
     holding: bool = Query(False, description="Chỉ lấy lô tổ chức của tôi ĐANG giữ (S-14), bỏ lô từng giữ và lô tổ tiên."),
     current_user: User = Depends(get_current_user),
+    request_org: str = Depends(require_tenant_context),
     db: Session = Depends(get_db),
 ) -> list[Batch]:
     """Danh sách lô mới nhất trước, phân trang con trỏ (SCRUM-49 / S-14).
@@ -203,11 +204,11 @@ def list_batches(
     Quyền xem lọc ngay trong SQL để phân trang không bị hụt trang.
     """
     stmt = select(Batch)
-    allowed_ids = viewable_batch_ids(db, current_user)
+    allowed_ids = viewable_batch_ids(db, current_user, request_org)
     if allowed_ids is not None:
         stmt = stmt.where(Batch.id.in_(allowed_ids))
     if holding:
-        keys = user_org_keys(current_user)
+        keys = user_org_keys(current_user, request_org)
         stmt = stmt.where(or_(Batch.organization_id.in_(keys), Batch.current_holder_org.in_(keys)))
 
     # Lọc theo sản phẩm
@@ -412,7 +413,7 @@ def consume_batch(
         )
 
     effective_holder = batch.current_holder_org or "HTX Nông Nghiệp Số 4"
-    if current_user.role != "admin" and current_org != effective_holder:
+    if not user_holds_batch(current_user, batch, current_org):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Lô hàng đang do '{effective_holder}' nắm giữ, bạn không có quyền cập nhật.",
@@ -543,7 +544,7 @@ def move_batch_to_location(
         )
 
     effective_holder = batch.current_holder_org or "HTX Nông Nghiệp Số 4"
-    if current_user.role != "admin" and current_org != effective_holder:
+    if not user_holds_batch(current_user, batch, current_org):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Lô hàng đang do '{effective_holder}' nắm giữ, bạn không có quyền di chuyển.",
@@ -815,7 +816,7 @@ def split_batch(
 
     # 2. Kiểm tra quyền nắm giữ: lô phải do tổ chức của người gọi nắm giữ (AC 4: 403 Forbidden)
     effective_holder = batch.current_holder_org or "HTX Nông Nghiệp Số 4"
-    if current_user.role != "admin" and current_org != effective_holder:
+    if not user_holds_batch(current_user, batch, current_org):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Lô nông sản #{batch_id} do '{effective_holder}' nắm giữ, bạn không có quyền tách lô này.",
@@ -1076,10 +1077,18 @@ def merge_batches(
     for item in payload.items:
         p_batch = parents_map[item.batch_id]
         effective_holder = p_batch.current_holder_org or "HTX Nông Nghiệp Số 4"
-        if current_user.role != "admin" and current_org != effective_holder:
+        if not user_holds_batch(current_user, p_batch, current_org):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Lô nông sản #{p_batch.id} do '{effective_holder}' nắm giữ, bạn không có quyền gộp lô này.",
+            )
+
+    # S-29: lô đã tiêu thụ là trạng thái cuối, không được gộp tiếp.
+    for p_batch in parents_map.values():
+        if p_batch.status == BATCH_STATUS_CONSUMED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Lô nông sản #{p_batch.id} đã tiêu thụ nên không thể gộp.",
             )
 
     # 3. Kiểm tra tính đồng nhất của sản phẩm (Kịch bản 3: 400 Bad Request nếu khác loại sản phẩm)
@@ -1305,7 +1314,7 @@ def initiate_handover(
 
     # Kiểm tra quyền: người gọi phải thuộc tổ chức đang nắm giữ lô hàng (trừ admin)
     effective_holder = batch.current_holder_org or "HTX Nông Nghiệp Số 4"
-    if current_user.role != "admin" and current_org != effective_holder:
+    if not user_holds_batch(current_user, batch, current_org):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Lô hàng đang do '{effective_holder}' nắm giữ, bạn không có quyền bàn giao lô hàng này.",
