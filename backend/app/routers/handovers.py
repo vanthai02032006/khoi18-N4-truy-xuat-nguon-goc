@@ -25,6 +25,13 @@ Ba nguyên tắc nghiệp vụ quan trọng:
 3. **Xác nhận ghi đủ 2 sự kiện**: ``HANDOVER_ACCEPTED`` (bên nhận đồng ý nhận)
    và ``OWNER_CHANGED`` (quyền giữ lô đổi từ bên giao sang bên nhận). Từ chối
    ghi 1 sự kiện ``HANDOVER_REJECTED`` kèm **lý do** để lưu vết.
+
+4. **Lô đang bị thu hồi thì không bàn giao được (S-21).** Tạo phiếu và xác nhận
+   tiếp nhận đều bị chặn ``409`` kèm **mã lệnh thu hồi** (lô còn lệnh đang mở,
+   hoặc lệnh đã hoàn tất nhưng lô vẫn mang dấu sự cố) để vùng ảnh hưởng không lan
+   rộng trong lúc xử lý; luật này dùng chung với ``app/routers/batches.py`` nên
+   không lách được qua đường API bàn giao nào. Từ chối thì **vẫn cho phép** vì
+   thao tác đó không làm lô di chuyển.
 """
 
 from __future__ import annotations
@@ -38,6 +45,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.events import record_event
 from app.models import (
+    BATCH_STATUS_CONSUMED,
     EVENT_TYPE_HANDOVER_ACCEPTED,
     EVENT_TYPE_HANDOVER_PENDING,
     EVENT_TYPE_HANDOVER_REJECTED,
@@ -49,6 +57,7 @@ from app.models import (
     Handover,
     User,
 )
+from app.recall_orders import ensure_batch_movable
 from app.schemas import (
     HandoverAccept,
     HandoverCreate,
@@ -152,12 +161,15 @@ def require_handover_receiver(
         "- Lô **vẫn thuộc bên giao** trong suốt thời gian chờ.\n"
         "- Ghi sự kiện `HANDOVER_PENDING` vào nhật ký lô.\n"
         "- Mỗi lô chỉ có **tối đa 1 phiếu đang chờ** (ràng buộc ở cả tầng ứng "
-        "dụng và CSDL)."
+        "dụng và CSDL).\n"
+        "- Lô đang bị thu hồi (còn lệnh đang mở hoặc đã đánh dấu sự cố) không tạo "
+        "được phiếu bàn giao `409` kèm mã lệnh thu hồi."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {"description": "Lô đang có phiếu bàn giao chờ xử lý."},
         status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
         status.HTTP_404_NOT_FOUND: {"description": "Không tìm thấy lô nông sản."},
+        status.HTTP_409_CONFLICT: {"description": "Lô đang bị thu hồi (chặn kèm mã lệnh)."},
     },
 )
 def create_handover(
@@ -172,6 +184,13 @@ def create_handover(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy lô nông sản có id={payload.batch_id}.",
         )
+    if batch.status == BATCH_STATUS_CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lô nông sản #{payload.batch_id} đã tiêu thụ nên không thể bàn giao.",
+        )
+
+    ensure_batch_movable(db, batch, "bàn giao")
 
     existing_pending = db.scalar(
         select(Handover).where(
@@ -314,13 +333,17 @@ def get_handover(
         "2. Đổi **tổ chức đang giữ lô** (`current_owner`) sang bên nhận.\n"
         "3. Ghi **2 sự kiện** vào nhật ký lô: `HANDOVER_ACCEPTED` và `OWNER_CHANGED`.\n\n"
         "Lỗi ở bất kỳ bước nào sẽ rollback toàn bộ. Trường `recorded_events` trong "
-        "kết quả cho biết các sự kiện đã ghi."
+        "kết quả cho biết các sự kiện đã ghi.\n\n"
+        "**Ràng buộc:** lô đang bị thu hồi (còn lệnh đang mở hoặc đã đánh dấu sự cố) "
+        "không xác nhận tiếp nhận được `409` kèm mã lệnh thu hồi - kể cả khi phiếu đã "
+        "được tạo trước lúc lô bị đưa vào lệnh."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {"description": "Phiếu không ở trạng thái chờ xử lý."},
         status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
         status.HTTP_403_FORBIDDEN: {"description": "Người gọi không phải bên nhận của phiếu."},
         status.HTTP_404_NOT_FOUND: {"description": "Không tìm thấy phiếu bàn giao."},
+        status.HTTP_409_CONFLICT: {"description": "Lô đang bị thu hồi (chặn kèm mã lệnh)."},
     },
 )
 def accept_handover(
@@ -331,6 +354,13 @@ def accept_handover(
 ) -> HandoverWorkflowResponse:
     """Xác nhận bàn giao: đổi quyền giữ lô và ghi đủ 2 sự kiện trong 1 transaction."""
     batch = db.get(Batch, handover.batch_id)
+    if batch is not None and batch.status == BATCH_STATUS_CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lô nông sản #{handover.batch_id} đã tiêu thụ nên không thể xác nhận bàn giao.",
+        )
+    if batch is not None:
+        ensure_batch_movable(db, batch, "xác nhận bàn giao")
     old_owner = batch.current_owner if batch else handover.sender_name
 
     handover.status = HANDOVER_STATUS_ACCEPTED

@@ -15,57 +15,38 @@ DoD / AC:
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import Batch, BatchEvent, RecallOrder, RecallOrderTarget, User
+from app.events import record_event
+from app.models import Batch, RecallOrder, RecallOrderTarget, User
+from app.recall_orders import (
+    attach_batches_to_order,
+    build_order_response,
+    build_recovery_plan,
+    generate_unique_order_code,
+    load_order_batches,
+    lock_batches_under_order,
+    record_recall_issued,
+    resolve_recall_batches,
+)
 from app.schemas import (
     RecallOrderConfirm,
     RecallOrderConfirmResponse,
     RecallOrderCreate,
     RecallOrderResponse,
-    RecallTargetResponse,
+    RecallRecoveryPlanResponse,
 )
-from app.security import compute_event_hash, get_current_user, require_inspector
+from app.security import get_current_user, require_inspector
 from app.tenant import get_tenant_org, require_tenant_context
 
 router = APIRouter(prefix="/orders", tags=["Orders - Lệnh kiểm tra & thu hồi"])
-
-
-def _build_order_response(order: RecallOrder) -> RecallOrderResponse:
-    """Tính toán tiến độ xác nhận từ các bên liên quan và xây dựng model response."""
-    targets = order.targets or []
-    total = len(targets)
-    confirmed = sum(1 for t in targets if t.status == "CONFIRMED")
-    pending = total - confirmed
-    pending_orgs = [t.org_name for t in targets if t.status != "CONFIRMED"]
-
-    return RecallOrderResponse(
-        id=order.id,
-        order_code=order.order_code,
-        title=order.title,
-        description=order.description,
-        reason=order.reason,
-        batch_id=order.batch_id,
-        issuer_username=order.issuer_username,
-        created_at=order.created_at,
-        completed_at=order.completed_at,
-        status=order.status,
-        targets=[RecallTargetResponse.model_validate(t) for t in targets],
-        total_targets=total,
-        confirmed_count=confirmed,
-        pending_count=pending,
-        progress_ratio=f"{confirmed}/{total}",
-        is_completed=order.status == "COMPLETED",
-        pending_organizations=pending_orgs,
-    )
 
 
 @router.post(
@@ -79,13 +60,34 @@ def create_recall_order(
     current_user: User = Depends(require_inspector),
     db: Session = Depends(get_db),
 ) -> RecallOrderResponse:
-    """Ban hành một lệnh kiểm tra hoặc thu hồi nông sản tới các tổ chức liên quan."""
+    """Ban hành một lệnh kiểm tra hoặc thu hồi nông sản tới các tổ chức liên quan.
+
+    Lệnh có thể nhắm **một lô** (`batch_id`), **nhiều lô** (`batch_ids` - ví dụ 20
+    lô đang nằm ở nhiều cửa hàng) hoặc **cả một sản phẩm** (`product_name`); mọi
+    lô trong phạm vi được lưu vào bảng liên kết và ghi sự kiện `RECALL_ISSUED`
+    vào chuỗi băm riêng của lô đó (S-20).
+
+    Mọi lô trong phạm vi cũng bị **đóng băng** (S-21): không bàn giao, tách, gộp
+    hay chuyển địa điểm được nữa để vùng ảnh hưởng không lan rộng trong lúc xử lý.
+    """
     unique_orgs = list(dict.fromkeys([o.strip() for o in payload.target_organizations if o.strip()]))
     if not unique_orgs:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cần ít nhất một tổ chức liên quan trong danh sách thực thi lệnh.",
         )
+
+    try:
+        scoped_batches = resolve_recall_batches(
+            db,
+            batch_ids=payload.batch_ids,
+            product_name=payload.product_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
     # Kiểm tra lô hàng nếu có chỉ định
     if payload.batch_id:
@@ -95,17 +97,19 @@ def create_recall_order(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Không tìm thấy lô hàng có id={payload.batch_id}.",
             )
+        if all(scoped.id != batch.id for scoped in scoped_batches):
+            scoped_batches.append(batch)
 
+    scoped_batches.sort(key=lambda item: item.id)
     now_iso = datetime.now(timezone.utc).isoformat()
-    order_count = db.scalar(select(RecallOrder.id).order_by(RecallOrder.id.desc()).limit(1)) or 0
-    order_code = f"ORD-REC-{order_count + 1:04d}"
+    order_code = generate_unique_order_code(db)
 
     order = RecallOrder(
         order_code=order_code,
         title=payload.title,
         description=payload.description or "",
         reason=payload.reason,
-        batch_id=payload.batch_id,
+        batch_id=payload.batch_id or (scoped_batches[0].id if scoped_batches else None),
         issuer_username=current_user.username,
         created_at=now_iso,
         status="IN_PROGRESS",
@@ -121,46 +125,18 @@ def create_recall_order(
         )
         db.add(target)
 
-    # Ghi nhận sự kiện khởi tạo lệnh RECALL_ISSUED nếu có lô hàng liên quan
-    if payload.batch_id:
-        last_ev_stmt = (
-            select(BatchEvent)
-            .where(BatchEvent.batch_id == payload.batch_id)
-            .order_by(BatchEvent.id.desc())
-            .limit(1)
-        )
-        last_ev = db.scalars(last_ev_stmt).first()
-        prev_hash = last_ev.hash if last_ev else "0" * 64
-
-        ev_payload = {
-            "action": "RECALL_ISSUED",
-            "order_id": order.id,
-            "order_code": order_code,
-            "title": payload.title,
-            "reason": payload.reason,
-            "target_organizations": unique_orgs,
-        }
-        ev_payload_str = json.dumps(ev_payload, ensure_ascii=False)
-        h = compute_event_hash(
-            event_type="RECALL_ISSUED",
-            payload=ev_payload_str,
-            actor=current_user.username,
-            organization="Cơ quan kiểm tra chất lượng",
-            timestamp=now_iso,
-            previous_hash=prev_hash,
-        )
-        db.add(
-            BatchEvent(
-                batch_id=payload.batch_id,
-                event_type="RECALL_ISSUED",
-                payload=ev_payload_str,
-                actor=current_user.username,
-                organization="Cơ quan kiểm tra chất lượng",
-                timestamp=now_iso,
-                hash=h,
-                previous_hash=prev_hash,
-            )
-        )
+    # Ghi nhận sự kiện khởi tạo lệnh RECALL_ISSUED vào chuỗi băm của từng lô liên quan
+    attach_batches_to_order(db, order, scoped_batches)
+    record_recall_issued(
+        db,
+        order=order,
+        batches=scoped_batches,
+        actor=current_user.username,
+        target_organizations=unique_orgs,
+    )
+    # Đóng băng mọi lô trong phạm vi lệnh (S-21): lô đang bị thu hồi thì không bàn giao,
+    # tách, gộp hay chuyển địa điểm được nữa để vùng ảnh hưởng không lan rộng.
+    lock_batches_under_order(db, order, scoped_batches)
 
     try:
         db.commit()
@@ -178,7 +154,7 @@ def create_recall_order(
         .options(selectinload(RecallOrder.targets))
         .where(RecallOrder.id == order.id)
     )
-    return _build_order_response(order)
+    return build_order_response(order)
 
 
 @router.get(
@@ -198,7 +174,7 @@ def list_recall_orders(
         stmt = stmt.where(RecallOrder.status == status_filter)
 
     orders = list(db.scalars(stmt).all())
-    return [_build_order_response(o) for o in orders]
+    return [build_order_response(o) for o in orders]
 
 
 @router.get(
@@ -223,7 +199,60 @@ def get_recall_order(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy lệnh có id={order_id}.",
         )
-    return _build_order_response(order)
+    return build_order_response(order)
+
+
+@router.get(
+    "/{order_id}/recovery-plan",
+    response_model=RecallRecoveryPlanResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Kế hoạch thu hồi: lô nào ở cửa hàng nào, còn bao nhiêu (S-20)",
+    description=(
+        "Trả về **kế hoạch thu hồi** của một lệnh để nhà phân phối đi thu hồi đúng "
+        "chỗ thay vì lục cả kho:\n\n"
+        "- `batches`: từng lô kèm **tổ chức đang giữ**, **địa điểm hiện tại**, "
+        "**khối lượng còn lại** (thu hồi được) và **khối lượng đã tiêu thụ**.\n"
+        "- `recallable_quantity` / `consumed_quantity`: phần **còn thu hồi được** "
+        "và phần **đã ra thị trường** (bán cho người tiêu dùng).\n"
+        "- `locations`: các lô gom theo địa điểm kèm khối lượng cần thu hồi tại "
+        "từng cửa hàng/kho."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
+        status.HTTP_404_NOT_FOUND: {"description": "Không tìm thấy lệnh."},
+    },
+)
+def get_recall_recovery_plan(
+    order_id: int = Path(..., gt=0, description="ID của lệnh thu hồi / kiểm tra"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RecallRecoveryPlanResponse:
+    """Xem kế hoạch thu hồi của lệnh: từng lô ở đâu, còn và đã tiêu thụ bao nhiêu.
+
+    Args:
+        order_id: ID lệnh thu hồi.
+        current_user: Tài khoản đã đăng nhập (mọi vai trò đều xem được hồ sơ lệnh).
+        db: Session SQLAlchemy từ dependency ``get_db``.
+
+    Returns:
+        RecallRecoveryPlanResponse: Chi tiết từng lô, phần tổng hợp còn thu hồi
+        được / đã ra thị trường và các lô gom theo địa điểm (HTTP 200).
+
+    Raises:
+        HTTPException: 401 nếu chưa đăng nhập; 404 nếu không tìm thấy lệnh.
+    """
+    order = db.scalar(
+        select(RecallOrder)
+        .options(selectinload(RecallOrder.targets))
+        .where(RecallOrder.id == order_id)
+    )
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lệnh có id={order_id}.",
+        )
+    return build_recovery_plan(db, order)
+
 
 
 @router.post(
@@ -292,48 +321,32 @@ def confirm_recall_order(
         order.status = "COMPLETED"
         order.completed_at = now_iso
 
-        # Ghi sự kiện RECALL_COMPLETED vào chuỗi bất biến nếu có gắn với lô hàng
-        if order.batch_id:
-            last_ev_stmt = (
-                select(BatchEvent)
-                .where(BatchEvent.batch_id == order.batch_id)
-                .order_by(BatchEvent.id.desc())
-                .limit(1)
+        # Ghi sự kiện RECALL_COMPLETED vào chuỗi bất biến của **mọi lô** thuộc lệnh
+        # (lệnh có thể trải trên nhiều lô ở nhiều cửa hàng - S-20)
+        completion_events = []
+        for scoped_batch in load_order_batches(db, order):
+            completion_events.append(
+                record_event(
+                    db,
+                    batch_id=scoped_batch.id,
+                    event_type="RECALL_COMPLETED",
+                    actor=current_user.username,
+                    organization=effective_org,
+                    payload={
+                        "action": "RECALL_COMPLETED",
+                        "order_id": order.id,
+                        "order_code": order.order_code,
+                        "completed_at": now_iso,
+                        "all_targets_confirmed": [t.org_name for t in order.targets],
+                        "final_confirming_org": effective_org,
+                    },
+                )
             )
-            last_ev = db.scalars(last_ev_stmt).first()
-            prev_hash = last_ev.hash if last_ev else "0" * 64
-
-            ev_payload = {
-                "action": "RECALL_COMPLETED",
-                "order_id": order.id,
-                "order_code": order.order_code,
-                "completed_at": now_iso,
-                "all_targets_confirmed": [t.org_name for t in order.targets],
-                "final_confirming_org": effective_org,
-            }
-            ev_payload_str = json.dumps(ev_payload, ensure_ascii=False)
-            h = compute_event_hash(
-                event_type="RECALL_COMPLETED",
-                payload=ev_payload_str,
-                actor=current_user.username,
-                organization=effective_org,
-                timestamp=now_iso,
-                previous_hash=prev_hash,
-            )
-            comp_ev = BatchEvent(
-                batch_id=order.batch_id,
-                event_type="RECALL_COMPLETED",
-                payload=ev_payload_str,
-                actor=current_user.username,
-                organization=effective_org,
-                timestamp=now_iso,
-                hash=h,
-                previous_hash=prev_hash,
-            )
-            db.add(comp_ev)
+        if completion_events:
+            # `record_event` chỉ `db.add()` - flush để có `id`/`hash` trả về response.
             db.flush()
-            event_id = comp_ev.id
-            event_hash = comp_ev.hash
+            event_id = completion_events[-1].id
+            event_hash = completion_events[-1].hash
 
     try:
         db.commit()

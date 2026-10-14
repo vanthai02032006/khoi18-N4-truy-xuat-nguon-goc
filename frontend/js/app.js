@@ -127,6 +127,11 @@ function describeError(data, status) {
       .join(" | ");
   }
 
+  // Lỗi nghiệp vụ dạng object (ví dụ 409 kèm con trỏ tới lệnh đang mở - S-19).
+  if (detail && typeof detail === "object" && typeof detail.message === "string") {
+    return detail.message;
+  }
+
   return `Yêu cầu thất bại (HTTP ${status}).`;
 }
 
@@ -139,6 +144,7 @@ let orders = [];
 let thresholds = [];
 let violations = [];
 let products = [];
+let locations = [];
 let handovers = [];
 
 // Tab đang chọn trong thanh điều hướng phân hệ
@@ -166,6 +172,8 @@ let editingBatchId = null;
 let editingProductId = null;
 let activeViewingOrderId = null;
 let editingThresholdId = null;
+// S-20: lô đang được ghi nhận bán cho người tiêu dùng trong modal.
+let activeConsumingBatchId = null;
 
 // Phiên đăng nhập hiện tại: { username, role, password } hoặc null (chưa đăng nhập).
 // Sprint 4 không dùng JWT: client giữ lại thông tin đăng nhập để gửi kèm header
@@ -278,6 +286,9 @@ function applySessionToUi() {
   }
   if ($("batch-form")) {
     $("batch-form").hidden = isInspector;
+  }
+  if ($("location-form")) {
+    $("location-form").hidden = isInspector;
   }
   if ($("farm-inspector-note")) {
     $("farm-inspector-note").hidden = !isInspector;
@@ -609,29 +620,53 @@ function farmLabel(farmId) {
   return farm ? `#${farmId} — ${farm.name}` : `#${farmId}`;
 }
 
+/** Lô đang bị thu hồi (S-21): bị đóng băng, không bàn giao/tách/gộp/chuyển địa điểm được. */
+function isRecallFrozen(batch) {
+  return Boolean(batch && batch.incident_flagged);
+}
+
+/** Nhãn cảnh báo kèm mã lệnh thu hồi để biết vì sao thao tác bị chặn (S-21). */
+function recallFrozenLabel(batch) {
+  const code = batch && batch.incident_order_code;
+  return code ? `Đang bị thu hồi theo lệnh ${code}` : "Đang bị thu hồi";
+}
+
 /** Vẽ bảng danh sách lô nông sản (kèm cột "Thao tác": Tách/Sửa/Xoá). */
 function renderBatches() {
   const tbody = $("batch-table-body");
   if (!tbody) return;
 
   tbody.innerHTML = batches
-    .map(
-      (batch) => `
+    .map((batch) => {
+      const frozen = isRecallFrozen(batch);
+      const frozenTitle = frozen
+        ? `${recallFrozenLabel(batch)} — không di chuyển được cho tới khi xử lý xong (S-21)`
+        : "";
+      return `
       <tr class="${batch.id === editingBatchId ? "is-editing" : ""}">
         <td class="id-cell font-mono" style="font-weight: 700; color: #047857;">
           ${
             isMergeMode
               ? `<input type="checkbox" class="batch-merge-cb" data-batch-id="${batch.id}"
-                        ${selectedBatchIds.has(batch.id) ? "checked" : ""} style="margin-right: 6px; cursor: pointer;" />`
+                        ${selectedBatchIds.has(batch.id) ? "checked" : ""}
+                        ${frozen ? "disabled" : ""}
+                        style="margin-right: 6px; cursor: ${frozen ? "not-allowed" : "pointer"};" />`
               : ""
           }
           ${escapeHtml(batch.batch_code || `LOT-${batch.id}`)}
         </td>
         <td>${escapeHtml(farmLabel(batch.farm_id))}</td>
         <td><strong>${escapeHtml(batch.product_name)}</strong></td>
-        <td class="is-right font-mono">${formatNumber(batch.quantity)}</td>
+        <td class="is-right font-mono">${formatNumber(batch.remaining_quantity ?? batch.quantity)}</td>
+        <td class="is-right font-mono" style="color: ${batch.consumed_quantity > 0 ? "#c2410c" : "#94a3b8"};">${formatNumber(batch.consumed_quantity || 0)}</td>
+        <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: ${batch.status === "consumed" ? "#f1f5f9" : "#ecfdf5"}; color: ${batch.status === "consumed" ? "#475569" : "#047857"}; border: 1px solid ${batch.status === "consumed" ? "#cbd5e1" : "#a7f3d0"};">${batch.status === "consumed" ? "Đã tiêu thụ" : "Còn hàng"}</span>${
+                frozen
+                  ? ` <span title="${escapeHtml(frozenTitle)}" style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;">Đang thu hồi</span>`
+                  : ""
+              }</td>
         <td>${escapeHtml(formatDate(batch.harvest_date))}</td>
         <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;">${escapeHtml(batch.current_holder_org || batch.owner || "HTX Nông Nghiệp Số 4")}</span></td>
+        <td>${locationCellHtml(batch)}</td>
         <td>
           <div class="table__actions">
             <button class="btn btn--sm" style="background: #e0e7ff; color: #4338ca; border: 1px solid #c7d2fe;" type="button"
@@ -639,14 +674,33 @@ function renderBatches() {
                     data-id="${escapeHtml(batch.id)}"
                     title="Xem dòng thời gian lịch sử & tính toàn vẹn chuỗi">Lịch sử</button>
             ${
-              session && session.role !== ROLE_INSPECTOR
+              session &&
+              (session.role === ROLE_INSPECTOR || session.role === ROLE_ADMIN) &&
+              batch.status !== "consumed"
+                ? `<button class="btn btn--sm" style="background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;" type="button"
+                    data-action="flag-incident" data-entity="batch"
+                    data-id="${escapeHtml(batch.id)}"
+                    title="Đánh dấu lô có sự cố và mở lệnh thu hồi (S-19)">Sự cố</button>`
+                : ""
+            }
+            ${
+              session && session.role !== ROLE_INSPECTOR && batch.status !== "consumed"
                 ? `<button class="btn btn--sm btn-table-split" type="button"
                     data-action="split" data-entity="batch"
                     data-id="${escapeHtml(batch.id)}"
-                    title="Tách nhập nhiều dòng lô con (T-40)">Tách</button>
+                    ${frozen ? "disabled" : ""}
+                    title="${frozen ? escapeHtml(`${frozenTitle} - không tách được`) : "Tách nhập nhiều dòng lô con (T-40)"}">Tách</button>
+                   <button class="btn btn--sm" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;" type="button"
+                    data-action="move" data-entity="batch"
+                    data-id="${escapeHtml(batch.id)}"
+                    ${frozen ? "disabled" : ""}
+                    title="${frozen ? escapeHtml(`${frozenTitle} - không chuyển địa điểm được`) : "Chuyển lô về một địa điểm / cửa hàng (S-18)"}">Vị trí</button>
                    <button class="btn btn--primary btn--sm" type="button"
                     data-action="edit" data-entity="batch"
-                    data-id="${escapeHtml(batch.id)}">Sửa</button>`
+                    data-id="${escapeHtml(batch.id)}">Sửa</button>
+                   <button class="btn btn--sm" style="background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa;"
+                    data-action="consume" data-entity="batch" data-id="${escapeHtml(batch.id)}"
+                    title="Ghi nhận khối lượng đã bán cho người tiêu dùng (bán một phần hoặc bán hết)">Ghi nhận bán</button>`
                 : ""
             }
             ${
@@ -658,8 +712,8 @@ function renderBatches() {
             }
           </div>
         </td>
-      </tr>`
-    )
+      </tr>`;
+    })
     .join("");
 
   $("batch-empty").hidden = batches.length > 0;
@@ -792,6 +846,116 @@ async function deleteBatch(batchId) {
   }
 }
 
+/**
+ * Ghi nhận lô đã bán cho người tiêu dùng (S-20).
+ * Mở modal để nhập khối lượng bán (một phần) hoặc để trống nghĩa là bán hết.
+ */
+function consumeBatch(batchId) {
+  openConsumeModal(batchId);
+}
+
+/**
+ * Đánh dấu lô có sự cố và mở ngay lệnh thu hồi (S-19) -> POST /batches/{id}/incident.
+ * Chỉ cán bộ kiểm tra hoặc admin gọi được (backend trả 403 với vai trò khác).
+ */
+async function flagBatchIncident(batchId) {
+  const batch = batches.find((item) => item.id === batchId);
+  const label = batch ? `#${batch.id} — ${batch.batch_code || batch.product_name}` : `#${batchId}`;
+
+  const reason = prompt(
+    `Nhập lý do đánh dấu lô ${label} có sự cố (hệ thống sẽ mở ngay lệnh thu hồi):`,
+    "Phát hiện dấu hiệu mất an toàn thực phẩm"
+  );
+  if (reason === null) {
+    return; // người dùng bấm Huỷ
+  }
+  if (!reason.trim()) {
+    toast("Cần nhập lý do đánh dấu sự cố.", "error");
+    return;
+  }
+
+  try {
+    const order = await apiRequest(`/batches/${batchId}/incident`, {
+      method: "POST",
+      body: { reason: reason.trim() },
+    });
+    toast(`Đã đánh dấu sự cố và mở lệnh thu hồi ${order.order_code}.`, "success");
+    await loadOrders();
+  } catch (error) {
+    toast(`Không thể mở lệnh thu hồi: ${error.message}`, "error");
+  }
+}
+
+/**
+ * Mở modal ghi nhận lô đã bán cho người tiêu dùng (S-20).
+ * Bán một phần thì lô vẫn còn hàng để thu hồi; bỏ trống khối lượng = bán hết.
+ */
+function openConsumeModal(batchId) {
+  const batch = batches.find((item) => item.id === batchId);
+  if (!batch) {
+    toast(`Không tìm thấy lô nông sản #${batchId}.`, "error");
+    return;
+  }
+
+  activeConsumingBatchId = batchId;
+  const remaining = batch.remaining_quantity ?? batch.quantity;
+  $("consume-modal-batch").textContent =
+    `LÔ ${batch.batch_code || `LOT-${batch.id}`} · ${batch.product_name} — còn lại ${formatNumber(remaining)} kg, đã bán ${formatNumber(batch.consumed_quantity || 0)} kg`;
+  $("consume-quantity").value = "";
+  $("consume-quantity").max = String(remaining);
+  $("consume-note").value = "";
+  $("consume-modal-hint").textContent =
+    `Bỏ trống: bán hết ${formatNumber(remaining)} kg và chuyển lô sang trạng thái “Đã tiêu thụ”.`;
+  $("consume-modal").hidden = false;
+}
+
+/** Đóng modal ghi nhận bán. */
+function closeConsumeModal() {
+  $("consume-modal").hidden = true;
+  activeConsumingBatchId = null;
+}
+
+/** Gửi khối lượng đã bán lên ``POST /batches/{id}/consume``. */
+async function confirmConsumeSale() {
+  if (activeConsumingBatchId === null) return;
+
+  const batch = batches.find((item) => item.id === activeConsumingBatchId);
+  const remaining = batch ? batch.remaining_quantity ?? batch.quantity : 0;
+  const raw = $("consume-quantity").value.trim();
+  const soldQuantity = raw ? Number(raw) : null;
+
+  if (raw && (!Number.isFinite(soldQuantity) || soldQuantity <= 0)) {
+    toast("Khối lượng bán phải là số lớn hơn 0.", "error");
+    return;
+  }
+  if (soldQuantity !== null && soldQuantity > remaining) {
+    toast(`Không thể bán ${formatNumber(soldQuantity)} kg vì lô chỉ còn ${formatNumber(remaining)} kg.`, "error");
+    return;
+  }
+
+  const note = $("consume-note").value.trim();
+  const confirmBtn = $("btn-confirm-consume");
+  setButtonLoading(confirmBtn, true, "Đang ghi nhận…", "Ghi nhận bán");
+  try {
+    const result = await apiRequest(`/batches/${activeConsumingBatchId}/consume`, {
+      method: "POST",
+      body: soldQuantity === null ? { note } : { quantity: soldQuantity, note },
+    });
+    toast(
+      result.status === "consumed"
+        ? `Lô ${result.batch_code} đã bán hết và tới tay người mua.`
+        : `Đã ghi nhận bán ${formatNumber(result.consumed_quantity)} kg — còn lại ${formatNumber(result.remaining_quantity)} kg để thu hồi.`,
+      "success"
+    );
+    closeConsumeModal();
+    await loadBatches($("batch-filter-search")?.value.trim() || "");
+  } catch (error) {
+    toast(`Không thể ghi nhận lô đã bán: ${error.message}`, "error");
+  } finally {
+    setButtonLoading(confirmBtn, false, "Đang ghi nhận…", "Ghi nhận bán");
+  }
+}
+
 /* ---------------------------------- 8b. Tách nhập nhiều dòng lô con (T-40) --- */
 let activeSplittingBatch = null;
 let splitRows = []; // mảng chứa các dòng: [ { id, quantity, note } ]
@@ -818,10 +982,10 @@ function openSplitModal(batchId) {
   $("btn-submit-split").disabled = false;
   $("btn-cancel-split").textContent = "Huỷ bỏ";
 
-  // Khởi tạo sẵn 2 dòng lô con mặc định
+  // Khởi tạo sẵn 2 dòng lô con mặc định (mặc định nhận tại địa điểm hiện tại của lô mẹ)
   splitRows = [
-    { id: nextSplitRowId++, quantity: "", note: "Kiện hàng 1 - Phân loại A" },
-    { id: nextSplitRowId++, quantity: "", note: "Kiện hàng 2 - Phân loại B" },
+    { id: nextSplitRowId++, quantity: "", note: "Kiện hàng 1 - Phân loại A", locationId: "" },
+    { id: nextSplitRowId++, quantity: "", note: "Kiện hàng 2 - Phân loại B", locationId: "" },
   ];
 
   renderSplitRows();
@@ -843,6 +1007,7 @@ function addSplitRow() {
     id: nextSplitRowId++,
     quantity: "",
     note: `Kiện hàng ${splitRows.length + 1}`,
+    locationId: "",
   });
   renderSplitRows();
   updateSplitCalculation();
@@ -873,6 +1038,17 @@ function renderSplitRows() {
                  placeholder="VD: 50.5"
                  value="${row.quantity !== "" ? row.quantity : ""}"
                  data-id="${row.id}" required />
+        </td>
+        <td>
+          <select class="split-input split-input-location" data-id="${row.id}">
+            <option value="">— Giữ địa điểm của lô mẹ —</option>
+            ${locations
+              .map(
+                (loc) =>
+                  `<option value="${escapeHtml(loc.id)}" ${String(row.locationId) === String(loc.id) ? "selected" : ""}>${escapeHtml(loc.name)}</option>`
+              )
+              .join("")}
+          </select>
         </td>
         <td>
           <input type="text" maxlength="255"
@@ -955,6 +1131,7 @@ async function handleSplitSubmit() {
     items.push({
       quantity: q,
       note: (r.note || "").trim() || null,
+      location_id: r.locationId ? Number(r.locationId) : null,
     });
   }
 
@@ -1008,6 +1185,7 @@ function renderSplitResults(childBatches, remainingQty) {
         <div class="child-batch-code-large font-mono">${escapeHtml(child.batch_code || `LOT-${child.id}`)}</div>
         <div class="child-batch-weight">${formatNumber(child.quantity)} kg</div>
         <span class="child-batch-sub">${escapeHtml(child.product_name)}</span>
+        <span class="child-batch-sub">📍 ${escapeHtml(child.current_location_name || "Chưa gắn địa điểm")}</span>
       </div>`
     )
     .join("");
@@ -1348,10 +1526,15 @@ function populateHandoverBatches() {
   select.innerHTML =
     '<option value="">-- Chọn lô nông sản bàn giao --</option>' +
     batches
-      .map(
-        (b) =>
-          `<option value="${b.id}">${escapeHtml(b.batch_code || ('LOT-' + b.id))} — ${escapeHtml(b.product_name)} (${formatNumber(b.quantity)} kg)</option>`
-      )
+      .filter((batch) => batch.status !== "consumed")
+      .map((b) => {
+        const frozen = isRecallFrozen(b);
+        const label = `${escapeHtml(b.batch_code || ('LOT-' + b.id))} — ${escapeHtml(b.product_name)} (${formatNumber(b.quantity)} kg)`;
+        if (!frozen) return `<option value="${b.id}">${label}</option>`;
+        // Lô đang bị thu hồi (S-21) không bàn giao được: vẫn hiển thị kèm lý do để
+        // người dùng hiểu vì sao không chọn được.
+        return `<option value="${b.id}" disabled>${label} — ${escapeHtml(recallFrozenLabel(b))}</option>`;
+      })
       .join("");
 }
 
@@ -1388,6 +1571,10 @@ function renderHandovers() {
 
       const matchingBatch = batches.find((b) => b.id === h.batch_id);
       const batchCode = matchingBatch ? (matchingBatch.batch_code || `LOT-${matchingBatch.id}`) : `Lô #${h.batch_id}`;
+      // Lô bị thu hồi (S-21) thì không tiếp nhận được: chặn trước khi gọi API,
+      // vẫn hiện lý do để người dùng hiểu vì sao; "Từ chối" vẫn dùng được để dọn
+      // trạng thái chờ vì thao tác đó không làm lô di chuyển.
+      const recallFrozen = isRecallFrozen(matchingBatch);
 
       return `
         <tr>
@@ -1403,6 +1590,7 @@ function renderHandovers() {
               isPending
                 ? `<div style="display: flex; gap: 6px; justify-content: center;">
                     <button class="btn btn--primary btn--sm" style="padding: 4px 10px; font-size: 12px; background: #059669;" type="button"
+                            ${recallFrozen ? `disabled title="${escapeHtml(recallFrozenLabel(matchingBatch))} — không tiếp nhận được"` : ""}
                             onclick="handleAcceptHandover(${h.id})">Tiếp nhận</button>
                     <button class="btn btn--sm" style="padding: 4px 10px; font-size: 12px; color: #dc2626; border-color: #fca5a5;" type="button"
                             onclick="openRejectModal(${h.id})">Từ chối</button>
@@ -1537,6 +1725,7 @@ function switchTab(tab) {
   const cards = {
     farms: $("farms-card"),
     batches: $("batches-card"),
+    locations: $("locations-card"),
     products: $("products-card"),
     handovers: $("handovers-card"),
     coldchain: $("coldchain-card"),
@@ -1558,6 +1747,216 @@ function switchTab(tab) {
       el.hidden = key !== tab;
     }
   });
+}
+
+/* ------------------- 8g. Địa điểm / cửa hàng & vị trí hiện tại của lô (S-18) --- */
+/**
+ * Ô hiển thị địa điểm hiện tại của lô trong bảng lô hàng.
+ * Chưa gắn địa điểm thì hiển thị nhắc nhở (lô chưa xác định được cửa hàng).
+ */
+function locationCellHtml(batch) {
+  if (!batch.current_location_name) {
+    return `<span style="font-size: 0.78rem; color: #94a3b8;">Chưa gắn địa điểm</span>`;
+  }
+  return `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;" title="${escapeHtml(batch.current_location_address || "")}">${escapeHtml(batch.current_location_name)}</span>`;
+}
+
+/** GET /locations -> nạp danh sách địa điểm của tổ chức và đổ vào các select. */
+async function loadLocations() {
+  try {
+    const data = await apiRequest("/locations");
+    locations = Array.isArray(data) ? data : [];
+    renderLocations();
+    populateLocationSelects();
+  } catch (error) {
+    // Không ném lỗi: địa điểm là dữ liệu phụ trợ cho các form khác.
+  }
+}
+
+/** Đổ danh sách địa điểm vào select "tra cứu thu hồi" và select chuyển lô. */
+function populateLocationSelects() {
+  const recallSelect = $("recall-location-select");
+  if (recallSelect) {
+    const current = recallSelect.value;
+    recallSelect.innerHTML =
+      `<option value="">— Chọn địa điểm cần thu hồi —</option>` +
+      locations
+        .map((loc) => `<option value="${escapeHtml(loc.id)}">${escapeHtml(loc.name)}</option>`)
+        .join("");
+    recallSelect.value = locations.some((loc) => String(loc.id) === current) ? current : "";
+  }
+
+  const moveSelect = $("location-move-select");
+  if (moveSelect) {
+    moveSelect.innerHTML = locations
+      .map((loc) => `<option value="${escapeHtml(loc.id)}">${escapeHtml(loc.name)} — ${escapeHtml(loc.address)}</option>`)
+      .join("");
+  }
+}
+
+/** Vẽ bảng địa điểm của tổ chức đang đăng nhập. */
+function renderLocations() {
+  const tbody = $("location-table-body");
+  if (!tbody) return;
+
+  tbody.innerHTML = locations
+    .map(
+      (loc) => `
+      <tr>
+        <td class="id-cell font-mono">#${escapeHtml(loc.id)}</td>
+        <td><strong>${escapeHtml(loc.name)}</strong></td>
+        <td>${escapeHtml(loc.address)}</td>
+        <td><span style="font-size: 0.82rem; color: #334155;">${escapeHtml(loc.organization)}</span></td>
+        <td class="is-center">
+          <button class="btn btn--sm" style="background: #fef2f2; color: #dc2626; border: 1px solid #fecaca;" type="button"
+                  data-action="lookup-location" data-entity="location" data-id="${escapeHtml(loc.id)}"
+                  title="Tra cứu các lô đang nằm tại địa điểm này để thu hồi">Lô tại đây</button>
+        </td>
+      </tr>`
+    )
+    .join("");
+
+  if ($("location-empty")) {
+    $("location-empty").hidden = locations.length > 0;
+  }
+}
+
+/** Xử lý submit form khai báo địa điểm (POST /locations). */
+async function handleLocationSubmit(event) {
+  event.preventDefault();
+
+  const nameInput = $("location-name");
+  const addressInput = $("location-address");
+  const submitBtn = $("location-submit");
+
+  const name = nameInput.value.trim();
+  const address = addressInput.value.trim();
+
+  if (!name || !address) {
+    toast("Vui lòng nhập tên và địa chỉ của địa điểm.", "error");
+    (name ? addressInput : nameInput).focus();
+    return;
+  }
+
+  setButtonLoading(submitBtn, true, "Đang lưu…", "Khai báo địa điểm");
+  try {
+    await apiRequest("/locations", { method: "POST", body: { name, address } });
+    toast(`Đã khai báo địa điểm "${name}" cho tổ chức của bạn.`, "success");
+    resetLocationForm();
+    await loadLocations();
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    setButtonLoading(submitBtn, false, "Đang lưu…", "Khai báo địa điểm");
+  }
+}
+
+/** Đưa form khai báo địa điểm về trạng thái trống. */
+function resetLocationForm() {
+  if ($("location-name")) $("location-name").value = "";
+  if ($("location-address")) $("location-address").value = "";
+}
+
+/** Lô đang được chọn để chuyển sang địa điểm khác trong modal "Chuyển lô về địa điểm". */
+let movingBatchId = null;
+
+/** Mở modal chuyển lô về địa điểm. */
+function openLocationMoveModal(batchId) {
+  const batch = batches.find((item) => item.id === batchId);
+  if (!batch) {
+    toast(`Không tìm thấy lô nông sản #${batchId}.`, "error");
+    return;
+  }
+  if (locations.length === 0) {
+    toast("Chưa có địa điểm nào. Vui lòng khai báo địa điểm ở mục “ĐỊA ĐIỂM” trước.", "error");
+    return;
+  }
+
+  movingBatchId = batchId;
+  $("location-move-batch").textContent = `LÔ ${batch.batch_code || `LOT-${batch.id}`} · ${batch.product_name} — địa điểm hiện tại: ${batch.current_location_name || "chưa gắn"}`;
+  populateLocationSelects();
+  $("location-move-select").value = batch.current_location_id ? String(batch.current_location_id) : "";
+  $("location-move-modal").hidden = false;
+}
+
+/** Đóng modal chuyển lô về địa điểm. */
+function closeLocationMoveModal() {
+  $("location-move-modal").hidden = true;
+  movingBatchId = null;
+}
+
+/** Gửi yêu cầu chuyển lô về địa điểm đã chọn (POST /batches/{id}/location). */
+async function confirmLocationMove() {
+  if (movingBatchId === null) return;
+
+  const select = $("location-move-select");
+  const locationId = Number(select.value);
+  if (!locationId) {
+    toast("Vui lòng chọn địa điểm nhận lô.", "error");
+    return;
+  }
+
+  const confirmBtn = $("btn-confirm-location-move");
+  setButtonLoading(confirmBtn, true, "Đang chuyển…", "Xác nhận chuyển");
+  try {
+    const updated = await apiRequest(`/batches/${movingBatchId}/location`, {
+      method: "POST",
+      body: { location_id: locationId },
+    });
+    toast(
+      `Lô ${updated.batch_code || `LOT-${updated.id}`} đã được ghi nhận tại "${updated.current_location_name}".`,
+      "success"
+    );
+    closeLocationMoveModal();
+    await loadBatches();
+    await loadLocationBatches(locationId);
+  } catch (error) {
+    toast(`Không thể chuyển vị trí lô: ${error.message}`, "error");
+  } finally {
+    setButtonLoading(confirmBtn, false, "Đang chuyển…", "Xác nhận chuyển");
+  }
+}
+
+/** Tra cứu các lô đang nằm tại một địa điểm (GET /locations/{id}/batches). */
+async function loadLocationBatches(locationId) {
+  const result = $("recall-result");
+  if (!result) return;
+
+  if (!locationId) {
+    result.hidden = true;
+    toast("Vui lòng chọn địa điểm cần tra cứu.", "error");
+    return;
+  }
+
+  try {
+    const data = await apiRequest(`/locations/${locationId}/batches`);
+    const rows = Array.isArray(data.batches) ? data.batches : [];
+
+    $("recall-summary").textContent =
+      `${data.total_batches} lô · tổng ${formatNumber(data.total_quantity)} kg đang nằm tại "${data.location.name}" (${data.location.address}). ` +
+      (rows.length > 0 ? "Cần thu hồi theo đúng danh sách bên dưới." : "Không có lô nào cần xử lý.");
+
+    $("recall-table-body").innerHTML = rows
+      .map(
+        (batch) => `
+      <tr>
+        <td class="id-cell font-mono" style="font-weight: 700; color: #047857;">${escapeHtml(batch.batch_code || `LOT-${batch.id}`)}</td>
+        <td><strong>${escapeHtml(batch.product_name)}</strong></td>
+        <td class="is-right font-mono">${formatNumber(batch.remaining_quantity ?? batch.quantity)}</td>
+        <td class="is-right font-mono" style="color: ${batch.consumed_quantity > 0 ? "#c2410c" : "#94a3b8"};">${formatNumber(batch.consumed_quantity || 0)}</td>
+        <td><span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; background: ${batch.status === "consumed" ? "#f1f5f9" : "#ecfdf5"}; color: ${batch.status === "consumed" ? "#475569" : "#047857"}; border: 1px solid ${batch.status === "consumed" ? "#cbd5e1" : "#a7f3d0"};">${batch.status === "consumed" ? "Đã tiêu thụ" : "Còn hàng"}</span></td>
+      </tr>`
+      )
+      .join("");
+
+    result.hidden = false;
+    if (rows.length === 0) {
+      toast(`Địa điểm "${data.location.name}" hiện không có lô nào.`, "info");
+    }
+  } catch (error) {
+    result.hidden = true;
+    toast(`Không tra cứu được lô tại địa điểm: ${error.message}`, "error");
+  }
 }
 
 /* ---------------------------------- 9. Dòng thời gian & Toàn vẹn chuỗi (Audit Chain) --- */
@@ -1588,9 +1987,37 @@ function formatEventDetail(ev, payload) {
     bodyHtml = `
       <div class="event-desc">Tách thành <strong>${childDetails.length || (payload.child_batch_codes || []).length}</strong> lô con:</div>
       <div class="event-chips">
-        ${childDetails.map((c) => `<span class="event-chip event-chip--child">${escapeHtml(c.batch_code)}: <strong>${formatNumber(c.quantity)} kg</strong></span>`).join("")}
+        ${childDetails.map((c) => `<span class="event-chip event-chip--child">${escapeHtml(c.batch_code)}: <strong>${formatNumber(c.quantity)} kg</strong>${c.location_name ? ` · 📍 ${escapeHtml(c.location_name)}` : ""}</span>`).join("")}
       </div>
       <div class="event-subnote">Số dư còn lại của lô mẹ: <strong>${formatNumber(payload.remaining_quantity)} kg</strong></div>`;
+  } else if (t === "BATCH_CONSUMED") {
+    badgeColor = "#c2410c";
+    icon = "🛒";
+    const soldQty = payload.sold_quantity ?? payload.previous_quantity;
+    const soldOut = payload.is_sold_out ?? (payload.remaining_quantity === 0);
+    title = soldOut ? "Đã bán hết / tới tay người mua" : "Bán một phần cho người tiêu dùng (S-20)";
+    bodyHtml = `
+      <div class="event-desc">${soldOut
+        ? "Lô đã rời khỏi kệ phân phối và được chuyển sang trạng thái <strong>đã tiêu thụ</strong>."
+        : `Đã bán <strong>${formatNumber(soldQty)} kg</strong>; phần còn lại vẫn đang ở cửa hàng để thu hồi.`}</div>
+      <div class="event-chips">
+        <span class="event-chip">⚖️ Khối lượng trước khi bán: <strong>${formatNumber(payload.previous_quantity)} kg</strong></span>
+        <span class="event-chip">🛒 Đã bán lần này: <strong>${formatNumber(soldQty)} kg</strong></span>
+        <span class="event-chip">📦 Còn lại: <strong>${formatNumber(payload.remaining_quantity ?? 0)} kg</strong></span>
+        ${payload.total_consumed_quantity !== undefined ? `<span class="event-chip">🏪 Tổng đã ra thị trường: <strong>${formatNumber(payload.total_consumed_quantity)} kg</strong></span>` : ""}
+      </div>
+      ${payload.note ? `<div class="event-subnote">Ghi chú: <strong>${escapeHtml(payload.note)}</strong></div>` : ""}`;
+  } else if (t === "LOCATION_CHANGED") {
+    badgeColor = "#0891b2";
+    icon = "📍";
+    title = "Chuyển lô về địa điểm / cửa hàng";
+    bodyHtml = `
+      <div class="event-desc">Lô được ghi nhận đang nằm tại địa điểm <strong>${escapeHtml(payload.to_location_name || "—")}</strong>.</div>
+      <div class="event-chips">
+        ${payload.from_location_name ? `<span class="event-chip">Từ: <strong>${escapeHtml(payload.from_location_name)}</strong></span>` : ""}
+        <span class="event-chip">Đến: <strong>${escapeHtml(payload.to_location_name || "—")}</strong></span>
+        ${payload.to_location_address ? `<span class="event-chip">🏠 Địa chỉ: ${escapeHtml(payload.to_location_address)}</span>` : ""}
+      </div>`;
   } else if (t === "BIRTH") {
     badgeColor = "#8b5cf6";
     icon = "🐣";
@@ -1669,6 +2096,16 @@ function formatEventDetail(ev, payload) {
         <span class="event-chip event-chip--danger">🌡️ Nhiệt độ ghi nhận: <strong>${escapeHtml(payload.temperature ?? '—')}°C</strong></span>
         <span class="event-chip">Ngưỡng chuẩn: <strong>${escapeHtml(payload.min_temp ?? '—')}°C - ${escapeHtml(payload.max_temp ?? '—')}°C</strong></span>
         ${payload.sensor_id ? `<span class="event-chip">Cảm biến: <code>${escapeHtml(payload.sensor_id)}</code></span>` : ""}
+      </div>`;
+  } else if (t === "INCIDENT_FLAGGED") {
+    badgeColor = "#b91c1c";
+    icon = "⚠️";
+    title = "Đánh dấu lô có sự cố";
+    bodyHtml = `
+      <div class="event-desc" style="color: #991b1b; font-weight: 600;">Cán bộ kiểm tra đã đánh dấu lô có sự cố và mở lệnh thu hồi để xử lý.</div>
+      <div class="event-chips">
+        <span class="event-chip event-chip--danger">Mã lệnh: <strong>${escapeHtml(payload.order_code || '—')}</strong></span>
+        <span class="event-chip">Lý do: <strong>${escapeHtml(payload.reason || '—')}</strong></span>
       </div>`;
   } else if (t === "RECALL_ISSUED") {
     badgeColor = "#b91c1c";
@@ -1928,6 +2365,10 @@ function renderOrders() {
         ? `<span style="color: #d97706; font-size: 0.82rem; font-weight: 600;">Chưa xong: ${escapeHtml(order.pending_organizations.join(", "))}</span>`
         : `<span style="color: #059669; font-size: 0.82rem; font-weight: 600;">✓ Tất cả đã xác nhận</span>`;
 
+      const scopeText = order.batch_count
+        ? `<span style="background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.78rem;">${order.batch_count} lô</span>`
+        : `<span style="color: #94a3b8; font-size: 0.8rem;">Chưa gắn lô</span>`;
+
       return `
         <tr>
           <td class="font-mono" style="font-weight: 700; color: #4338ca;">${escapeHtml(order.order_code)}</td>
@@ -1935,6 +2376,7 @@ function renderOrders() {
             <div style="font-weight: 600; color: #1e293b;">${escapeHtml(order.title)}</div>
             <div style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">Lý do: ${escapeHtml(order.reason)} ${order.batch_id ? `(Lô #${order.batch_id})` : ""}</div>
           </td>
+          <td class="is-center">${scopeText}</td>
           <td class="is-center font-mono" style="font-weight: 800; font-size: 1.05rem; color: ${progressColor};">
             ${escapeHtml(order.progress_ratio)}
           </td>
@@ -1960,10 +2402,22 @@ async function handleOrderSubmit(event) {
   const title = $("order-title").value.trim();
   const reason = $("order-reason").value.trim();
   const batchIdVal = $("order-batch-id").value.trim();
+  const batchIdsVal = $("order-batch-ids").value.trim();
+  const productScope = $("order-product-scope").value.trim();
   const targetsRaw = $("order-targets").value.trim();
 
   if (!title || !reason || !targetsRaw) {
     toast("Vui lòng điền đầy đủ tiêu đề, lý do và danh sách các bên liên quan.", "error");
+    return;
+  }
+
+  const batchIds = batchIdsVal
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map(Number);
+  if (batchIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+    toast("Danh sách ID lô chỉ nhận số nguyên dương, phân cách bằng dấu phẩy.", "error");
     return;
   }
 
@@ -1977,6 +2431,8 @@ async function handleOrderSubmit(event) {
     title,
     reason,
     batch_id: batchIdVal ? Number(batchIdVal) : null,
+    batch_ids: batchIds,
+    product_name: productScope || null,
     target_organizations: targetOrganizations,
   };
 
@@ -1988,7 +2444,8 @@ async function handleOrderSubmit(event) {
       method: "POST",
       body: payload,
     });
-    toast(`Đã ban hành lệnh ${res.order_code} thành công!`, "success");
+    const scopeText = res.batch_count ? ` (phạm vi ${res.batch_count} lô)` : "";
+    toast(`Đã ban hành lệnh ${res.order_code}${scopeText} thành công!`, "success");
     $("order-form").reset();
     $("order-targets").value = "HTX Trồng Trọt, Đơn Vị Vận Tải Lạnh, Kho Trung Chuyển, Nhà Máy Đóng Gói, Siêu Thị Phân Phối";
     await loadOrders();
@@ -2051,8 +2508,78 @@ async function openOrderModal(orderId) {
       .join("");
 
     backdrop.hidden = false;
+    await renderOrderRecoveryPlan(order.id);
   } catch (error) {
     toast(`Không tải được chi tiết lệnh: ${error.message}`, "error");
+  }
+}
+
+/**
+ * Vẽ **kế hoạch thu hồi** của lệnh (S-20): lô nào ở cửa hàng nào, còn bao nhiêu
+ * để thu hồi và bao nhiêu đã bán cho người tiêu dùng.
+ */
+async function renderOrderRecoveryPlan(orderId) {
+  const loading = $("order-plan-loading");
+  const block = $("order-plan-block");
+  if (!block) return;
+
+  block.hidden = true;
+  if (loading) {
+    loading.hidden = false;
+    loading.textContent = "Đang tải kế hoạch thu hồi…";
+  }
+
+  try {
+    const plan = await apiRequest(`/orders/${orderId}/recovery-plan`);
+    if (loading) loading.hidden = true;
+
+    $("order-plan-total-batches").textContent = plan.total_batches;
+    $("order-plan-recallable").textContent = `${formatNumber(plan.recallable_quantity)} kg`;
+    $("order-plan-consumed").textContent = `${formatNumber(plan.consumed_quantity)} kg`;
+    $("order-plan-locations").textContent = plan.total_locations;
+    $("order-plan-ratio").innerHTML =
+      `Còn thu hồi được <strong style="color:#047857;">${formatNumber(plan.recallable_quantity)} kg</strong> / tổng ` +
+      `<strong>${formatNumber(plan.total_quantity)} kg</strong> (${escapeHtml(plan.recallable_ratio)}) · ` +
+      `đã ra thị trường <strong style="color:#c2410c;">${formatNumber(plan.consumed_quantity)} kg</strong>. ` +
+      `${plan.consumed_batches} lô đã bán hết không còn gì để thu hồi.`;
+
+    const rows = Array.isArray(plan.batches) ? plan.batches : [];
+    $("order-plan-table-body").innerHTML = rows
+      .map(
+        (row) => `
+        <tr>
+          <td class="font-mono" style="font-weight: 700; color: #047857;">${escapeHtml(row.batch_code)}</td>
+          <td>${escapeHtml(row.product_name)}</td>
+          <td>${escapeHtml(row.organization || "—")}</td>
+          <td>${escapeHtml(row.location_name || "Chưa gắn địa điểm")}${row.location_address ? `<div style="font-size: 0.72rem; color: #94a3b8;">${escapeHtml(row.location_address)}</div>` : ""}</td>
+          <td class="is-right font-mono" style="font-weight: 700; color: ${row.is_recallable ? "#047857" : "#94a3b8"};">${formatNumber(row.remaining_quantity)}</td>
+          <td class="is-right font-mono" style="color: ${row.consumed_quantity > 0 ? "#c2410c" : "#94a3b8"};">${formatNumber(row.consumed_quantity)}</td>
+        </tr>`
+      )
+      .join("");
+    $("order-plan-empty").hidden = rows.length > 0;
+
+    const groups = Array.isArray(plan.locations) ? plan.locations : [];
+    $("order-plan-groups-wrap").hidden = groups.length === 0;
+    $("order-plan-groups").innerHTML = groups
+      .map(
+        (group) => `
+        <div style="display: flex; justify-content: space-between; gap: 10px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 6px; background: #f8fafc;">
+          <div style="font-size: 0.85rem; color: #1e293b;">
+            <strong>${escapeHtml(group.location_name)}</strong>
+            <span style="color: #64748b;"> · ${group.batch_count} lô</span>
+          </div>
+          <div class="font-mono" style="font-size: 0.82rem; white-space: nowrap;">
+            <span style="color: #047857; font-weight: 700;">còn ${formatNumber(group.remaining_quantity)} kg</span>
+            <span style="color: #c2410c;"> · đã bán ${formatNumber(group.consumed_quantity)} kg</span>
+          </div>
+        </div>`
+      )
+      .join("");
+
+    block.hidden = false;
+  } catch (error) {
+    if (loading) loading.textContent = `Không tải được kế hoạch thu hồi: ${error.message}`;
   }
 }
 
@@ -2411,6 +2938,16 @@ function bindEvents() {
     updateSplitCalculation();
   });
 
+  // Địa điểm nhận lô con có thể là <select> nên lắng nghe ở sự kiện "change" (S-18).
+  $("split-rows-body").addEventListener("change", (e) => {
+    const select = e.target;
+    if (!select.classList.contains("split-input-location")) return;
+    const rowEl = select.closest("tr[data-row-id]");
+    if (!rowEl) return;
+    const row = splitRows.find((r) => r.id === Number(rowEl.dataset.rowId));
+    if (row) row.locationId = select.value;
+  });
+
   $("split-rows-body").addEventListener("click", (e) => {
     const btnDel = e.target.closest("button[data-action='del-row']");
     if (!btnDel) return;
@@ -2475,6 +3012,51 @@ function bindEvents() {
   }
   if ($("product-cancel")) {
     $("product-cancel").addEventListener("click", () => cancelEdit("product"));
+  }
+
+  // Sự kiện địa điểm & vị trí hiện tại của lô (S-18)
+  if ($("location-form")) {
+    $("location-form").addEventListener("submit", handleLocationSubmit);
+  }
+  if ($("location-table-body")) {
+    $("location-table-body").addEventListener("click", handleTableAction);
+  }
+  if ($("btn-recall-lookup")) {
+    $("btn-recall-lookup").addEventListener("click", () =>
+      loadLocationBatches($("recall-location-select").value)
+    );
+  }
+  if ($("recall-location-select")) {
+    $("recall-location-select").addEventListener("change", (e) =>
+      loadLocationBatches(e.target.value)
+    );
+  }
+  if ($("btn-close-location-move")) {
+    $("btn-close-location-move").addEventListener("click", closeLocationMoveModal);
+  }
+  if ($("btn-cancel-location-move")) {
+    $("btn-cancel-location-move").addEventListener("click", closeLocationMoveModal);
+  }
+  if ($("btn-confirm-location-move")) {
+    $("btn-confirm-location-move").addEventListener("click", confirmLocationMove);
+  }
+  // Ghi nhận bán cho người tiêu dùng (S-20)
+  if ($("btn-close-consume")) {
+    $("btn-close-consume").addEventListener("click", closeConsumeModal);
+  }
+  if ($("btn-cancel-consume")) {
+    $("btn-cancel-consume").addEventListener("click", closeConsumeModal);
+  }
+  if ($("btn-confirm-consume")) {
+    $("btn-confirm-consume").addEventListener("click", confirmConsumeSale);
+  }
+  if ($("consume-quantity")) {
+    $("consume-quantity").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        confirmConsumeSale();
+      }
+    });
   }
 
   // Sự kiện bàn giao chuỗi cung ứng (S-35)
@@ -2612,6 +3194,28 @@ function handleTableAction(event) {
     return;
   }
 
+  if (action === "consume") {
+    consumeBatch(id);
+    return;
+  }
+
+  if (action === "move") {
+    openLocationMoveModal(id);
+    return;
+  }
+
+  if (action === "flag-incident") {
+    flagBatchIncident(id);
+    return;
+  }
+
+  if (action === "lookup-location") {
+    const select = $("recall-location-select");
+    if (select) select.value = String(id);
+    loadLocationBatches(id);
+    return;
+  }
+
   if (action === "edit") {
     if (entity === "farm") {
       startEditFarm(id);
@@ -2643,6 +3247,7 @@ async function loadAllData() {
   await checkHealth();
   await loadFarms(); // phải chạy trước để bảng lô hiển thị được tên vùng trồng
   await loadBatches();
+  await loadLocations(); // tải địa điểm của tổ chức (S-18)
   await loadProducts(); // tải danh mục nông sản dùng chung
   await loadHandovers(); // tải danh sách bàn giao
   await loadOrders(); // tải danh sách lệnh kiểm tra

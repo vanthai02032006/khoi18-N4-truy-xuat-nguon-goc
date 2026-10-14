@@ -9,6 +9,8 @@ Quan hệ giữa các bảng::
 
     Farm 1 ---- N Batch   (một vùng trồng có nhiều lô nông sản)
     User                  (bảng độc lập, dùng cho đăng nhập/phân quyền)
+    Location 1 ---- N Batch  (một địa điểm đang chứa nhiều lô - S-18)
+    RecallOrder N ---- N Batch  (một lệnh thu hồi trải trên nhiều lô - S-20)
 
 File này là điểm duy nhất (single source of truth) khai báo bảng dữ liệu.
 Mọi model đều kế thừa ``Base`` và bảng sẽ được ``init_db()`` trong
@@ -115,6 +117,13 @@ class Batch(Base):
     )
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="available",
+        server_default="available",
+        index=True,
+    )
     harvest_date: Mapped[date] = mapped_column(Date, nullable=False)
 
     # Quyền giữ lô thực tế và tổ chức nhận đang chờ xác nhận bàn giao (Handover Workflow)
@@ -135,6 +144,57 @@ class Batch(Base):
         index=True,
     )
 
+    # Địa điểm hiện tại của lô (S-18): biết lô đang nằm ở cửa hàng nào trong hệ
+    # thống của tổ chức để thu hồi đúng điểm bán thay vì rà soát cả chuỗi.
+    current_location_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("locations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        default=None,
+    )
+
+    # Khối lượng đã bán cho người tiêu dùng (S-20). `quantity` là phần **còn lại**
+    # có thể thu hồi, `consumed_quantity` là phần **đã ra thị trường** - cộng lại
+    # là tổng khối lượng của lô. Nhờ tách hai con số, nhà phân phối xem lệnh thu
+    # hồi biết chính xác bao nhiêu còn thu hồi được và bao nhiêu đã bán cho khách.
+    consumed_quantity: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+        server_default="0",
+    )
+
+    # Cờ "lô đã được đánh dấu có sự cố" (S-21). Một khi lô vào phạm vi một lệnh thu hồi
+    # (đánh dấu sự cố ở S-19 hoặc được gắn vào lệnh nhiều lô ở S-20), lô bị **đóng băng**:
+    # không bàn giao, tách, gộp hay chuyển địa điểm được nữa để vùng ảnh hưởng không lan
+    # rộng trong lúc xử lý. Cờ **không tự xoá** khi lệnh hoàn tất - lô đã nhiễm sự cố thì
+    # vẫn bị chặn, đúng nguyên tắc sổ chỉ thêm (đính chính bằng sự kiện mới, không xoá dấu).
+    incident_flagged: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="0",
+        index=True,
+    )
+    # Liên kết mềm tới lệnh thu hồi đã đánh dấu lô (không đặt khoá ngoại để tránh vòng
+    # tham chiếu `batches` <-> `recall_orders` khi tạo bảng).
+    incident_order_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        index=True,
+        default=None,
+    )
+    incident_order_code: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        default=None,
+    )
+    incident_flagged_at: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        default=None,
+    )
+
     # Phả hệ lô nông sản mẹ - con (T-39 / T-40 / T-41 / SCRUM-57)
     parent_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("batches.id", ondelete="SET NULL"),
@@ -150,6 +210,10 @@ class Batch(Base):
 
     # Quan hệ N-1: nhiều lô có thể thuộc về một vùng trồng.
     farm: Mapped["Farm"] = relationship(back_populates="batches")
+
+    # Quan hệ N-1 tới địa điểm đang chứa lô. `lazy="joined"` để danh sách lô
+    # không phát sinh thêm truy vấn cho từng dòng (tránh N+1).
+    current_location: Mapped[Optional["Location"]] = relationship(lazy="joined")
 
     # Quan hệ tự tham chiếu (self-referential) cho phả hệ mẹ - con:
     parent: Mapped[Any] = relationship(
@@ -188,6 +252,35 @@ class Batch(Base):
         self.current_owner = value
         if value:
             self.current_holder_org = value
+
+    @property
+    def current_location_name(self) -> Optional[str]:
+        """Tên địa điểm đang chứa lô (``None`` nếu chưa gắn địa điểm)."""
+        return self.current_location.name if self.current_location is not None else None
+
+    @property
+    def current_location_address(self) -> Optional[str]:
+        """Địa chỉ địa điểm đang chứa lô (``None`` nếu chưa gắn địa điểm)."""
+        return self.current_location.address if self.current_location is not None else None
+
+    @property
+    def remaining_quantity(self) -> float:
+        """Khối lượng **còn lại, còn thu hồi được** của lô (kg) - S-20.
+
+        Trùng với ``quantity`` (mọi phép tách/bàn giao/tiêu thụ đều trừ vào cột
+        này); tên riêng để phần kế hoạch thu hồi đọc rõ nghĩa "còn bao nhiêu".
+        """
+        return self.quantity
+
+    @property
+    def total_quantity(self) -> float:
+        """Tổng khối lượng của lô = phần còn lại + phần đã bán ra thị trường (S-20)."""
+        return round(self.quantity + self.consumed_quantity, 4)
+
+    @property
+    def is_recallable(self) -> bool:
+        """Lô còn hàng để thu hồi (chưa tiêu thụ hết và vẫn còn khối lượng)."""
+        return self.status != BATCH_STATUS_CONSUMED and self.quantity > 0
 
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return (
@@ -338,8 +431,52 @@ class RecallOrder(Base):
         cascade="all, delete-orphan",
     )
 
+    # Phạm vi lô của lệnh (S-20): một lệnh thu hồi có thể trải trên **nhiều lô**
+    # nằm ở nhiều cửa hàng; `batch_id` phía trên giữ nguyên cho lệnh một lô (S-19).
+    recall_batches: Mapped[list["RecallOrderBatch"]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<RecallOrder id={self.id} code={self.order_code!r} status={self.status!r}>"
+
+
+class RecallOrderBatch(Base):
+    """Liên kết **lệnh thu hồi ↔ lô hàng** thuộc phạm vi lệnh - bảng ``recall_order_batches`` (S-20).
+
+    Nhà phân phối cần biết một lệnh thu hồi gồm những lô nào, mỗi lô đang ở cửa
+    hàng nào và còn bao nhiêu để thu hồi; mỗi cặp (lệnh, lô) chỉ xuất hiện một lần.
+
+    Attributes:
+        id: Khoá chính, tự tăng.
+        order_id: Khoá ngoại trỏ tới ``recall_orders.id``.
+        batch_id: Khoá ngoại trỏ tới ``batches.id`` (lô thuộc phạm vi thu hồi).
+        order: Đối tượng ``RecallOrder`` tương ứng (chiều N-1 của quan hệ).
+    """
+
+    __tablename__ = "recall_order_batches"
+    __table_args__ = (
+        UniqueConstraint("order_id", "batch_id", name="uq_recall_order_batch"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("recall_orders.id"),
+        nullable=False,
+        index=True,
+    )
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id"),
+        nullable=False,
+        index=True,
+    )
+
+    order: Mapped["RecallOrder"] = relationship(back_populates="recall_batches")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<RecallOrderBatch order_id={self.order_id} batch_id={self.batch_id}>"
 
 
 class RecallOrderTarget(Base):
@@ -517,6 +654,15 @@ EVENT_TYPE_HANDOVER_PENDING: str = "HANDOVER_PENDING"
 EVENT_TYPE_HANDOVER_ACCEPTED: str = "HANDOVER_ACCEPTED"
 EVENT_TYPE_HANDOVER_REJECTED: str = "HANDOVER_REJECTED"
 EVENT_TYPE_OWNER_CHANGED: str = "OWNER_CHANGED"
+EVENT_TYPE_BATCH_CONSUMED: str = "BATCH_CONSUMED"
+EVENT_TYPE_LOCATION_CHANGED: str = "LOCATION_CHANGED"
+#: Cán bộ kiểm tra đánh dấu lô có sự cố và mở lệnh thu hồi ngay trên chuỗi của lô.
+EVENT_TYPE_INCIDENT_FLAGGED: str = "INCIDENT_FLAGGED"
+#: Ban hành lệnh thu hồi/kiểm tra có lô liên quan - ghi vào chuỗi băm của từng lô.
+EVENT_TYPE_RECALL_ISSUED: str = "RECALL_ISSUED"
+
+BATCH_STATUS_AVAILABLE: str = "available"
+BATCH_STATUS_CONSUMED: str = "consumed"
 
 
 class Handover(Base):
@@ -577,6 +723,45 @@ class Handover(Base):
         )
 
 
+# ----------------------------------------------------------------- Locations (S-18) ---
+class Location(Base):
+    """Địa điểm (cửa hàng / kho / điểm bán) **thuộc một tổ chức** - bảng ``locations``.
+
+    Nhà phân phối có nhiều địa điểm trong hệ thống của mình; mỗi địa điểm gồm
+    tên và địa chỉ. Cột ``organization`` gắn địa điểm với đúng tổ chức đã khai
+    báo nên tổ chức khác không đọc/nhìn thấy địa điểm này (cách ly đa tổ chức).
+
+    Nhờ địa điểm, lô hàng ghi rõ đang nằm ở cửa hàng nào
+    (``Batch.current_location_id``) và lệnh thu hồi chỉ cần nhắm đúng điểm bán
+    đó thay vì rà soát toàn chuỗi cung ứng.
+
+    Attributes:
+        id: Khoá chính, tự tăng.
+        organization: Tên tổ chức sở hữu địa điểm (có index để lọc nhanh).
+        name: Tên địa điểm (ví dụ: "Cửa hàng Mỹ Xương") - duy nhất trong một tổ chức.
+        address: Địa chỉ của địa điểm (số nhà/ấp/xã/huyện/tỉnh).
+        created_at: Thời điểm khai báo (giờ UTC, tự sinh khi ghi).
+    """
+
+    __tablename__ = "locations"
+    __table_args__ = (
+        UniqueConstraint("organization", "name", name="uq_locations_org_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    address: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Location id={self.id} org={self.organization!r} name={self.name!r}>"
+
+
 __all__ = [
     "Base",
     "Batch",
@@ -585,8 +770,10 @@ __all__ = [
     "ColdChainThreshold",
     "ColdChainViolation",
     "Farm",
+    "Location",
     "Organization",
     "RecallOrder",
+    "RecallOrderBatch",
     "RecallOrderTarget",
     "ROLE_ADMIN",
     "ROLE_FARMER",
@@ -607,5 +794,10 @@ __all__ = [
     "EVENT_TYPE_HANDOVER_ACCEPTED",
     "EVENT_TYPE_HANDOVER_REJECTED",
     "EVENT_TYPE_OWNER_CHANGED",
+    "EVENT_TYPE_BATCH_CONSUMED",
+    "EVENT_TYPE_LOCATION_CHANGED",
+    "EVENT_TYPE_INCIDENT_FLAGGED",
+    "EVENT_TYPE_RECALL_ISSUED",
+    "BATCH_STATUS_AVAILABLE",
+    "BATCH_STATUS_CONSUMED",
 ]
-

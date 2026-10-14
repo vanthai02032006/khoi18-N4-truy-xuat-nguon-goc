@@ -218,6 +218,7 @@ _BATCH_EXAMPLE: dict = {
     "farm_id": 1,
     "product_name": "Xoài cát Chu",
     "quantity": 120.5,
+    "status": "available",
     "harvest_date": "2026-01-15",
 }
 
@@ -316,7 +317,23 @@ class BatchResponse(BaseModel):
     batch_code: str = Field(..., description="Mã lô sinh tự động (Unique Batch Code).", examples=["LOT-20261007-0001"])
     farm_id: int = Field(..., description="ID vùng trồng xuất xứ.", examples=[1])
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
-    quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
+    quantity: float = Field(..., description="Số lượng / khối lượng **còn lại** của lô (kg).")
+    consumed_quantity: float = Field(
+        default=0.0,
+        description="Khối lượng đã bán cho người tiêu dùng - đã ra thị trường (kg) - S-20.",
+        examples=[150.5],
+    )
+    remaining_quantity: float = Field(
+        default=0.0,
+        description="Khối lượng còn lại, còn thu hồi được (bằng `quantity`) - S-20.",
+        examples=[349.5],
+    )
+    total_quantity: float = Field(
+        default=0.0,
+        description="Tổng khối lượng của lô = còn lại + đã tiêu thụ (kg) - S-20.",
+        examples=[500.0],
+    )
+    status: str = Field(..., description="Trạng thái lô: available (còn hàng) hoặc consumed (đã tiêu thụ).")
     harvest_date: date = Field(..., description="Ngày thu hoạch.")
     current_holder_org: str = Field(
         default="HTX Nông Nghiệp Số 4",
@@ -325,6 +342,41 @@ class BatchResponse(BaseModel):
     pending_receiver_org: str | None = Field(
         default=None,
         description="Tổ chức đang được bàn giao (chờ xác nhận hoặc từ chối).",
+    )
+    incident_flagged: bool = Field(
+        default=False,
+        description=(
+            "Lô đã được đánh dấu có sự cố và đang nằm trong lệnh thu hồi (S-21): lô bị "
+            "đóng băng, không bàn giao/tách/gộp/chuyển địa điểm được nữa."
+        ),
+    )
+    incident_order_id: int | None = Field(
+        default=None,
+        description="ID lệnh thu hồi đã đánh dấu lô có sự cố (null nếu lô chưa từng bị đánh dấu).",
+    )
+    incident_order_code: str | None = Field(
+        default=None,
+        description="Mã lệnh thu hồi đã đánh dấu lô có sự cố - S-21 (ví dụ `ORD-REC-0001`).",
+        examples=["ORD-REC-0001"],
+    )
+    incident_flagged_at: str | None = Field(
+        default=None,
+        description="Thời điểm lô bị đánh dấu sự cố lần đầu (ISO 8601).",
+    )
+    current_location_id: int | None = Field(
+        default=None,
+        description="ID địa điểm hiện đang chứa lô (null nếu chưa gắn địa điểm - S-18).",
+        examples=[1],
+    )
+    current_location_name: str | None = Field(
+        default=None,
+        description="Tên địa điểm hiện đang chứa lô (null nếu chưa gắn địa điểm).",
+        examples=["Cửa hàng Mỹ Xương"],
+    )
+    current_location_address: str | None = Field(
+        default=None,
+        description="Địa chỉ của địa điểm hiện đang chứa lô.",
+        examples=["Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp"],
     )
 
 
@@ -412,10 +464,21 @@ class BatchTimelineResponse(BaseModel):
 
 # ------------------------------------------------------------- Batch Split (T-40) ---
 class BatchSplitItem(BaseModel):
-    """Thông tin một dòng lô con cần tách."""
+    """Thông tin một dòng lô con cần tách.
+
+    Từ S-18, mỗi dòng lô con có thể gắn **địa điểm nhận hàng** riêng: chia một
+    lô cho nhiều cửa hàng thì mỗi lô con nằm tại đúng cửa hàng của nó. Bỏ trống
+    ``location_id`` thì lô con giữ nguyên địa điểm hiện tại của lô mẹ.
+    """
 
     quantity: float = Field(..., gt=0, description="Khối lượng của lô con (kg). Phải lớn hơn 0.")
     note: str | None = Field(default=None, max_length=255, description="Ghi chú phân loại / đóng thùng.")
+    location_id: int | None = Field(
+        default=None,
+        ge=1,
+        description="ID địa điểm nhận lô con (thuộc tổ chức đang giữ lô mẹ). Bỏ trống = giữ địa điểm của lô mẹ.",
+        examples=[1],
+    )
 
 
 class BatchSplitRequest(BaseModel):
@@ -527,6 +590,21 @@ class RecallOrderCreate(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500, description="Lý do ban hành lệnh.")
     description: str | None = Field(default=None, max_length=1000, description="Mô tả chi tiết và hướng dẫn xử lý.")
     batch_id: int | None = Field(default=None, description="ID lô nông sản liên quan (nếu có).")
+    batch_ids: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Danh sách nhiều lô thuộc phạm vi lệnh thu hồi (S-20) - ví dụ 20 lô "
+            "đang nằm ở nhiều cửa hàng."
+        ),
+    )
+    product_name: str | None = Field(
+        default=None,
+        max_length=255,
+        description=(
+            "Phạm vi theo tên sản phẩm (S-20): tự gom **mọi lô cùng tên sản phẩm** "
+            "vào lệnh thay vì liệt kê từng ID lô."
+        ),
+    )
     target_organizations: list[str] = Field(..., min_length=1, description="Danh sách các tổ chức liên quan phải xác nhận.")
 
 
@@ -576,6 +654,16 @@ class RecallOrderResponse(BaseModel):
     is_completed: bool
     pending_organizations: list[str]  # Tên các bên chưa xong
 
+    # Phạm vi lô của lệnh (S-20): lệnh có thể trải trên nhiều lô ở nhiều cửa hàng.
+    batch_ids: list[int] = Field(
+        default_factory=list,
+        description="Danh sách ID các lô thuộc phạm vi lệnh thu hồi (S-20).",
+    )
+    batch_count: int = Field(
+        default=0,
+        description="Số lô thuộc phạm vi lệnh (1 với lệnh mở từ sự cố một lô ở S-19).",
+    )
+
 
 class RecallOrderConfirmResponse(BaseModel):
     """Kết quả sau khi một tổ chức xác nhận lệnh."""
@@ -590,6 +678,51 @@ class RecallOrderConfirmResponse(BaseModel):
     message: str
     event_id: int | None = None
     event_hash: str | None = None
+
+
+class BatchIncidentRequest(BaseModel):
+    """Dữ liệu client gửi lên khi cán bộ kiểm tra đánh dấu lô có sự cố (S-19).
+
+    Thao tác này mở ngay một lệnh thu hồi gắn với lô (lệnh có mã riêng) và ghi
+    sự kiện ``INCIDENT_FLAGGED`` vào chuỗi băm bất biến của lô.
+
+    Ví dụ::
+
+        {"reason": "Phát hiện dư lượng thuốc BVTV vượt ngưỡng"}
+
+    Bỏ trống ``target_organizations`` thì lệnh mặc định nhắm tới tổ chức đang giữ
+    lô (``batches.current_holder_org``).
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "reason": "Phát hiện dư lượng thuốc bảo vệ thực vật vượt ngưỡng cho phép",
+                "target_organizations": ["HTX Nông Sản 1"],
+            }
+        }
+    )
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Lý do đánh dấu lô có sự cố.",
+    )
+    title: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Tiêu đề lệnh thu hồi (bỏ trống sẽ tự sinh theo mã lô).",
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="Mô tả chi tiết và hướng dẫn xử lý.",
+    )
+    target_organizations: list[str] | None = Field(
+        default=None,
+        description="Các tổ chức phải xác nhận; bỏ trống thì mặc định là tổ chức đang giữ lô.",
+    )
 
 
 # ------------------------------------------------------------- Cold Chain ---
@@ -978,5 +1111,220 @@ class HandoverWorkflowResponse(HandoverResponse):
         examples=[["HANDOVER_ACCEPTED", "OWNER_CHANGED"]],
     )
 
+
+# ----------------------------------------------------------- Locations (S-18) ---
+_LOCATION_EXAMPLE = {
+    "id": 1,
+    "organization": "HTX Nông Nghiệp Số 4",
+    "name": "Cửa hàng Mỹ Xương",
+    "address": "Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp",
+}
+
+
+class LocationCreate(BaseModel):
+    """Dữ liệu client gửi lên khi khai báo địa điểm (``POST /locations``).
+
+    Địa điểm **thuộc tổ chức của người gọi** (lấy từ header ``X-Organization-Id``),
+    client không gửi ``organization`` - không thể khai báo địa điểm hộ tổ chức khác.
+
+    Ví dụ::
+
+        {"name": "Cửa hàng Mỹ Xương",
+         "address": "Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp"}
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Cửa hàng Mỹ Xương",
+                "address": "Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp",
+            }
+        },
+    )
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Tên địa điểm / cửa hàng - duy nhất trong một tổ chức.",
+        examples=["Cửa hàng Mỹ Xương"],
+    )
+    address: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Địa chỉ địa điểm (số nhà/ấp/xã/huyện/tỉnh).",
+        examples=["Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp"],
+    )
+
+    @field_validator("name", "address")
+    @classmethod
+    def _normalize_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Trường này không được để trống.")
+        return cleaned
+
+
+class LocationResponse(BaseModel):
+    """Dữ liệu API trả về cho một địa điểm (kèm ``id`` và tổ chức sở hữu)."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"example": _LOCATION_EXAMPLE},
+    )
+
+    id: int = Field(..., description="Mã định danh địa điểm.", examples=[1])
+    organization: str = Field(
+        ...,
+        description="Tổ chức sở hữu địa điểm (chỉ tổ chức này nhìn thấy địa điểm).",
+        examples=["HTX Nông Nghiệp Số 4"],
+    )
+    name: str = Field(..., description="Tên địa điểm / cửa hàng.")
+    address: str = Field(..., description="Địa chỉ địa điểm.")
+
+
+class BatchLocationTransferRequest(BaseModel):
+    """Dữ liệu client gửi lên khi chuyển một lô về một địa điểm.
+
+    Ví dụ::
+
+        {"location_id": 2}
+    """
+
+    model_config = ConfigDict(json_schema_extra={"example": {"location_id": 2}})
+
+    location_id: int = Field(
+        ...,
+        ge=1,
+        description="ID địa điểm (thuộc đúng tổ chức đang giữ lô).",
+        examples=[2],
+    )
+
+
+class LocationBatchesResponse(BaseModel):
+    """Kết quả tra cứu "lô nào đang nằm ở địa điểm này" phục vụ thu hồi.
+
+    Dùng cho ``GET /locations/{location_id}/batches``: nhà phân phối biết chính
+    xác địa điểm cần thu hồi cùng tổng khối lượng phải xử lý, thay vì rà soát
+    toàn bộ chuỗi cung ứng.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "location": _LOCATION_EXAMPLE,
+                "total_batches": 2,
+                "total_quantity": 120.5,
+                "batches": [],
+            }
+        }
+    )
+
+    location: LocationResponse = Field(..., description="Địa điểm đang được tra cứu.")
+    total_batches: int = Field(..., description="Số lô hiện có mặt tại địa điểm.")
+    total_quantity: float = Field(..., description="Tổng khối lượng (kg) đang nằm tại địa điểm.")
+    batches: list[BatchResponse] = Field(..., description="Danh sách lô hiện có mặt tại địa điểm.")
+
+
+# ------------------------------------------- Consume / Recall recovery plan (S-20) ---
+class ConsumeBatchRequest(BaseModel):
+    """Dữ liệu client gửi lên khi ghi nhận lô đã bán cho người tiêu dùng (S-20).
+
+    Bỏ trống ``quantity`` (hoặc không gửi body) = bán **hết** phần còn lại của lô,
+    giữ đúng hành vi cũ. Truyền ``quantity`` = bán **một phần**: phần còn lại vẫn
+    nằm trong kho để thu hồi, phần đã bán được cộng vào ``consumed_quantity``.
+
+    Ví dụ::
+
+        {"quantity": 60, "note": "Bán lẻ tại cửa hàng Mỹ Xương"}
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"quantity": 60, "note": "Bán lẻ tại cửa hàng"}}
+    )
+
+    quantity: float | None = Field(
+        default=None,
+        gt=0,
+        description="Khối lượng đã bán (kg); bỏ trống = bán hết phần còn lại của lô.",
+        examples=[60],
+    )
+    note: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Ghi chú cho lần bán (kênh bán, cửa hàng, hoá đơn...).",
+    )
+
+
+class RecallBatchResponse(BaseModel):
+    """Một lô trong phạm vi lệnh thu hồi, kèm chỗ đang để và khối lượng (S-20).
+
+    Nhà phân phối nhìn dòng này là biết **lô nào đang ở cửa hàng nào, còn bao
+    nhiêu để thu hồi và bao nhiêu đã ra thị trường** - không phải rà cả kho.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "batch_id": 12,
+                "batch_code": "LOT-0012",
+                "product_name": "Xoài Cát Chu",
+                "organization": "HTX Xoài Mỹ Xương",
+                "location_id": 3,
+                "location_name": "Cửa hàng Mỹ Xương",
+                "location_address": "Ấp Mỹ An, Xã Mỹ Xương, Đồng Tháp",
+                "remaining_quantity": 40.0,
+                "consumed_quantity": 60.0,
+                "total_quantity": 100.0,
+                "status": "available",
+                "is_recallable": True,
+            }
+        }
+    )
+
+    batch_id: int = Field(..., description="ID lô nông sản.")
+    batch_code: str = Field(..., description="Mã lô (mã in trên tem truy xuất).")
+    product_name: str = Field(..., description="Tên sản phẩm của lô.")
+    organization: str = Field(..., description="Tổ chức đang giữ lô.")
+    location_id: int | None = Field(default=None, description="ID địa điểm đang chứa lô.")
+    location_name: str | None = Field(default=None, description="Tên cửa hàng / kho đang chứa lô.")
+    location_address: str | None = Field(default=None, description="Địa chỉ địa điểm đang chứa lô.")
+    remaining_quantity: float = Field(..., description="Khối lượng còn lại, còn thu hồi được (kg).")
+    consumed_quantity: float = Field(..., description="Khối lượng đã bán cho người tiêu dùng (kg).")
+    total_quantity: float = Field(..., description="Tổng khối lượng của lô (kg).")
+    status: str = Field(..., description="Trạng thái lô: available hoặc consumed.")
+    is_recallable: bool = Field(..., description="Còn thu hồi được tại cửa hàng hay đã ra thị trường hết.")
+
+
+class RecallLocationGroupResponse(BaseModel):
+    """Nhóm lô thuộc lệnh theo **một địa điểm** - thu hồi đúng chỗ, không lục cả kho (S-20)."""
+
+    location_id: int | None = Field(default=None, description="ID địa điểm (null = lô chưa gắn địa điểm).")
+    location_name: str = Field(..., description="Tên cửa hàng / kho.")
+    location_address: str | None = Field(default=None, description="Địa chỉ địa điểm.")
+    batch_count: int = Field(..., description="Số lô của lệnh đang nằm tại địa điểm này.")
+    remaining_quantity: float = Field(..., description="Khối lượng còn thu hồi được tại địa điểm (kg).")
+    consumed_quantity: float = Field(..., description="Khối lượng đã ra thị trường từ địa điểm (kg).")
+
+
+class RecallRecoveryPlanResponse(BaseModel):
+    """Kế hoạch thu hồi của một lệnh: từng lô ở cửa hàng nào, còn/đã tiêu thụ bao nhiêu (S-20)."""
+
+    order_id: int = Field(..., description="ID lệnh thu hồi.")
+    order_code: str = Field(..., description="Mã lệnh thu hồi.")
+    status: str = Field(..., description="Trạng thái lệnh: IN_PROGRESS hoặc COMPLETED.")
+    total_batches: int = Field(..., description="Tổng số lô thuộc lệnh.")
+    recallable_batches: int = Field(..., description="Số lô còn hàng để thu hồi.")
+    consumed_batches: int = Field(..., description="Số lô đã bán hết, đã ra thị trường toàn bộ.")
+    total_quantity: float = Field(..., description="Tổng khối lượng của mọi lô trong lệnh (kg).")
+    recallable_quantity: float = Field(..., description="Khối lượng còn thu hồi được (kg).")
+    consumed_quantity: float = Field(..., description="Khối lượng đã ra thị trường (kg).")
+    recallable_ratio: str = Field(..., description='Tỷ lệ thu hồi được dạng "156/200" (kg còn lại / tổng).')
+    total_locations: int = Field(..., description="Số cửa hàng / kho phải cử người tới thu hồi.")
+    batches: list[RecallBatchResponse] = Field(..., description="Chi tiết từng lô trong lệnh.")
+    locations: list[RecallLocationGroupResponse] = Field(
+        ..., description="Các lô gom theo địa điểm để đi thu hồi từng chỗ một."
+    )
 
 

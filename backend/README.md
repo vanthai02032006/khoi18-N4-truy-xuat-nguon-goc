@@ -163,6 +163,14 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | POST | `/batches` | Tạo lô nông sản (kiểm tra `farm_id` tồn tại) | farmer **hoặc** admin | `201` · `401` · `404` farm không tồn tại · `422` dữ liệu sai |
 | PUT | `/batches/{batch_id}` | Cập nhật (thay thế) lô nông sản - đổi được `farm_id` nếu tồn tại | farmer **hoặc** admin | `200` · `401` · `404` lô/farm không tồn tại · `422` |
 | DELETE | `/batches/{batch_id}` | Xoá một lô nông sản | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy |
+| POST | `/locations` | Khai báo địa điểm / cửa hàng (tên + địa chỉ) cho tổ chức đang gọi | farmer **hoặc** admin | `201` · `401` · `409` trùng tên trong tổ chức · `422` dữ liệu sai |
+| GET | `/locations` | Danh sách địa điểm của **chính tổ chức đang gọi** | farmer **hoặc** admin | `200` · `401` |
+| GET | `/locations/{location_id}/batches` | Tra cứu lô đang nằm tại một địa điểm (thu hồi đúng cửa hàng) | farmer **hoặc** admin | `200` · `401` · `403` địa điểm của tổ chức khác · `404` không tìm thấy |
+| POST | `/batches/{batch_id}/location` | Ghi nhận lô đang ở địa điểm nào + ghi sự kiện `LOCATION_CHANGED` vào chuỗi | farmer **hoặc** admin | `200` · `400` lô đã tiêu thụ · `403` lô/địa điểm của tổ chức khác · `404` không tìm thấy · `409` lô đang bị thu hồi (kèm mã lệnh) |
+| POST | `/batches/{batch_id}/incident` | Đánh dấu lô có sự cố kèm lý do → mở lệnh thu hồi (mã riêng) + ghi sự kiện `INCIDENT_FLAGGED`; lô bị **đóng băng** không bàn giao/tách/gộp/chuyển địa điểm được nữa | **inspector hoặc admin** | `201` · `401` · `403` sai vai trò · `404` không tìm thấy lô · `409` lô đã có lệnh đang mở |
+| POST | `/batches/{batch_id}/consume` | Ghi nhận lô đã bán cho người tiêu dùng: bán một phần (`{"quantity": 60}`) hoặc bán hết (bỏ trống body) + sự kiện `BATCH_CONSUMED` | farmer **hoặc** admin | `200` · `400` lô đã tiêu thụ / bán vượt khối lượng còn lại · `403` lô của tổ chức khác · `404` không tìm thấy |
+| POST | `/orders` | Ban hành lệnh kiểm tra / thu hồi, nhận `batch_id`, `batch_ids` (nhiều lô) hoặc `product_name` (gom theo sản phẩm) | **inspector hoặc admin** | `201` · `400` phạm vi không hợp lệ · `404` lô không tồn tại · `422` |
+| GET | `/orders/{order_id}/recovery-plan` | **Kế hoạch thu hồi:** từng lô kèm tổ chức, địa điểm, khối lượng còn lại & đã tiêu thụ; tổng còn thu hồi được / đã ra thị trường; nhóm theo cửa hàng | đã đăng nhập | `200` · `401` · `404` không tìm thấy lệnh |
 | GET | `/users` | Danh sách tài khoản (không kèm mật khẩu) | **chỉ admin** | `200` · `401` · `403` sai vai trò |
 
 > ✅ **Sprint 5 hoàn thiện CRUD:** cả Farm và Batch đều có đủ `POST` / `GET` /
@@ -224,8 +232,23 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | `id` | INTEGER | Khoá chính, tự tăng |
 | `farm_id` | INTEGER | **Khoá ngoại → `farms.id`**, bắt buộc, có index |
 | `product_name` | VARCHAR(255) | Bắt buộc |
-| `quantity` | FLOAT | Bắt buộc, **> 0** (đơn vị kg) |
+| `quantity` | FLOAT | Bắt buộc, **≥ 0** (đơn vị kg; **khối lượng còn lại** - về 0 khi đã tiêu thụ hết) |
+| `consumed_quantity` | FLOAT | Bắt buộc, mặc định `0` - **khối lượng đã bán cho người tiêu dùng** (S-20) |
+| `status` | VARCHAR(20) | Bắt buộc: `available` (còn hàng) hoặc `consumed` (đã tiêu thụ) |
 | `harvest_date` | DATE | Bắt buộc, định dạng `yyyy-MM-dd` |
+
+`POST /batches/{batch_id}/consume` ghi nhận lô đã bán cho người tiêu dùng (S-20):
+
+- **Bán một phần** (`{"quantity": 60}`): `quantity` giảm còn phần để thu hồi,
+  `consumed_quantity` tăng lên phần đã ra thị trường, lô **vẫn** ở trạng thái
+  `available` vì còn hàng trong kho.
+- **Bán hết** (không gửi body hoặc bỏ trống `quantity`): `quantity` về 0 và
+  `status` chuyển sang `consumed`.
+
+Mỗi lần ghi nhận đều thêm sự kiện `BATCH_CONSUMED` (kèm `sold_quantity`,
+`total_consumed_quantity`, `remaining_quantity`) vào chuỗi sự kiện. Lô đã tiêu
+thụ không thể sửa, tách hoặc bàn giao. Lô đang có từ trước được tự động bổ sung
+trạng thái `available` và cột `consumed_quantity` khi khởi động ứng dụng.
 
 **Quan hệ:** `Farm 1 ---- N Batch`, khai báo 2 chiều trong `app/models.py` bằng
 `relationship(back_populates=...)`:
@@ -235,6 +258,219 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 
 Khi tạo lô, backend **kiểm tra `farm_id` có tồn tại trước khi ghi** → nếu không
 tìm thấy vùng trồng, API trả `404 Not Found` thay vì tạo dữ liệu mồ côi.
+
+### Cấu trúc bảng `locations` (S-18)
+
+| Cột | Kiểu | Ràng buộc |
+| --- | --- | --- |
+| `id` | INTEGER | Khoá chính, tự tăng |
+| `organization` | VARCHAR(100) | Bắt buộc, có index - **địa điểm thuộc tổ chức nào** |
+| `name` | VARCHAR(255) | Bắt buộc, có index - duy nhất trong một tổ chức (`uq_locations_org_name`) |
+| `address` | VARCHAR(255) | Bắt buộc |
+| `created_at` | DATETIME | Tự sinh khi khai báo |
+
+Bảng `batches` được bổ sung cột `current_location_id` (INTEGER, **khoá ngoại →
+`locations.id`**, `NULL` được): **địa điểm hiện tại của lô**. Lô chưa gắn địa
+điểm thì cột này `NULL` - xem quan hệ `Location 1 ---- N Batch`.
+
+> Database SQLite đã tồn tại từ trước được `_migrate_sqlite_schema()` (chạy
+> trong `init_db()`) tự động thêm cột `current_location_id` khi khởi động, nên
+> không cần xoá `ttcs.db` hay chạy script SQL thủ công.
+
+### Theo dõi vị trí lô & thu hồi theo địa điểm (S-18)
+
+Nhà phân phối có nhiều địa điểm trong hệ thống của mình; cần biết **lô đang nằm
+ở cửa hàng nào** để thu hồi đúng điểm bán thay vì rà soát cả chuỗi.
+
+| Tiêu chí | Cách hệ thống đáp ứng |
+| --- | --- |
+| Khai báo địa điểm (tên + địa chỉ) thì địa điểm thuộc tổ chức tôi | `POST /locations` tự gán `organization` = tổ chức gọi request; tên địa điểm duy nhất **trong tổ chức** (`409` nếu trùng); `GET /locations` chỉ trả địa điểm của tổ chức đang gọi |
+| Chuyển một lô về một địa điểm thì lô ghi rõ địa điểm hiện tại và sự kiện được ghi vào chuỗi | `POST /batches/{batch_id}/location` cập nhật `current_location_id` (kèm `current_location_name`/`current_location_address` trong mọi response lô) và ghi sự kiện `LOCATION_CHANGED` (từ địa điểm nào → đến địa điểm nào) vào chuỗi băm bất biến |
+| Chia một lô cho nhiều cửa hàng thì đó là phép tách ở S-17 với mỗi lô con gắn một địa điểm | `POST /batches/{batch_id}/split` nhận thêm `location_id` **trên từng dòng** lô con (S-17): mỗi lô con gắn địa điểm của nó, sự kiện `SPLIT` ghi kèm địa điểm từng lô con; bỏ trống thì lô con giữ địa điểm hiện tại của lô mẹ |
+
+**Tra cứu thu hồi:** `GET /locations/{location_id}/batches` trả địa điểm + tổng
+số lô + tổng khối lượng + danh sách lô đang nằm tại đó:
+
+```json
+{
+  "location": {"id": 2, "organization": "HTX Nông Nghiệp Số 4",
+               "name": "Cửa hàng Sa Đéc", "address": "Số 5 Trần Hưng Đạo, TP Sa Đéc"},
+  "total_batches": 1,
+  "total_quantity": 5.0,
+  "batches": [{"id": 13, "batch_code": "LOT-20261014-CUFE", "quantity": 5.0,
+               "current_location_id": 2, "current_location_name": "Cửa hàng Sa Đéc"}]
+}
+```
+
+**Cách ly đa tổ chức:** địa điểm của tổ chức khác trả `403 Forbidden` (không xem
+chéo dữ liệu); lô đang do tổ chức khác nắm giữ cũng không di chuyển được (`403`),
+lô đã tiêu thụ (`consumed`) không di chuyển được (`400`).
+
+### Đánh dấu sự cố & mở lệnh thu hồi ngay trên lô (S-19)
+
+Cán bộ kiểm tra phát hiện lô có vấn đề thì cần **đánh dấu lô có sự cố** và **mở
+ngay lệnh thu hồi** để khởi động quy trình xử lý, thay vì phải nhập tay danh sách
+bên liên quan như `POST /orders`.
+
+| Tiêu chí | Cách hệ thống đáp ứng |
+| --- | --- |
+| Đánh dấu lô có sự cố kèm lý do thì lệnh thu hồi được tạo với mã riêng và sự kiện được ghi vào chuỗi của lô | `POST /batches/{batch_id}/incident` tạo `RecallOrder` (`order_code` dạng `ORD-REC-0001`, `status="IN_PROGRESS"`) gắn `batch_id`, rồi ghi sự kiện `INCIDENT_FLAGGED` (kèm `order_code`) vào chuỗi băm bất biến qua `record_event`. Bỏ trống `target_organizations` thì mặc định nhắm **tổ chức đang giữ lô** (`batches.current_holder_org`) |
+| Vai trò khác thử mở lệnh thu hồi thì bị `403` | Endpoint dùng dependency `require_inspector` → `farmer` nhận `403`, chưa đăng nhập nhận `401` |
+| Lô đã có lệnh đang mở thì mở lệnh mới bị chặn và trỏ tới lệnh đang mở | Trước khi tạo, hệ thống tìm lệnh `IN_PROGRESS` của lô; nếu đã có thì trả `409` kèm `open_order_id`, `open_order_code`, `open_order_status` trong `detail` |
+
+Ví dụ phản hồi `409`:
+
+```json
+{
+  "detail": {
+    "message": "Lô #13 đã có lệnh thu hồi đang mở (ORD-REC-0001). Hãy hoàn tất lệnh đó trước khi mở lệnh mới.",
+    "open_order_id": 1,
+    "open_order_code": "ORD-REC-0001",
+    "open_order_status": "IN_PROGRESS"
+  }
+}
+```
+
+Nghiệp vụ dùng chung (`build_order_response`, `generate_unique_order_code`,
+`find_open_order_for_batch`, `open_recall_order_for_batch`) được gom trong
+`app/recall_orders.py` để cả `POST /orders` và S-19 dùng chung một nguồn.
+
+**Kiểm thử:** [`tests/test_batch_incident_recall.py`](../tests/test_batch_incident_recall.py)
+— 7 ca bám sát 3 tiêu chí nghiệm thu kèm các ca biên (`401`, `403`, `404`, `409`,
+mở lệnh mới sau khi lệnh cũ đã hoàn tất).
+
+### Kế hoạch thu hồi theo lô & cửa hàng (S-20)
+
+Nhà phân phối phải đi thu hồi **đúng chỗ**, nên khi mở một lệnh thu hồi gồm nhiều
+lô, cần thấy từng lô **đang ở cửa hàng nào, còn bao nhiêu để thu hồi và bao nhiêu
+đã ra thị trường** - thay vì rà soát cả kho.
+
+| Tiêu chí | Cách hệ thống đáp ứng |
+| --- | --- |
+| Lệnh thu hồi có 20 lô, khi xem thì mỗi lô kèm tổ chức, địa điểm, khối lượng còn lại và khối lượng đã tiêu thụ | `POST /orders` nhận **`batch_ids`** (nhiều lô) hoặc **`product_name`** (gom mọi lô cùng sản phẩm); mỗi cặp (lệnh, lô) lưu vào bảng **`recall_order_batches`** và ghi sự kiện `RECALL_ISSUED` vào chuỗi băm của **từng lô**. `GET /orders/{id}/recovery-plan` trả `batches[]` với `organization` (tổ chức đang giữ), `location_name`/`location_address` (địa điểm hiện tại), `remaining_quantity` (còn lại) và `consumed_quantity` (đã tiêu thụ) |
+| Một phần đã bán cho người tiêu dùng, khi xem tổng thì thấy rõ bao nhiêu còn thu hồi được và bao nhiêu đã ra thị trường | `POST /batches/{id}/consume` nay nhận `{"quantity": n}` để ghi **bán một phần** (cộng dồn vào `batches.consumed_quantity`, phần còn lại vẫn để thu hồi). Kế hoạch thu hồi trả `recallable_quantity` / `consumed_quantity` / `total_quantity` kèm `recallable_ratio` dạng `"1835/2000"` và `consumed_batches` (số lô đã bán hết, hết đường thu hồi) |
+| Đi thu hồi đúng chỗ thay vì lục cả kho | `locations[]` trong phản hồi gom các lô của lệnh **theo từng địa điểm** (số lô, kg còn thu hồi được, kg đã bán), sắp xếp A→Z theo tên cửa hàng |
+
+Ví dụ `GET /orders/3/recovery-plan`:
+
+```json
+{
+  "order_id": 3, "order_code": "ORD-REC-0003", "status": "IN_PROGRESS",
+  "total_batches": 20, "recallable_batches": 19, "consumed_batches": 1,
+  "total_quantity": 2000.0,
+  "recallable_quantity": 1835.0,
+  "consumed_quantity": 165.0,
+  "recallable_ratio": "1835/2000",
+  "total_locations": 3,
+  "batches": [
+    {"batch_id": 12, "batch_code": "LOT-0012", "product_name": "Xoài Cát Chu",
+     "organization": "HTX Nông Nghiệp Số 4", "location_id": 1,
+     "location_name": "Cửa hàng Mỹ Xương", "location_address": "Ấp Mỹ An, Xã Mỹ Xương, Đồng Tháp",
+     "remaining_quantity": 60.0, "consumed_quantity": 40.0, "total_quantity": 100.0,
+     "status": "available", "is_recallable": true}
+  ],
+  "locations": [
+    {"location_id": 1, "location_name": "Cửa hàng Mỹ Xương", "location_address": "Ấp Mỹ An, Xã Mỹ Xương, Đồng Tháp",
+     "batch_count": 8, "remaining_quantity": 760.0, "consumed_quantity": 40.0}
+  ]
+}
+```
+
+**Ràng buộc & lỗi:** `batch_ids` có ID không tồn tại hoặc `product_name` không khớp
+lô nào → `400` kèm danh sách/tên không tìm thấy; bán vượt khối lượng còn lại → `400`;
+kế hoạch thu hồi yêu cầu đăng nhập (`401`) và trả `404` nếu lệnh không tồn tại.
+Lệnh cũ hoặc lệnh mở từ sự cố một lô (S-19) vẫn xem được kế hoạch với đúng lô đó
+(không cần migrate dữ liệu: `load_order_batches` đọc bảng liên kết, thiếu thì lấy `batch_id`).
+
+Khi lệnh hoàn tất (bên cuối cùng xác nhận), sự kiện `RECALL_COMPLETED` cũng được
+ghi vào chuỗi băm của **mọi lô** thuộc lệnh - nhờ vậy hồ sơ neo đúng ở từng cửa hàng.
+
+**Kiểm thử:** [`tests/test_recall_recovery_plan.py`](../tests/test_recall_recovery_plan.py)
+— 10 ca bám sát 2 tiêu chí nghiệm thu (lệnh 20 lô ở 3 cửa hàng, bán một phần/bán hết,
+gom theo tên sản phẩm, sự kiện ghi cho từng lô) kèm các ca chặn (`400`, `401`, `404`).
+
+### Đóng băng lô đang bị thu hồi (S-21)
+
+Cán bộ kiểm tra cần lô **đang bị thu hồi không di chuyển được nữa** để vùng ảnh
+hưởng không lan rộng trong lúc xử lý: mọi phép bàn giao / tách / gộp / chuyển địa
+điểm trên lô đều bị chặn kèm **mã lệnh thu hồi**.
+
+| Tiêu chí | Cách hệ thống đáp ứng |
+| --- | --- |
+| Lô nằm trong lệnh thu hồi **đang mở**, khi ai đó bàn giao, tách hoặc gộp nó thì bị chặn kèm mã lệnh thu hồi | `resolve_recall_lock` tìm lệnh `IN_PROGRESS` bao phủ lô (lô chính của lệnh S-19 **hoặc** lô trong bảng `recall_order_batches` của lệnh S-20) rồi trả `409` với `detail` nêu mã lệnh: `"Lô #13 đang nằm trong lệnh thu hồi ORD-REC-0001 (đang xử lý) nên không thể bàn giao. Hãy hoàn tất xử lý thu hồi trước khi di chuyển lô."` |
+| Lệnh **đã hoàn tất**, khi thao tác thì vẫn bị chặn vì lô đã được đánh dấu có sự cố | Lô vào phạm vi lệnh (đánh dấu sự cố ở S-19 hoặc gắn vào lệnh nhiều lô ở S-20) được ghi cờ `batches.incident_flagged` kèm `incident_order_id`/`incident_order_code`/`incident_flagged_at`; cờ **không tự xoá** khi lệnh hoàn tất nên thao tác vẫn nhận `409`: `"Lô #13 đã được đánh dấu có sự cố theo lệnh thu hồi ORD-REC-0001 nên không thể tách lô."` |
+
+**Áp dụng cho:** `POST /batches/{id}/handover/initiate`, `POST /batches/{id}/handover/accept`,
+`POST /handovers` (tạo phiếu bàn giao theo luồng S-35), `POST /handovers/{id}/accept`,
+`POST /batches/{id}/split`, `POST /batches/merge` (chặn nếu **bất kỳ** lô mẹ nào bị
+đóng băng) và `POST /batches/{id}/location`.
+
+Luật đóng băng nằm ở **một chỗ duy nhất** - `app.recall_orders.ensure_batch_movable()`
+(trả `409` kèm mã lệnh) - và được cả `app/routers/batches.py` lẫn
+`app/routers/handovers.py` gọi, nên không lách được bằng cách đổi sang đường API
+bàn giao còn lại; phiếu bàn giao tạo **trước** khi lô bị đưa vào lệnh cũng không
+tiếp nhận được.
+
+**Không chặn:** `POST /batches/{id}/handover/reject` và `POST /handovers/{id}/reject`
+(lô không di chuyển, chỉ dọn trạng thái chờ để bên nhận trả lô về bên giao) và
+`POST /batches/{id}/consume` (S-20 vẫn cần theo dõi phần đã bán). Lô chưa từng vào
+lệnh thu hồi giữ nguyên hành vi cũ.
+
+`GET /batches/{id}` (và mọi phản hồi lô) trả thêm `incident_flagged`,
+`incident_order_id`, `incident_order_code`, `incident_flagged_at` để giao diện chặn
+thao tác trước khi gọi API. DB cũ được `_migrate_sqlite_schema()` thêm cột và dựng
+lại cờ từ sự kiện `INCIDENT_FLAGGED`/`RECALL_ISSUED` đã có.
+
+**Kiểm thử:** [`tests/test_recall_batch_lock.py`](../tests/test_recall_batch_lock.py)
+— 10 ca bám sát 2 tiêu chí nghiệm thu (lệnh đang mở chặn kèm mã lệnh, đóng băng cả
+phạm vi lệnh nhiều lô, lệnh đã hoàn tất vẫn chặn, bàn giao đang chờ không hoàn tất
+được, chặn trên cả đường API bàn giao cũ `POST /handovers`) kèm ca biên: thao tác bị
+chặn không đổi khối lượng / người giữ / địa điểm / chuỗi sự kiện, và lô ngoài phạm
+vi lệnh vẫn di chuyển bình thường.
+
+### Kịch bản thu hồi mẫu & đáp án đếm tay (S-22)
+
+Kịch bản mẫu dùng để **kiểm thuật toán liệt kê thu hồi** (`app/recall_enumeration.py`)
+bằng một **đáp án đếm tay độc lập**, thay vì chỉ tin vào kết quả do chính mã nguồn sinh ra.
+
+| Tiêu chí | Cách hệ thống đáp ứng |
+| --- | --- |
+| Chạy script xong thì có đồ thị **bốn tầng qua ba tổ chức**, có ít nhất một lô **gộp từ nhiều nguồn** và một lô **đã tiêu thụ** | `scripts/seed_recall_sample.py` dựng 18 lô bằng chính `split_batch()` / `merge_batches()` của ứng dụng: tầng 1 gồm `LOT-S22-A1..A3` (1000 kg/lô) ở `HTX Xoai My Xuong` → tầng 2 gồm sáu lô sơ chế `B11..B32` → tầng 3 gồm ba lô gộp `M1 = B11 + B21`, `M2 = B12 + B31`, `M3 = B22 + B32` ở `Cong Ty Che Bien Mekong` → tầng 4 gồm sáu lô thành phẩm ở `Chuoi Sieu Thi Xanh`; `LOT-S22-F12` bán hết (trạng thái `consumed`) và `LOT-S22-F22` bán một phần 50 kg. |
+| Tra lô gốc trong tệp đáp án thì thấy danh sách hậu duệ và khối lượng còn lại từng lô, do **hai người đếm độc lập** | `data/recall_benchmark.json` ghi cho từng lô gốc (`LOT-S22-A1..A3`) phần `descendants` kèm `remaining_quantity` / `consumed_quantity` / `is_recallable` / `depth`, cùng hai bảng đếm riêng `hand_count_sheets.counter_1` và `hand_count_sheets.counter_2`; thuật toán phải khớp 100% phần `ground_truth_recall_scope`. |
+
+**Thuật toán:** `enumerate_recall_scope(root_code, relations, facts)` là **hàm thuần**
+(chỉ cần quan hệ cha-con + số liệu từng lô) nên kiểm được độc lập với CSDL; hàm duyệt BFS
+xuôi từ lô gốc, trong cùng tầng sắp theo mã lô nên thứ tự ổn định và so được từng dòng với
+đáp án. `build_recall_scope(db, root_batch)` là bản đọc CSDL: hợp cạnh **gộp**
+(`batch_relations` của T-44) và cạnh **tách** (`batches.parent_id`) rồi trả `RecallScope`
+(lô gốc + hậu duệ + tổng còn thu hồi được / tổng đã ra thị trường).
+
+```powershell
+# Dựng kịch bản mẫu vào backend/ttcs.db (script tự chặn nếu APP_ENV là production/prod/live)
+cd backend
+.\.venv\Scripts\python.exe scripts\seed_recall_sample.py
+
+# Hoặc dựng vào một file CSDL tạm để không đụng backend/ttcs.db
+$env:TTCS_DATABASE_URL='sqlite:///C:/tmp/ttcs_seed.db'
+.\.venv\Scripts\python.exe scripts\seed_recall_sample.py
+```
+
+**Kiểm thử:** [`tests/test_recall_enumeration_benchmark.py`](../tests/test_recall_enumeration_benchmark.py)
+— 10 ca bám sát 2 tiêu chí nghiệm thu (đồ thị 4 tầng/3 tổ chức khớp đáp án, có lô gộp nhiều
+nguồn, có lô đã tiêu thụ; thuật toán khớp 100% đáp án theo **cả** đường đọc CSDL **lẫn**
+đường hàm thuần) kèm ca bảo toàn khối lượng (2800 kg còn lại + 200 kg đã bán = 3000 kg thu
+hoạch), chạy lại script không nhân đôi dữ liệu, và ca biên (lô cuối chuỗi không có hậu duệ,
+thiếu số liệu lô gốc → `ValueError`).
+
+**Kiểm thử đường dòng lệnh:**
+[`tests/test_seed_recall_sample_cli.py`](../tests/test_seed_recall_sample_cli.py) — 7 ca chạy
+`scripts/seed_recall_sample.py` như **tiến trình riêng** với CSDL trỏ về file tạm qua
+`TTCS_DATABASE_URL`, nên kiểm được đúng thứ mà tiêu chí nghiệm thu số 1 nói tới là **chạy
+script**: đồ thị 4 tầng/3 tổ chức trong CSDL khớp đáp án (18 lô, 3 tổ chức, lô gộp đúng hai
+nguồn trong `batch_relations`, `LOT-S22-F12` bán hết), phần script **in ra** khớp 100% đáp
+án đếm tay của cả ba lô gốc (mã lô hậu duệ, thứ tự tầng, khối lượng còn lại/đã bán, tổng còn
+thu hồi được), chạy lại lần hai cho **cùng kết quả**, và script **từ chối chạy** khi
+`APP_ENV=production/prod/live` hoặc `IS_PRODUCTION=true` (mã thoát `1`, không tạo file CSDL).
 
 ### Cấu trúc bảng `users` (Sprint 4)
 
@@ -486,7 +722,7 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | File | Vai trò |
 | --- | --- |
 | `app/main.py` | Entrypoint: tạo `FastAPI(...)`, cấu hình CORS, dùng `lifespan` để gọi `init_db()` khi server start, và `include_router` để gom các endpoint. Khi mở rộng, chỉ cần thêm 1 dòng `app.include_router(...)`. |
-| `app/database.py` | Tầng hạ tầng dữ liệu: tạo `engine` kết nối SQLite (`check_same_thread=False` vì FastAPI có thể xử lý request trên thread khác — tham số này chỉ dành riêng cho SQLite), `SessionLocal` để mở session mỗi request, `Base` (DeclarativeBase) cho mọi model, `get_db()` (dependency đóng session tự động), `init_db()` (tạo bảng từ metadata) và `seed_default_users()` (tạo 2 tài khoản demo `admin`/`farmer` nếu chưa có). |
+| `app/database.py` | Tầng hạ tầng dữ liệu: tạo `engine` kết nối SQLite (`check_same_thread=False` vì FastAPI có thể xử lý request trên thread khác — tham số này chỉ dành riêng cho SQLite), `SessionLocal` để mở session mỗi request, `Base` (DeclarativeBase) cho mọi model, `get_db()` (dependency đóng session tự động), `init_db()` (tạo bảng từ metadata) và `seed_default_users()` (tạo 2 tài khoản demo `admin`/`farmer` nếu chưa có). `DATABASE_URL` mặc định trỏ `backend/ttcs.db`, có thể trỏ sang CSDL khác bằng biến môi trường **`TTCS_DATABASE_URL`** (dùng khi chạy seed/test trên file tạm mà không đụng dữ liệu local). |
 | `app/models.py` | Nơi khai báo bảng ORM (SQLAlchemy 2.0 style: `Mapped` + `mapped_column`). Hiện có: `Farm` → bảng `farms` (`id`, `name`, `location`, `area`, `owner`) và `Batch` → bảng `batches` (`id`, `farm_id` FK → `farms.id`, `product_name`, `quantity`, `harvest_date`) với quan hệ 2 chiều `Farm 1-N Batch` (`farm.batches` ↔ `batch.farm`), cùng `User` → bảng `users` (`id`, `username` unique, `password` = hash SHA-256, `role`) kèm hằng số `ROLE_ADMIN`/`ROLE_FARMER`. Thêm bảng mới ở đây thì `init_db()` sẽ tự tạo. |
 | `app/schemas.py` | Pydantic models mô tả dữ liệu request/response: `HealthResponse`, `FarmCreate`/`FarmResponse`, `BatchCreate`/`BatchResponse` (`farm_id > 0`, chuỗi không rỗng, `quantity > 0`, `harvest_date` kiểu `date`). `*Response` dùng `from_attributes=True` để trả thẳng ORM object kèm `id`; Sprint 4 bổ sung `LoginRequest` (`username`, `password`), `LoginResponse` (`username`, `role`) và `UserResponse` (**không** có trường `password`); Sprint 5 bổ sung `FarmUpdate`/`BatchUpdate` (kế thừa `*Create` để dùng lại validate, phục vụ `PUT`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`). Tách khỏi `models.py` để không lộ cấu trúc bảng ra API. |
 | `app/security.py` | **Sprint 4** — xác thực & phân quyền *không JWT*: `hash_password()` / `verify_password()` (SHA-256 + `hmac.compare_digest`, chỉ dùng thư viện chuẩn), `authenticate_user()` (tra bảng `users`), `basic_scheme = HTTPBasic(auto_error=False)` và 3 dependency: `get_current_user()` (**401** nếu thiếu/sai thông tin đăng nhập), `require_admin()` (**403** nếu không phải admin), `require_farmer()` (cho cả farmer và admin). Router chỉ cần thêm `user = Depends(require_admin)` là đã có phân quyền. |
@@ -497,6 +733,9 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | `app/routers/batches.py` | Router module Batch - **CRUD đầy đủ**: `POST /batches` (**404** nếu `farm_id` không tồn tại — kiểm tra bằng `db.get(Farm, ...)` trước khi ghi), `GET /batches` (danh sách, sắp theo `id`), `GET /batches/{batch_id}` (**404** nếu không thấy), `PUT /batches/{batch_id}` (Sprint 5 - kiểm tra lại `farm_id` mới trước khi ghi) và `DELETE /batches/{batch_id}` (Sprint 5 - **chỉ admin**). |
 | `app/routers/__init__.py` | Gom và export các router con để `main.py` import ngắn gọn (`from app.routers import auth, batches, farms, health, users`). |
 | `app/__init__.py` | Đánh dấu `app` là package Python; khai báo `__version__ = "0.2.0"` dùng cho metadata Swagger. |
+| `app/recall_enumeration.py` | **S-22** — thuật toán liệt kê phạm vi thu hồi: `enumerate_recall_scope()` (hàm thuần, BFS xuôi từ lô gốc, trả từng hậu duệ kèm `remaining_quantity`/`consumed_quantity`/`depth`/`organization`, cùng tầng sắp theo mã lô), `build_recall_scope()` (đọc CSDL: hợp `batch_relations` + `batches.parent_id`), `load_lineage_relations()`, `load_batch_facts()` và dataclasses `RecallBatchFact`/`RecallScopeEntry`/`RecallScope` (kèm tổng còn thu hồi được / đã ra thị trường). |
+| `scripts/seed_recall_sample.py` | **S-22** — dựng kịch bản thu hồi mẫu 4 tầng qua 3 tổ chức (18 lô, 6 quan hệ gộp nhiều nguồn, 1 lô đã tiêu thụ) bằng chính `split_batch()`/`merge_batches()`, tự dọn dữ liệu mẫu cũ trước khi dựng lại (idempotent), chặn chạy trên môi trường production và in phạm vi thu hồi của từng lô gốc để đối chiếu đáp án. |
+| `data/recall_benchmark.json` | **S-22** — đáp án đếm tay: cấu trúc đồ thị mẫu (4 tầng/3 tổ chức/quan hệ), `ground_truth_recall_scope` cho từng lô gốc (danh sách hậu duệ + khối lượng còn lại + tầng + tổ chức) và hai bảng đếm độc lập của hai người (`hand_count_sheets`). |
 | `requirements.txt` | Ghim phiên bản thư viện: `fastapi`, `uvicorn[standard]`, `SQLAlchemy`, `pydantic` — đảm bảo cả nhóm cài ra môi trường giống nhau. **Sprint 4 không thêm thư viện nào**: băm mật khẩu dùng `hashlib`/`hmac` có sẵn, xác thực dùng `fastapi.security.HTTPBasic` của FastAPI. |
 | `.gitignore` | Bỏ qua `.venv/`, `__pycache__/`, `*.db`... để không commit rác và dữ liệu local. |
 
@@ -556,4 +795,8 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 3 | Module **Batch** (quản lý lô nông sản): model `Batch` → bảng `batches` (FK `farm_id` → `farms.id`, quan hệ `Farm 1 ---- N Batch`), schemas `BatchCreate`/`BatchResponse`, router `app/routers/batches.py` với `POST /batches` (**201**, trả **404** nếu `farm_id` không tồn tại), `GET /batches` (**200**) và `GET /batches/{batch_id}` (**200**/**404**). `GET /health`, `POST /farms`, `GET /farms` giữ nguyên. |
 | Sprint 4 | **Đăng nhập + phân quyền cơ bản (không JWT):** model `User` → bảng `users` (`username` unique, mật khẩu băm SHA-256, `role`), `seed_default_users()` tạo sẵn `admin`/`farmer` (mật khẩu `123456`); module `app/security.py` với `hash_password`/`verify_password`/`authenticate_user` và dependency `get_current_user` (**401**), `require_admin` (**403**), `require_farmer`; router `POST /auth/login` (**200**/**401**) và `GET /users` (**200**, chỉ admin); áp `require_farmer` cho `GET /farms`, `POST /farms`, `POST /batches`. Cơ chế xác thực là **HTTP Basic** (Swagger có nút **Authorize**), không token/refresh token. |
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
-
+| S-18 | **Địa điểm / cửa hàng & vị trí hiện tại của lô:** model `Location` → bảng `locations` (`organization`, `name`, `address`; tên duy nhất trong một tổ chức) và cột `batches.current_location_id` (FK → `locations.id`, tự migrate cho DB cũ); router mới `app/routers/locations.py` với `POST /locations`, `GET /locations` (chỉ địa điểm của tổ chức đang gọi), `GET /locations/{id}/batches` (tra cứu thu hồi theo cửa hàng); `POST /batches/{batch_id}/location` ghi địa điểm hiện tại + sự kiện `LOCATION_CHANGED`; `POST /batches/{batch_id}/split` (S-17) nhận `location_id` trên từng dòng lô con. Frontend: tab **ĐỊA ĐIỂM**, bảng địa điểm, khối tra cứu thu hồi, cột địa điểm hiện tại trong bảng lô, modal **Chuyển lô về địa điểm** và cột chọn địa điểm trong modal tách lô. |
+| S-19 | **Đánh dấu lô có sự cố & mở lệnh thu hồi (3 SP):** endpoint `POST /batches/{batch_id}/incident` (dependency `require_inspector` → `403` với vai trò khác) tạo `RecallOrder` mã riêng (`ORD-REC-xxxx`) gắn lô + ghi sự kiện `INCIDENT_FLAGGED` vào chuỗi băm; chặn mở trùng bằng `409` kèm mã lệnh đang mở. Gom nghiệp vụ dùng chung vào module mới `app/recall_orders.py` (`build_order_response`, `generate_unique_order_code`, `find_open_order_for_batch`, `open_recall_order_for_batch`); hằng số `EVENT_TYPE_INCIDENT_FLAGGED`; schema `BatchIncidentRequest`. Frontend: nút **Đánh dấu sự cố** trên bảng lô và nhánh hiển thị sự kiện `INCIDENT_FLAGGED` trong dòng thời gian. |
+| S-20 | **Kế hoạch thu hồi theo lô & cửa hàng (3 SP):** model `RecallOrderBatch` → bảng `recall_order_batches` (lệnh N-N lô) và cột `batches.consumed_quantity` (khối lượng đã bán ra thị trường, tự migrate + khôi phục từ sự kiện `BATCH_CONSUMED` cho DB cũ); `POST /orders` nhận `batch_ids`/`product_name` để gom phạm vi và ghi `RECALL_ISSUED` vào chuỗi băm của **từng lô** (khi hoàn tất cũng ghi `RECALL_COMPLETED` cho từng lô); endpoint mới `GET /orders/{order_id}/recovery-plan` trả từng lô kèm tổ chức, địa điểm, khối lượng còn lại/đã tiêu thụ, phần tổng hợp còn thu hồi được vs đã ra thị trường và nhóm theo địa điểm; `POST /batches/{batch_id}/consume` nhận `{"quantity": n}` để ghi **bán một phần**; `EVENT_TYPE_RECALL_ISSUED`, các schema `ConsumeBatchRequest`, `RecallBatchResponse`, `RecallLocationGroupResponse`, `RecallRecoveryPlanResponse`. Frontend: cột **Còn lại / Đã bán** trong bảng lô và bảng tra cứu thu hồi, ô nhập phạm vi nhiều lô/tên sản phẩm khi ban hành lệnh, khối **Kế hoạch thu hồi** trong modal chi tiết lệnh (thẻ tổng + bảng từng lô + gom theo cửa hàng), modal **Ghi nhận bán** (nhập khối lượng bán một phần + ghi chú) và thẻ sự kiện `BATCH_CONSUMED` hiển thị rõ đã bán / còn lại. |
+| S-21 | **Đóng băng lô đang bị thu hồi (2 SP):** cột `batches.incident_flagged` + `incident_order_id`/`incident_order_code`/`incident_flagged_at` (tự migrate cho DB cũ, dựng lại cờ từ sự kiện `INCIDENT_FLAGGED`/`RECALL_ISSUED`); `resolve_recall_lock` (module `app/recall_orders.py`) + `find_open_order_for_batch` nay nhận cả lô nằm trong bảng liên kết `recall_order_batches` của lệnh nhiều lô; `POST /batches/{id}/handover/initiate`, `.../handover/accept`, `.../split`, `POST /batches/merge` và `POST /batches/{id}/location` trả `409` kèm **mã lệnh thu hồi** khi lô đang bị đóng băng (lệnh đang mở, hoặc lệnh đã hoàn tất nhưng lô vẫn mang dấu sự cố); `BatchResponse` trả thêm các trường dấu sự cố để giao diện chặn thao tác. Frontend: huy hiệu **Đang thu hồi** (kèm mã lệnh) trong bảng lô, khoá nút **Tách** / **Vị trí**, ô tích gộp lô và lựa chọn bàn giao của lô đang bị thu hồi. |
+| S-22 | **Kịch bản thu hồi mẫu & đáp án đếm tay (2 SP):** module mới `app/recall_enumeration.py` với `enumerate_recall_scope()` (hàm thuần, BFS xuôi từ lô gốc, trả từng hậu duệ kèm khối lượng còn lại/đã bán/tầng/tổ chức, cùng tầng sắp theo mã lô) và `build_recall_scope()` (đọc CSDL, hợp cạnh gộp `batch_relations` + cạnh tách `batches.parent_id`); script mới `scripts/seed_recall_sample.py` dựng đồ thị mẫu 4 tầng qua 3 tổ chức bằng chính `split_batch()`/`merge_batches()` (18 lô, 6 quan hệ gộp nhiều nguồn, `LOT-S22-F12` bán hết, `LOT-S22-F22` bán một phần), tự dọn dữ liệu mẫu cũ trước khi dựng lại và in phạm vi thu hồi để so tay; tệp đáp án mới `data/recall_benchmark.json` ghi cấu trúc đồ thị, `ground_truth_recall_scope` cho từng lô gốc và **hai bảng đếm độc lập của hai người**; bộ test mới `tests/test_recall_enumeration_benchmark.py` (10 ca) kiểm kịch bản mẫu khớp đáp án 100% theo cả đường CSDL lẫn đường hàm thuần, kèm bảo toàn khối lượng và ca biên. Bổ sung: `app/database.py` đọc `TTCS_DATABASE_URL` để trỏ CSDL sang file khác (mặc định vẫn là `backend/ttcs.db`) và bộ test đường dòng lệnh mới `tests/test_seed_recall_sample_cli.py` (7 ca) chạy script như tiến trình riêng trên CSDL tạm — kiểm đồ thị trong CSDL khớp đáp án, phần script in ra khớp 100% đáp án đếm tay của cả ba lô gốc, chạy lại cho cùng kết quả, và script từ chối chạy trên môi trường dữ liệu thật. |
