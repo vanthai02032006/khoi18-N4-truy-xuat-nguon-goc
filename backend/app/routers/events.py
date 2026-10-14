@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -9,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Batch, BatchEvent, Organization, User
 from app.schemas import BatchEventCreate, BatchEventResponse, BatchTimelineResponse
-from app.services.authorization_service import can_user_view_batch
+from app.services.authorization_service import can_user_view_batch, history_cutoff_handover_id
 from app.tenant import require_tenant_context
 from app.security import compute_event_hash, get_current_user, require_farmer
 from app.tenant import scope_query_by_tenant
@@ -131,6 +133,26 @@ def get_batch_timeline(
     # Thực thi đúng 1 câu lệnh SQL duy nhất
     rows = db.execute(stmt).all()
 
+    # S-23 AC3: lô đã bàn giao đi khỏi tổ chức người xem -> chỉ hiện tới lúc bàn giao.
+    truncated = False
+    batch_obj = db.get(Batch, batch_id)
+    cutoff_id = history_cutoff_handover_id(db, current_user, batch_obj, request_org) if batch_obj else None
+    if cutoff_id is not None:
+        last_idx = None
+        for i, row in enumerate(rows):
+            ev = row[0]
+            if ev.event_type not in ("HANDOVER_ACCEPTED", "OWNER_CHANGED"):
+                continue
+            try:
+                data = json.loads(ev.payload) if isinstance(ev.payload, str) else (ev.payload or {})
+            except (TypeError, ValueError):
+                data = {}
+            if isinstance(data, dict) and data.get("handover_id") == cutoff_id:
+                last_idx = i
+        if last_idx is not None and last_idx < len(rows) - 1:
+            rows = rows[: last_idx + 1]
+            truncated = True
+
     # Chuyển đổi kết quả sang BatchEventResponse kèm organization_name
     events_response: list[BatchEventResponse] = []
     is_valid = True
@@ -199,6 +221,7 @@ def get_batch_timeline(
         limit=effective_limit,
         offset=offset,
         events=events_response,
+        truncated_after_handover=truncated,
     )
 
 

@@ -452,6 +452,10 @@ class BatchTimelineResponse(BaseModel):
     limit: Optional[int] = Field(default=None, description="Số lượng sự kiện tối đa trên mỗi trang.")
     offset: Optional[int] = Field(default=None, description="Vị trí bắt đầu lấy sự kiện.")
     events: list[BatchEventResponse]
+    truncated_after_handover: bool = Field(
+        default=False,
+        description="S-23: lô đã bàn giao đi khỏi tổ chức người xem nên chỉ hiện tới lúc bàn giao.",
+    )
 
 
 # ------------------------------------------------------------- Batch Split (T-40) ---

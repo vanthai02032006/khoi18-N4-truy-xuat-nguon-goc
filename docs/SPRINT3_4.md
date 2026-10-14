@@ -1,6 +1,6 @@
 # Sprint 3–4: chức năng trên web và mã Jira
 
-Nhánh `integrate/sprint-3-4`. Bộ test: **192 test xanh** (140 ở `tests/`, 52 ở `backend/tests/`).
+Nhánh `integrate/sprint-3-4`. Bộ test: **193 test xanh** (141 ở `tests/`, 52 ở `backend/tests/`).
 
 ## Sprint 3: Tách, gộp và truy ngược nguồn gốc
 
@@ -58,7 +58,6 @@ Sprint Goal: *Từ một lô gốc chỉ ra được mọi lô con đã phát si
 ## Còn tồn
 
 - **Hai cách xác định tổ chức song song:** `organization_id` (mã) và `current_holder_org` (tên). Các quy tắc quyền đã thống nhất qua `user_org_keys` / `user_holds_batch`, nhưng nên gộp hẳn về một cột (việc làm lại của Sprint 1).
-- **S-23 AC3 chưa có:** lô đã bàn giao đi thì bên giao vẫn thấy cả các bước sau.
 - **S-22:** đồ thị do `seed_lineage_graph.py` dựng (lô `LOT-GRAPH-*`) khác đồ thị trong tệp đáp án (lô `B-*`). Cần hai người đếm tay đáp án cho dữ liệu seed.
 - **CSDL vẫn là SQLite:** `SELECT … FOR UPDATE` không có tác dụng, nên S-18 (hai người tách cùng lúc) chỉ được đảm bảo thật khi chuyển sang PostgreSQL.
 - **Chưa gộp nhánh `feature/S42`** (chuỗi lạnh, Sprint 6): xung đột 6 chỗ với phần chuỗi lạnh đã có.

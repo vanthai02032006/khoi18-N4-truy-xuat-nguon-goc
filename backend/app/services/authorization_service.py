@@ -195,7 +195,42 @@ def viewable_batch_ids(db: Session, user: User, request_org: str | None = None) 
     return held | get_all_ancestor_ids(db, held)
 
 
+def history_cutoff_handover_id(db: Session, user: User, batch: Batch, request_org: str | None = None) -> int | None:
+    """S-23 AC3: lô đã bàn giao đi khỏi tổ chức của người xem.
+
+    Trả về ID phiếu bàn giao (đã xác nhận) cuối cùng mà tổ chức người xem là bên giao,
+    để dòng thời gian chỉ hiện tới thời điểm đó. ``None`` = được xem đủ chuỗi
+    (admin, cán bộ kiểm tra, đang giữ lô, hoặc lô là tổ tiên của lô mình đang giữ).
+    """
+    from app.models import HANDOVER_STATUS_ACCEPTED, Handover
+
+    if getattr(user, "role", None) in (ROLE_ADMIN, ROLE_INSPECTOR):
+        return None
+    if user_holds_batch(user, batch, request_org):
+        return None
+    keys = user_org_keys(user, request_org)
+    current = set(
+        db.scalars(
+            select(Batch.id).where(or_(Batch.organization_id.in_(keys), Batch.current_holder_org.in_(keys)))
+        ).all()
+    )
+    if current and batch.id in get_all_ancestor_ids(db, current):
+        return None
+    sender_ids = set(db.scalars(select(User.id).where(User.organization_id.in_(keys))).all()) | {user.id}
+    return db.scalar(
+        select(Handover.id)
+        .where(
+            Handover.batch_id == batch.id,
+            Handover.status == HANDOVER_STATUS_ACCEPTED,
+            Handover.sender_id.in_(sender_ids),
+        )
+        .order_by(Handover.id.desc())
+        .limit(1)
+    )
+
+
 __all__ = [
+    "history_cutoff_handover_id",
     "user_holds_batch",
     "user_org_keys",
     "user_org_key",

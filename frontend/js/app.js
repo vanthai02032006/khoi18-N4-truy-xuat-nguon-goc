@@ -2173,7 +2173,9 @@ async function openTimelineModal(batchId) {
 
     // Cập nhật trạng thái toàn vẹn (Tamper-proof Cryptographic Verification)
     if (data.is_valid) {
-      $("timeline-integrity-badge").textContent = "✓ Toàn vẹn (100% Valid Hash-Chain)";
+      $("timeline-integrity-badge").textContent = data.truncated_after_handover
+        ? "✓ Toàn vẹn · Lô đã bàn giao đi — chỉ hiện lịch sử tới lúc bàn giao (S-23)"
+        : "✓ Toàn vẹn (100% Valid Hash-Chain)";
       $("timeline-integrity-badge").style.color = "#059669";
     } else {
       $("timeline-integrity-badge").textContent = `⚠ Cảnh báo sai lệch (Tại sự kiện #${data.tampered_index})`;
