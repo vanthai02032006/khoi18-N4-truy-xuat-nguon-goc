@@ -1,0 +1,283 @@
+{
+  "metadata": {
+    "story": "S-22",
+    "title": "Đáp án đếm tay cho kịch bản thu hồi mẫu 4 tầng qua 3 tổ chức",
+    "user_story": "Là thành viên phát triển tôi muốn một kịch bản thu hồi mẫu có đáp án đếm tay để thuật toán liệt kê thu hồi được kiểm bằng đáp án độc lập.",
+    "seed_script": "backend/scripts/seed_recall_sample.py",
+    "seed_command": "cd backend; .\\.venv\\Scripts\\python.exe scripts\\seed_recall_sample.py",
+    "algorithm": "app.recall_enumeration.build_recall_scope",
+    "consumed_semantics": "quantity = khối lượng CÒN LẠI (còn thu hồi được), consumed_quantity = khối lượng ĐÃ BÁN cho người tiêu dùng (đã ra thị trường).",
+    "counted_by": [
+      {
+        "name": "Nguyễn Thanh Sơn (Lead)",
+        "counted_at": "2026-10-14",
+        "method": "Duyệt tay từng tầng theo sơ đồ tách/gộp, ghi mã lô hậu duệ kèm khối lượng còn lại; tách bạch phần đã bán."
+      },
+      {
+        "name": "Lê Hoàng Quân",
+        "counted_at": "2026-10-14",
+        "method": "Đếm tay độc lập bằng bảng khối lượng từng phép tách/gộp, không tham chiếu kết quả của người thứ nhất; đối chiếu lại tổng khối lượng theo định luật bảo toàn."
+      }
+    ],
+    "description": "Hai người đếm độc lập cùng ghi kết quả vào tệp này. Thuật toán liệt kê thu hồi phải khớp 100% với phần ground_truth_recall_scope (mã lô hậu duệ, khối lượng còn lại, thứ tự tầng)."
+  },
+  "graph_structure": {
+    "batch_prefix": "LOT-S22-",
+    "organizations": [
+      "HTX Xoai My Xuong",
+      "Cong Ty Che Bien Mekong",
+      "Chuoi Sieu Thi Xanh"
+    ],
+    "tiers": [
+      {
+        "tier": 1,
+        "label": "F0 - thu hoạch tại HTX",
+        "organization": "HTX Xoai My Xuong",
+        "location": "Kho HTX My Xuong",
+        "batches": [
+          {"batch_code": "LOT-S22-A1", "quantity": 250.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-A2", "quantity": 300.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-A3", "quantity": 300.0, "consumed_quantity": 0.0, "status": "available"}
+        ]
+      },
+      {
+        "tier": 2,
+        "label": "F1 - sơ chế, tách lô tại nhà máy",
+        "organization": "Cong Ty Che Bien Mekong",
+        "location": "Nha May Che Bien Mekong",
+        "batches": [
+          {"batch_code": "LOT-S22-B11", "quantity": 150.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-B12", "quantity": 200.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-B21", "quantity": 100.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-B22", "quantity": 200.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-B31", "quantity": 200.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-B32", "quantity": 150.0, "consumed_quantity": 0.0, "status": "available"}
+        ]
+      },
+      {
+        "tier": 3,
+        "label": "F2 - gộp nhiều nguồn tại nhà máy",
+        "organization": "Cong Ty Che Bien Mekong",
+        "location": "Nha May Che Bien Mekong",
+        "batches": [
+          {"batch_code": "LOT-S22-M1", "quantity": 100.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-M2", "quantity": 100.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-M3", "quantity": 100.0, "consumed_quantity": 0.0, "status": "available"}
+        ]
+      },
+      {
+        "tier": 4,
+        "label": "F3 - thành phẩm bán lẻ tại siêu thị",
+        "organization": "Chuoi Sieu Thi Xanh",
+        "location": "Sieu Thi Xanh - Chi Nhanh 1 / Chi Nhanh 2",
+        "batches": [
+          {"batch_code": "LOT-S22-F11", "quantity": 200.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-F12", "quantity": 0.0, "consumed_quantity": 150.0, "status": "consumed"},
+          {"batch_code": "LOT-S22-F21", "quantity": 150.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-F22", "quantity": 100.0, "consumed_quantity": 50.0, "status": "available"},
+          {"batch_code": "LOT-S22-F31", "quantity": 100.0, "consumed_quantity": 0.0, "status": "available"},
+          {"batch_code": "LOT-S22-F32", "quantity": 100.0, "consumed_quantity": 0.0, "status": "available"}
+        ]
+      }
+    ],
+    "root_batches": ["LOT-S22-A1", "LOT-S22-A2", "LOT-S22-A3"],
+    "relations": [
+      {"parent": "LOT-S22-A1", "child": "LOT-S22-B11", "type": "SPLIT"},
+      {"parent": "LOT-S22-A1", "child": "LOT-S22-B12", "type": "SPLIT"},
+      {"parent": "LOT-S22-A2", "child": "LOT-S22-B21", "type": "SPLIT"},
+      {"parent": "LOT-S22-A2", "child": "LOT-S22-B22", "type": "SPLIT"},
+      {"parent": "LOT-S22-A3", "child": "LOT-S22-B31", "type": "SPLIT"},
+      {"parent": "LOT-S22-A3", "child": "LOT-S22-B32", "type": "SPLIT"},
+      {"parent": "LOT-S22-B11", "child": "LOT-S22-M1", "type": "MERGE"},
+      {"parent": "LOT-S22-B21", "child": "LOT-S22-M1", "type": "MERGE"},
+      {"parent": "LOT-S22-B12", "child": "LOT-S22-M2", "type": "MERGE"},
+      {"parent": "LOT-S22-B31", "child": "LOT-S22-M2", "type": "MERGE"},
+      {"parent": "LOT-S22-B22", "child": "LOT-S22-M3", "type": "MERGE"},
+      {"parent": "LOT-S22-B32", "child": "LOT-S22-M3", "type": "MERGE"},
+      {"parent": "LOT-S22-M1", "child": "LOT-S22-F11", "type": "SPLIT"},
+      {"parent": "LOT-S22-M1", "child": "LOT-S22-F12", "type": "SPLIT"},
+      {"parent": "LOT-S22-M2", "child": "LOT-S22-F21", "type": "SPLIT"},
+      {"parent": "LOT-S22-M2", "child": "LOT-S22-F22", "type": "SPLIT"},
+      {"parent": "LOT-S22-M3", "child": "LOT-S22-F31", "type": "SPLIT"},
+      {"parent": "LOT-S22-M3", "child": "LOT-S22-F32", "type": "SPLIT"}
+    ],
+    "relation_count": 18,
+    "merge_sources": {
+      "LOT-S22-M1": ["LOT-S22-B11", "LOT-S22-B21"],
+      "LOT-S22-M2": ["LOT-S22-B12", "LOT-S22-B31"],
+      "LOT-S22-M3": ["LOT-S22-B22", "LOT-S22-B32"]
+    },
+    "consumed_batches": [
+      {"batch_code": "LOT-S22-F12", "consumed_quantity": 150.0, "remaining_quantity": 0.0},
+      {"batch_code": "LOT-S22-F22", "consumed_quantity": 50.0, "remaining_quantity": 100.0}
+    ],
+    "totals": {
+      "batch_count": 18,
+      "merge_relation_count": 6,
+      "harvested_quantity": 3000.0,
+      "remaining_quantity": 2800.0,
+      "consumed_quantity": 200.0
+    }
+  },
+  "ground_truth_recall_scope": {
+    "LOT-S22-A1": {
+      "root": {
+        "batch_code": "LOT-S22-A1",
+        "tier": 1,
+        "organization": "HTX Xoai My Xuong",
+        "remaining_quantity": 250.0,
+        "consumed_quantity": 0.0
+      },
+      "descendants": [
+        {"batch_code": "LOT-S22-B11", "depth": 1, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 150.0, "consumed_quantity": 0.0, "total_quantity": 150.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-B12", "depth": 1, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 200.0, "consumed_quantity": 0.0, "total_quantity": 200.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-M1", "depth": 2, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-M2", "depth": 2, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-F11", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 200.0, "consumed_quantity": 0.0, "total_quantity": 200.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-F12", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 0.0, "consumed_quantity": 150.0, "total_quantity": 150.0, "is_recallable": false},
+        {"batch_code": "LOT-S22-F21", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 150.0, "consumed_quantity": 0.0, "total_quantity": 150.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-F22", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 100.0, "consumed_quantity": 50.0, "total_quantity": 150.0, "is_recallable": true}
+      ],
+      "descendant_count": 8,
+      "descendant_remaining_quantity": 1000.0,
+      "total_remaining_quantity": 1250.0,
+      "consumed_quantity": 200.0,
+      "hand_count_sheets": {
+        "counter_1": {
+          "counter": "Nguyễn Thanh Sơn (Lead)",
+          "entries": [
+            "LOT-S22-B11=150",
+            "LOT-S22-B12=200",
+            "LOT-S22-M1=100",
+            "LOT-S22-M2=100",
+            "LOT-S22-F11=200",
+            "LOT-S22-F12=0",
+            "LOT-S22-F21=150",
+            "LOT-S22-F22=100"
+          ],
+          "remaining_total": 1000.0
+        },
+        "counter_2": {
+          "counter": "Lê Hoàng Quân",
+          "entries_by_code": {
+            "LOT-S22-B11": 150.0,
+            "LOT-S22-B12": 200.0,
+            "LOT-S22-M1": 100.0,
+            "LOT-S22-M2": 100.0,
+            "LOT-S22-F11": 200.0,
+            "LOT-S22-F12": 0.0,
+            "LOT-S22-F21": 150.0,
+            "LOT-S22-F22": 100.0
+          },
+          "remaining_total": 1000.0
+        }
+      }
+    },
+    "LOT-S22-A2": {
+      "root": {
+        "batch_code": "LOT-S22-A2",
+        "tier": 1,
+        "organization": "HTX Xoai My Xuong",
+        "remaining_quantity": 300.0,
+        "consumed_quantity": 0.0
+      },
+      "descendants": [
+        {"batch_code": "LOT-S22-B21", "depth": 1, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-B22", "depth": 1, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 200.0, "consumed_quantity": 0.0, "total_quantity": 200.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-M1", "depth": 2, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-M3", "depth": 2, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-F11", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 200.0, "consumed_quantity": 0.0, "total_quantity": 200.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-F12", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 0.0, "consumed_quantity": 150.0, "total_quantity": 150.0, "is_recallable": false},
+        {"batch_code": "LOT-S22-F31", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-F32", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true}
+      ],
+      "descendant_count": 8,
+      "descendant_remaining_quantity": 900.0,
+      "total_remaining_quantity": 1200.0,
+      "consumed_quantity": 150.0,
+      "hand_count_sheets": {
+        "counter_1": {
+          "counter": "Nguyễn Thanh Sơn (Lead)",
+          "entries": [
+            "LOT-S22-B21=100",
+            "LOT-S22-B22=200",
+            "LOT-S22-M1=100",
+            "LOT-S22-M3=100",
+            "LOT-S22-F11=200",
+            "LOT-S22-F12=0",
+            "LOT-S22-F31=100",
+            "LOT-S22-F32=100"
+          ],
+          "remaining_total": 900.0
+        },
+        "counter_2": {
+          "counter": "Lê Hoàng Quân",
+          "entries_by_code": {
+            "LOT-S22-B21": 100.0,
+            "LOT-S22-B22": 200.0,
+            "LOT-S22-M1": 100.0,
+            "LOT-S22-M3": 100.0,
+            "LOT-S22-F11": 200.0,
+            "LOT-S22-F12": 0.0,
+            "LOT-S22-F31": 100.0,
+            "LOT-S22-F32": 100.0
+          },
+          "remaining_total": 900.0
+        }
+      }
+    },
+    "LOT-S22-A3": {
+      "root": {
+        "batch_code": "LOT-S22-A3",
+        "tier": 1,
+        "organization": "HTX Xoai My Xuong",
+        "remaining_quantity": 300.0,
+        "consumed_quantity": 0.0
+      },
+      "descendants": [
+        {"batch_code": "LOT-S22-B31", "depth": 1, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 200.0, "consumed_quantity": 0.0, "total_quantity": 200.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-B32", "depth": 1, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 150.0, "consumed_quantity": 0.0, "total_quantity": 150.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-M2", "depth": 2, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-M3", "depth": 2, "organization": "Cong Ty Che Bien Mekong", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-F21", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 150.0, "consumed_quantity": 0.0, "total_quantity": 150.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-F22", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 100.0, "consumed_quantity": 50.0, "total_quantity": 150.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-F31", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true},
+        {"batch_code": "LOT-S22-F32", "depth": 3, "organization": "Chuoi Sieu Thi Xanh", "remaining_quantity": 100.0, "consumed_quantity": 0.0, "total_quantity": 100.0, "is_recallable": true}
+      ],
+      "descendant_count": 8,
+      "descendant_remaining_quantity": 1000.0,
+      "total_remaining_quantity": 1300.0,
+      "consumed_quantity": 50.0,
+      "hand_count_sheets": {
+        "counter_1": {
+          "counter": "Nguyễn Thanh Sơn (Lead)",
+          "entries": [
+            "LOT-S22-B31=200",
+            "LOT-S22-B32=150",
+            "LOT-S22-M2=100",
+            "LOT-S22-M3=100",
+            "LOT-S22-F21=150",
+            "LOT-S22-F22=100",
+            "LOT-S22-F31=100",
+            "LOT-S22-F32=100"
+          ],
+          "remaining_total": 1000.0
+        },
+        "counter_2": {
+          "counter": "Lê Hoàng Quân",
+          "entries_by_code": {
+            "LOT-S22-B31": 200.0,
+            "LOT-S22-B32": 150.0,
+            "LOT-S22-M2": 100.0,
+            "LOT-S22-M3": 100.0,
+            "LOT-S22-F21": 150.0,
+            "LOT-S22-F22": 100.0,
+            "LOT-S22-F31": 100.0,
+            "LOT-S22-F32": 100.0
+          },
+          "remaining_total": 1000.0
+        }
+      }
+    }
+  }
+}

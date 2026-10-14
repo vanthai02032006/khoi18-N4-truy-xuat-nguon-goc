@@ -419,6 +419,36 @@ phạm vi lệnh nhiều lô, lệnh đã hoàn tất vẫn chặn, bàn giao đ
 được) kèm ca biên: thao tác bị chặn không đổi khối lượng / người giữ / địa điểm /
 chuỗi sự kiện, và lô ngoài phạm vi lệnh vẫn di chuyển bình thường.
 
+### Kịch bản thu hồi mẫu & đáp án đếm tay (S-22)
+
+Kịch bản mẫu dùng để **kiểm thuật toán liệt kê thu hồi** (`app/recall_enumeration.py`)
+bằng một **đáp án đếm tay độc lập**, thay vì chỉ tin vào kết quả do chính mã nguồn sinh ra.
+
+| Tiêu chí | Cách hệ thống đáp ứng |
+| --- | --- |
+| Chạy script xong thì có đồ thị **bốn tầng qua ba tổ chức**, có ít nhất một lô **gộp từ nhiều nguồn** và một lô **đã tiêu thụ** | `scripts/seed_recall_sample.py` dựng 18 lô bằng chính `split_batch()` / `merge_batches()` của ứng dụng: tầng 1 gồm `LOT-S22-A1..A3` (1000 kg/lô) ở `HTX Xoai My Xuong` → tầng 2 gồm sáu lô sơ chế `B11..B32` → tầng 3 gồm ba lô gộp `M1 = B11 + B21`, `M2 = B12 + B31`, `M3 = B22 + B32` ở `Cong Ty Che Bien Mekong` → tầng 4 gồm sáu lô thành phẩm ở `Chuoi Sieu Thi Xanh`; `LOT-S22-F12` bán hết (trạng thái `consumed`) và `LOT-S22-F22` bán một phần 50 kg. |
+| Tra lô gốc trong tệp đáp án thì thấy danh sách hậu duệ và khối lượng còn lại từng lô, do **hai người đếm độc lập** | `data/recall_benchmark.json` ghi cho từng lô gốc (`LOT-S22-A1..A3`) phần `descendants` kèm `remaining_quantity` / `consumed_quantity` / `is_recallable` / `depth`, cùng hai bảng đếm riêng `hand_count_sheets.counter_1` và `hand_count_sheets.counter_2`; thuật toán phải khớp 100% phần `ground_truth_recall_scope`. |
+
+**Thuật toán:** `enumerate_recall_scope(root_code, relations, facts)` là **hàm thuần**
+(chỉ cần quan hệ cha-con + số liệu từng lô) nên kiểm được độc lập với CSDL; hàm duyệt BFS
+xuôi từ lô gốc, trong cùng tầng sắp theo mã lô nên thứ tự ổn định và so được từng dòng với
+đáp án. `build_recall_scope(db, root_batch)` là bản đọc CSDL: hợp cạnh **gộp**
+(`batch_relations` của T-44) và cạnh **tách** (`batches.parent_id`) rồi trả `RecallScope`
+(lô gốc + hậu duệ + tổng còn thu hồi được / tổng đã ra thị trường).
+
+```powershell
+# Dựng kịch bản mẫu vào backend/ttcs.db (script tự chặn nếu APP_ENV là production/prod/live)
+cd backend
+.\.venv\Scripts\python.exe scripts\seed_recall_sample.py
+```
+
+**Kiểm thử:** [`tests/test_recall_enumeration_benchmark.py`](../tests/test_recall_enumeration_benchmark.py)
+— 10 ca bám sát 2 tiêu chí nghiệm thu (đồ thị 4 tầng/3 tổ chức khớp đáp án, có lô gộp nhiều
+nguồn, có lô đã tiêu thụ; thuật toán khớp 100% đáp án theo **cả** đường đọc CSDL **lẫn**
+đường hàm thuần) kèm ca bảo toàn khối lượng (2800 kg còn lại + 200 kg đã bán = 3000 kg thu
+hoạch), chạy lại script không nhân đôi dữ liệu, và ca biên (lô cuối chuỗi không có hậu duệ,
+thiếu số liệu lô gốc → `ValueError`).
+
 ### Cấu trúc bảng `users` (Sprint 4)
 
 | Cột | Kiểu | Ràng buộc |
@@ -680,6 +710,9 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | `app/routers/batches.py` | Router module Batch - **CRUD đầy đủ**: `POST /batches` (**404** nếu `farm_id` không tồn tại — kiểm tra bằng `db.get(Farm, ...)` trước khi ghi), `GET /batches` (danh sách, sắp theo `id`), `GET /batches/{batch_id}` (**404** nếu không thấy), `PUT /batches/{batch_id}` (Sprint 5 - kiểm tra lại `farm_id` mới trước khi ghi) và `DELETE /batches/{batch_id}` (Sprint 5 - **chỉ admin**). |
 | `app/routers/__init__.py` | Gom và export các router con để `main.py` import ngắn gọn (`from app.routers import auth, batches, farms, health, users`). |
 | `app/__init__.py` | Đánh dấu `app` là package Python; khai báo `__version__ = "0.2.0"` dùng cho metadata Swagger. |
+| `app/recall_enumeration.py` | **S-22** — thuật toán liệt kê phạm vi thu hồi: `enumerate_recall_scope()` (hàm thuần, BFS xuôi từ lô gốc, trả từng hậu duệ kèm `remaining_quantity`/`consumed_quantity`/`depth`/`organization`, cùng tầng sắp theo mã lô), `build_recall_scope()` (đọc CSDL: hợp `batch_relations` + `batches.parent_id`), `load_lineage_relations()`, `load_batch_facts()` và dataclasses `RecallBatchFact`/`RecallScopeEntry`/`RecallScope` (kèm tổng còn thu hồi được / đã ra thị trường). |
+| `scripts/seed_recall_sample.py` | **S-22** — dựng kịch bản thu hồi mẫu 4 tầng qua 3 tổ chức (18 lô, 6 quan hệ gộp nhiều nguồn, 1 lô đã tiêu thụ) bằng chính `split_batch()`/`merge_batches()`, tự dọn dữ liệu mẫu cũ trước khi dựng lại (idempotent), chặn chạy trên môi trường production và in phạm vi thu hồi của từng lô gốc để đối chiếu đáp án. |
+| `data/recall_benchmark.json` | **S-22** — đáp án đếm tay: cấu trúc đồ thị mẫu (4 tầng/3 tổ chức/quan hệ), `ground_truth_recall_scope` cho từng lô gốc (danh sách hậu duệ + khối lượng còn lại + tầng + tổ chức) và hai bảng đếm độc lập của hai người (`hand_count_sheets`). |
 | `requirements.txt` | Ghim phiên bản thư viện: `fastapi`, `uvicorn[standard]`, `SQLAlchemy`, `pydantic` — đảm bảo cả nhóm cài ra môi trường giống nhau. **Sprint 4 không thêm thư viện nào**: băm mật khẩu dùng `hashlib`/`hmac` có sẵn, xác thực dùng `fastapi.security.HTTPBasic` của FastAPI. |
 | `.gitignore` | Bỏ qua `.venv/`, `__pycache__/`, `*.db`... để không commit rác và dữ liệu local. |
 
@@ -743,3 +776,4 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | S-19 | **Đánh dấu lô có sự cố & mở lệnh thu hồi (3 SP):** endpoint `POST /batches/{batch_id}/incident` (dependency `require_inspector` → `403` với vai trò khác) tạo `RecallOrder` mã riêng (`ORD-REC-xxxx`) gắn lô + ghi sự kiện `INCIDENT_FLAGGED` vào chuỗi băm; chặn mở trùng bằng `409` kèm mã lệnh đang mở. Gom nghiệp vụ dùng chung vào module mới `app/recall_orders.py` (`build_order_response`, `generate_unique_order_code`, `find_open_order_for_batch`, `open_recall_order_for_batch`); hằng số `EVENT_TYPE_INCIDENT_FLAGGED`; schema `BatchIncidentRequest`. Frontend: nút **Đánh dấu sự cố** trên bảng lô và nhánh hiển thị sự kiện `INCIDENT_FLAGGED` trong dòng thời gian. |
 | S-20 | **Kế hoạch thu hồi theo lô & cửa hàng (3 SP):** model `RecallOrderBatch` → bảng `recall_order_batches` (lệnh N-N lô) và cột `batches.consumed_quantity` (khối lượng đã bán ra thị trường, tự migrate + khôi phục từ sự kiện `BATCH_CONSUMED` cho DB cũ); `POST /orders` nhận `batch_ids`/`product_name` để gom phạm vi và ghi `RECALL_ISSUED` vào chuỗi băm của **từng lô** (khi hoàn tất cũng ghi `RECALL_COMPLETED` cho từng lô); endpoint mới `GET /orders/{order_id}/recovery-plan` trả từng lô kèm tổ chức, địa điểm, khối lượng còn lại/đã tiêu thụ, phần tổng hợp còn thu hồi được vs đã ra thị trường và nhóm theo địa điểm; `POST /batches/{batch_id}/consume` nhận `{"quantity": n}` để ghi **bán một phần**; `EVENT_TYPE_RECALL_ISSUED`, các schema `ConsumeBatchRequest`, `RecallBatchResponse`, `RecallLocationGroupResponse`, `RecallRecoveryPlanResponse`. Frontend: cột **Còn lại / Đã bán** trong bảng lô và bảng tra cứu thu hồi, ô nhập phạm vi nhiều lô/tên sản phẩm khi ban hành lệnh, khối **Kế hoạch thu hồi** trong modal chi tiết lệnh (thẻ tổng + bảng từng lô + gom theo cửa hàng), modal **Ghi nhận bán** (nhập khối lượng bán một phần + ghi chú) và thẻ sự kiện `BATCH_CONSUMED` hiển thị rõ đã bán / còn lại. |
 | S-21 | **Đóng băng lô đang bị thu hồi (2 SP):** cột `batches.incident_flagged` + `incident_order_id`/`incident_order_code`/`incident_flagged_at` (tự migrate cho DB cũ, dựng lại cờ từ sự kiện `INCIDENT_FLAGGED`/`RECALL_ISSUED`); `resolve_recall_lock` (module `app/recall_orders.py`) + `find_open_order_for_batch` nay nhận cả lô nằm trong bảng liên kết `recall_order_batches` của lệnh nhiều lô; `POST /batches/{id}/handover/initiate`, `.../handover/accept`, `.../split`, `POST /batches/merge` và `POST /batches/{id}/location` trả `409` kèm **mã lệnh thu hồi** khi lô đang bị đóng băng (lệnh đang mở, hoặc lệnh đã hoàn tất nhưng lô vẫn mang dấu sự cố); `BatchResponse` trả thêm các trường dấu sự cố để giao diện chặn thao tác. Frontend: huy hiệu **Đang thu hồi** (kèm mã lệnh) trong bảng lô, khoá nút **Tách** / **Vị trí**, ô tích gộp lô và lựa chọn bàn giao của lô đang bị thu hồi. |
+| S-22 | **Kịch bản thu hồi mẫu & đáp án đếm tay (2 SP):** module mới `app/recall_enumeration.py` với `enumerate_recall_scope()` (hàm thuần, BFS xuôi từ lô gốc, trả từng hậu duệ kèm khối lượng còn lại/đã bán/tầng/tổ chức, cùng tầng sắp theo mã lô) và `build_recall_scope()` (đọc CSDL, hợp cạnh gộp `batch_relations` + cạnh tách `batches.parent_id`); script mới `scripts/seed_recall_sample.py` dựng đồ thị mẫu 4 tầng qua 3 tổ chức bằng chính `split_batch()`/`merge_batches()` (18 lô, 6 quan hệ gộp nhiều nguồn, `LOT-S22-F12` bán hết, `LOT-S22-F22` bán một phần), tự dọn dữ liệu mẫu cũ trước khi dựng lại và in phạm vi thu hồi để so tay; tệp đáp án mới `data/recall_benchmark.json` ghi cấu trúc đồ thị, `ground_truth_recall_scope` cho từng lô gốc và **hai bảng đếm độc lập của hai người**; bộ test mới `tests/test_recall_enumeration_benchmark.py` (10 ca) kiểm kịch bản mẫu khớp đáp án 100% theo cả đường CSDL lẫn đường hàm thuần, kèm bảo toàn khối lượng và ca biên. |
