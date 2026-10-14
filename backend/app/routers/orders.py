@@ -26,46 +26,17 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.models import Batch, BatchEvent, RecallOrder, RecallOrderTarget, User
+from app.recall_orders import build_order_response, generate_unique_order_code
 from app.schemas import (
     RecallOrderConfirm,
     RecallOrderConfirmResponse,
     RecallOrderCreate,
     RecallOrderResponse,
-    RecallTargetResponse,
 )
 from app.security import compute_event_hash, get_current_user, require_inspector
 from app.tenant import get_tenant_org, require_tenant_context
 
 router = APIRouter(prefix="/orders", tags=["Orders - Lệnh kiểm tra & thu hồi"])
-
-
-def _build_order_response(order: RecallOrder) -> RecallOrderResponse:
-    """Tính toán tiến độ xác nhận từ các bên liên quan và xây dựng model response."""
-    targets = order.targets or []
-    total = len(targets)
-    confirmed = sum(1 for t in targets if t.status == "CONFIRMED")
-    pending = total - confirmed
-    pending_orgs = [t.org_name for t in targets if t.status != "CONFIRMED"]
-
-    return RecallOrderResponse(
-        id=order.id,
-        order_code=order.order_code,
-        title=order.title,
-        description=order.description,
-        reason=order.reason,
-        batch_id=order.batch_id,
-        issuer_username=order.issuer_username,
-        created_at=order.created_at,
-        completed_at=order.completed_at,
-        status=order.status,
-        targets=[RecallTargetResponse.model_validate(t) for t in targets],
-        total_targets=total,
-        confirmed_count=confirmed,
-        pending_count=pending,
-        progress_ratio=f"{confirmed}/{total}",
-        is_completed=order.status == "COMPLETED",
-        pending_organizations=pending_orgs,
-    )
 
 
 @router.post(
@@ -97,8 +68,7 @@ def create_recall_order(
             )
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    order_count = db.scalar(select(RecallOrder.id).order_by(RecallOrder.id.desc()).limit(1)) or 0
-    order_code = f"ORD-REC-{order_count + 1:04d}"
+    order_code = generate_unique_order_code(db)
 
     order = RecallOrder(
         order_code=order_code,
@@ -178,7 +148,7 @@ def create_recall_order(
         .options(selectinload(RecallOrder.targets))
         .where(RecallOrder.id == order.id)
     )
-    return _build_order_response(order)
+    return build_order_response(order)
 
 
 @router.get(
@@ -198,7 +168,7 @@ def list_recall_orders(
         stmt = stmt.where(RecallOrder.status == status_filter)
 
     orders = list(db.scalars(stmt).all())
-    return [_build_order_response(o) for o in orders]
+    return [build_order_response(o) for o in orders]
 
 
 @router.get(
@@ -223,7 +193,7 @@ def get_recall_order(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy lệnh có id={order_id}.",
         )
-    return _build_order_response(order)
+    return build_order_response(order)
 
 
 @router.post(

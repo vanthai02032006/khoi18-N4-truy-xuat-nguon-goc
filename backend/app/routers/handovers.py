@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.events import record_event
 from app.models import (
+    BATCH_STATUS_CONSUMED,
     EVENT_TYPE_HANDOVER_ACCEPTED,
     EVENT_TYPE_HANDOVER_PENDING,
     EVENT_TYPE_HANDOVER_REJECTED,
@@ -173,6 +174,11 @@ def create_handover(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy lô nông sản có id={payload.batch_id}.",
+        )
+    if batch.status == BATCH_STATUS_CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lô nông sản #{payload.batch_id} đã tiêu thụ nên không thể bàn giao.",
         )
 
     existing_pending = db.scalar(
@@ -347,6 +353,11 @@ def accept_handover(
 ) -> HandoverWorkflowResponse:
     """Xác nhận bàn giao: đổi quyền giữ lô và ghi đủ 2 sự kiện trong 1 transaction."""
     batch = db.get(Batch, handover.batch_id)
+    if batch is not None and batch.status == BATCH_STATUS_CONSUMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lô nông sản #{handover.batch_id} đã tiêu thụ nên không thể xác nhận bàn giao.",
+        )
     old_owner = batch.current_owner if batch else handover.sender_name
 
     handover.status = HANDOVER_STATUS_ACCEPTED

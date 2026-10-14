@@ -233,6 +233,7 @@ _BATCH_EXAMPLE: dict = {
     "farm_id": 1,
     "product_name": "Xoài cát Chu",
     "quantity": 120.5,
+    "status": "available",
     "harvest_date": "2026-01-15",
 }
 
@@ -332,6 +333,7 @@ class BatchResponse(BaseModel):
     farm_id: int = Field(..., description="ID vùng trồng xuất xứ.", examples=[1])
     product_name: str = Field(..., description="Tên sản phẩm của lô.")
     quantity: float = Field(..., description="Số lượng / khối lượng (kg).")
+    status: str = Field(..., description="Trạng thái lô: available (còn hàng) hoặc consumed (đã tiêu thụ).")
     harvest_date: date = Field(..., description="Ngày thu hoạch.")
     current_holder_org: str = Field(
         default="HTX Nông Nghiệp Số 4",
@@ -352,6 +354,21 @@ class BatchResponse(BaseModel):
     parent_id: int | None = Field(
         default=None,
         description="Mã định danh lô nông sản mẹ (nếu có).",
+    )
+    current_location_id: int | None = Field(
+        default=None,
+        description="ID địa điểm hiện đang chứa lô (null nếu chưa gắn địa điểm - S-18).",
+        examples=[1],
+    )
+    current_location_name: str | None = Field(
+        default=None,
+        description="Tên địa điểm hiện đang chứa lô (null nếu chưa gắn địa điểm).",
+        examples=["Cửa hàng Mỹ Xương"],
+    )
+    current_location_address: str | None = Field(
+        default=None,
+        description="Địa chỉ của địa điểm hiện đang chứa lô.",
+        examples=["Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp"],
     )
 
 
@@ -439,10 +456,21 @@ class BatchTimelineResponse(BaseModel):
 
 # ------------------------------------------------------------- Batch Split (T-40) ---
 class BatchSplitItem(BaseModel):
-    """Thông tin một dòng lô con cần tách."""
+    """Thông tin một dòng lô con cần tách.
+
+    Từ S-18, mỗi dòng lô con có thể gắn **địa điểm nhận hàng** riêng: chia một
+    lô cho nhiều cửa hàng thì mỗi lô con nằm tại đúng cửa hàng của nó. Bỏ trống
+    ``location_id`` thì lô con giữ nguyên địa điểm hiện tại của lô mẹ.
+    """
 
     quantity: float = Field(..., gt=0, description="Khối lượng của lô con (kg). Phải lớn hơn 0.")
     note: str | None = Field(default=None, max_length=255, description="Ghi chú phân loại / đóng thùng.")
+    location_id: int | None = Field(
+        default=None,
+        ge=1,
+        description="ID địa điểm nhận lô con (thuộc tổ chức đang giữ lô mẹ). Bỏ trống = giữ địa điểm của lô mẹ.",
+        examples=[1],
+    )
 
 
 class BatchSplitRequest(BaseModel):
@@ -500,6 +528,10 @@ class BatchDetailResponse(BaseModel):
     organization_id: str | None = None
     current_holder_org: str = "HTX Nông Nghiệp Số 4"
     pending_receiver_org: str | None = None
+    status: str = "available"
+    current_location_id: int | None = None
+    current_location_name: str | None = None
+    current_location_address: str | None = None
     parents: list[ParentRemainingResponse] = []
     children: list[BatchRelationResponse] = []
 
@@ -666,6 +698,51 @@ class RecallOrderConfirmResponse(BaseModel):
     message: str
     event_id: int | None = None
     event_hash: str | None = None
+
+
+class BatchIncidentRequest(BaseModel):
+    """Dữ liệu client gửi lên khi cán bộ kiểm tra đánh dấu lô có sự cố (S-19).
+
+    Thao tác này mở ngay một lệnh thu hồi gắn với lô (lệnh có mã riêng) và ghi
+    sự kiện ``INCIDENT_FLAGGED`` vào chuỗi băm bất biến của lô.
+
+    Ví dụ::
+
+        {"reason": "Phát hiện dư lượng thuốc BVTV vượt ngưỡng"}
+
+    Bỏ trống ``target_organizations`` thì lệnh mặc định nhắm tới tổ chức đang giữ
+    lô (``batches.current_holder_org``).
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "reason": "Phát hiện dư lượng thuốc bảo vệ thực vật vượt ngưỡng cho phép",
+                "target_organizations": ["HTX Nông Sản 1"],
+            }
+        }
+    )
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Lý do đánh dấu lô có sự cố.",
+    )
+    title: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Tiêu đề lệnh thu hồi (bỏ trống sẽ tự sinh theo mã lô).",
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="Mô tả chi tiết và hướng dẫn xử lý.",
+    )
+    target_organizations: list[str] | None = Field(
+        default=None,
+        description="Các tổ chức phải xác nhận; bỏ trống thì mặc định là tổ chức đang giữ lô.",
+    )
 
 
 # ------------------------------------------------------------- Cold Chain ---
@@ -1055,6 +1132,119 @@ class HandoverWorkflowResponse(HandoverResponse):
     )
 
 
+# ----------------------------------------------------------- Locations (S-18) ---
+_LOCATION_EXAMPLE = {
+    "id": 1,
+    "organization": "HTX Nông Nghiệp Số 4",
+    "name": "Cửa hàng Mỹ Xương",
+    "address": "Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp",
+}
+
+
+class LocationCreate(BaseModel):
+    """Dữ liệu client gửi lên khi khai báo địa điểm (``POST /locations``).
+
+    Địa điểm **thuộc tổ chức của người gọi** (lấy từ header ``X-Organization-Id``),
+    client không gửi ``organization`` - không thể khai báo địa điểm hộ tổ chức khác.
+
+    Ví dụ::
+
+        {"name": "Cửa hàng Mỹ Xương",
+         "address": "Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp"}
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Cửa hàng Mỹ Xương",
+                "address": "Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp",
+            }
+        },
+    )
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Tên địa điểm / cửa hàng - duy nhất trong một tổ chức.",
+        examples=["Cửa hàng Mỹ Xương"],
+    )
+    address: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Địa chỉ địa điểm (số nhà/ấp/xã/huyện/tỉnh).",
+        examples=["Ấp Mỹ An, Xã Mỹ Xương, Huyện Cao Lãnh, Đồng Tháp"],
+    )
+
+    @field_validator("name", "address")
+    @classmethod
+    def _normalize_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Trường này không được để trống.")
+        return cleaned
+
+
+class LocationResponse(BaseModel):
+    """Dữ liệu API trả về cho một địa điểm (kèm ``id`` và tổ chức sở hữu)."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"example": _LOCATION_EXAMPLE},
+    )
+
+    id: int = Field(..., description="Mã định danh địa điểm.", examples=[1])
+    organization: str = Field(
+        ...,
+        description="Tổ chức sở hữu địa điểm (chỉ tổ chức này nhìn thấy địa điểm).",
+        examples=["HTX Nông Nghiệp Số 4"],
+    )
+    name: str = Field(..., description="Tên địa điểm / cửa hàng.")
+    address: str = Field(..., description="Địa chỉ địa điểm.")
+
+
+class BatchLocationTransferRequest(BaseModel):
+    """Dữ liệu client gửi lên khi chuyển một lô về một địa điểm.
+
+    Ví dụ::
+
+        {"location_id": 2}
+    """
+
+    model_config = ConfigDict(json_schema_extra={"example": {"location_id": 2}})
+
+    location_id: int = Field(
+        ...,
+        ge=1,
+        description="ID địa điểm (thuộc đúng tổ chức đang giữ lô).",
+        examples=[2],
+    )
+
+
+class LocationBatchesResponse(BaseModel):
+    """Kết quả tra cứu "lô nào đang nằm ở địa điểm này" phục vụ thu hồi.
+
+    Dùng cho ``GET /locations/{location_id}/batches``: nhà phân phối biết chính
+    xác địa điểm cần thu hồi cùng tổng khối lượng phải xử lý, thay vì rà soát
+    toàn bộ chuỗi cung ứng.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "location": _LOCATION_EXAMPLE,
+                "total_batches": 2,
+                "total_quantity": 120.5,
+                "batches": [],
+            }
+        }
+    )
+
+    location: LocationResponse = Field(..., description="Địa điểm đang được tra cứu.")
+    total_batches: int = Field(..., description="Số lô hiện có mặt tại địa điểm.")
+    total_quantity: float = Field(..., description="Tổng khối lượng (kg) đang nằm tại địa điểm.")
+    batches: list[BatchResponse] = Field(..., description="Danh sách lô hiện có mặt tại địa điểm.")
 
 
 

@@ -149,5 +149,17 @@ py -3.9 -m pytest tests/ -v
 $env:PYTHONPATH='backend;tests'
 python -m pytest tests/ -v
 ```
-Toàn bộ test suite kiểm tra bất biến (append-only immutability: 17/17 passed), kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
+Toàn bộ test suite kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
 
+### 5. Địa điểm / cửa hàng & vị trí hiện tại của lô (S-18 — ước lượng thô 3 SP)
+
+- **Story:** *Là nhà phân phối, tôi muốn ghi nhận lô đang nằm ở cửa hàng nào trong hệ thống của tôi để thu hồi chỉ đúng cửa hàng thay vì lục cả chuỗi.*
+- **Bảng dữ liệu:** `locations` (`organization`, `name`, `address` — tên duy nhất trong một tổ chức) và cột `batches.current_location_id`.
+- **Endpoint:** `POST /locations` (khai báo địa điểm thuộc tổ chức tôi), `GET /locations` (chỉ địa điểm của tổ chức tôi), `POST /batches/{id}/location` (ghi nhận lô đang ở cửa hàng nào + sự kiện `LOCATION_CHANGED` vào chuỗi băm), `GET /locations/{id}/batches` (tra cứu thu hồi đúng điểm bán). Phép tách ở S-17 nay nhận `location_id` trên từng dòng lô con.
+- **Kiểm thử:** [`tests/test_batch_location_tracking.py`](tests/test_batch_location_tracking.py) — 7 ca bám sát 3 tiêu chí nghiệm thu (khai báo địa điểm thuộc tổ chức tôi, chuyển lô ghi địa điểm + sự kiện, tách lô cho nhiều cửa hàng) kèm các ca bị chặn (`403`/`404`/`400`).
+
+### 6. Đánh dấu lô có sự cố & mở lệnh thu hồi (S-19 — ước lượng thô 3 SP)
+
+- **Story:** *Là cán bộ kiểm tra, tôi muốn đánh dấu một lô có sự cố và mở lệnh thu hồi để bắt đầu quy trình xử lý ngay.*
+- **Endpoint:** `POST /batches/{id}/incident` (inspector **hoặc** admin) — đánh dấu lô có sự cố kèm lý do, tạo **lệnh thu hồi có mã riêng** (`ORD-REC-xxxx`) gắn lô và ghi sự kiện `INCIDENT_FLAGGED` vào chuỗi băm bất biến. Vai trò khác gọi → `403`; lô đã có lệnh `IN_PROGRESS` → `409` kèm mã lệnh đang mở (`open_order_code`) để tránh mở trùng.
+- **Kiểm thử:** [`tests/test_batch_incident_recall.py`](tests/test_batch_incident_recall.py) — 7 ca bám sát 3 tiêu chí nghiệm thu (tạo lệnh + sự kiện vào chuỗi, `403` với vai trò khác, `409` trỏ tới lệnh đang mở) kèm ca biên `401`/`404` và mở lệnh mới sau khi lệnh cũ hoàn tất.

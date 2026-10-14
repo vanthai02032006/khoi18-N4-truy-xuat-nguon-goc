@@ -35,6 +35,7 @@ from app.routers import (
     health,
     integrity,
     invitations,
+    locations,
     orders,
     products,
     users,
@@ -86,6 +87,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(farms.router)
 app.include_router(batches.router)
+app.include_router(locations.router)
 app.include_router(products.router)
 app.include_router(handovers.router)
 app.include_router(events.router)

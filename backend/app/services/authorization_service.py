@@ -16,33 +16,37 @@ X KHÔNG được xem các batch không liên quan.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models import ROLE_ADMIN, ROLE_INSPECTOR, Batch, BatchCustodyHistory, BatchRelation, User
 
 
-def get_batches_held_by_org(db: Session, org_id: str) -> set[int]:
-    """Tìm tất cả ID các lô nông sản mà organization đang giữ (CASE 1) hoặc từng giữ (CASE 2)."""
-    if not org_id or not str(org_id).strip():
+def get_batches_held_by_org(db: Session, org_id: str | set[str] | None) -> set[int]:
+    """ID các lô tổ chức đang giữ (CASE 1) hoặc từng giữ (CASE 2).
+
+    Chấp nhận một khoá hoặc một tập khoá tổ chức. Một lô được coi là của tổ chức khi
+    ``organization_id`` (mã) HOẶC ``current_holder_org`` (tên, luồng bàn giao cũ) khớp.
+    """
+    keys = {org_id} if isinstance(org_id, str) else set(org_id or ())
+    keys = {str(k).strip() for k in keys if k and str(k).strip()}
+    if not keys:
         return set()
 
-    clean_org = str(org_id).strip()
-
-    # CASE 1: Đang giữ (Batch.organization_id == org_id)
     currently_held = set(
-        db.scalars(select(Batch.id).where(Batch.organization_id == clean_org)).all()
-    )
-
-    # CASE 2: Từng giữ (BatchCustodyHistory.organization_id == org_id)
-    previously_held = set(
         db.scalars(
-            select(BatchCustodyHistory.batch_id).where(
-                BatchCustodyHistory.organization_id == clean_org
+            select(Batch.id).where(
+                or_(Batch.organization_id.in_(keys), Batch.current_holder_org.in_(keys))
             )
         ).all()
     )
-
+    previously_held = set(
+        db.scalars(
+            select(BatchCustodyHistory.batch_id).where(
+                BatchCustodyHistory.organization_id.in_(keys)
+            )
+        ).all()
+    )
     return currently_held | previously_held
 
 
@@ -122,8 +126,8 @@ def can_user_view_batch(db: Session, user: User, batch_id: int) -> bool:
         # Admin toàn quyền; cán bộ kiểm tra xem được mọi lô ở chế độ chỉ đọc (S-05).
         return db.get(Batch, batch_id) is not None
 
-    org_id = getattr(user, "organization_id", None) or getattr(user, "username", None)
-    return can_view(db, org_id, batch_id)
+    allowed = viewable_batch_ids(db, user)
+    return batch_id in allowed
 
 
 def filter_viewable_batches(db: Session, user: User, batches: list[Batch]) -> list[Batch]:
@@ -146,8 +150,23 @@ def filter_viewable_batches(db: Session, user: User, batches: list[Batch]) -> li
 
 
 def user_org_key(user: User) -> str | None:
-    """Khoá tổ chức của tài khoản dùng cho quyền giữ/xem lô (một chỗ duy nhất)."""
+    """Khoá tổ chức chính của tài khoản dùng cho quyền giữ/xem lô (một chỗ duy nhất)."""
     return getattr(user, "organization_id", None) or getattr(user, "username", None)
+
+
+def user_org_keys(user: User) -> set[str]:
+    """Mọi khoá tổ chức đại diện cho tài khoản.
+
+    Tài khoản đã có ``organization_id`` chỉ dùng đúng mã đó - header
+    ``X-Organization-Id`` KHÔNG mở rộng được quyền. Tài khoản cũ chưa gán tổ chức
+    mới dùng thêm tổ chức của ngữ cảnh request (tương thích dữ liệu trước Sprint 3).
+    """
+    keys = {k for k in (user_org_key(user),) if k}
+    if not getattr(user, "organization_id", None):
+        from app.tenant import get_tenant_org
+
+        keys.add(get_tenant_org())
+    return keys
 
 
 def viewable_batch_ids(db: Session, user: User) -> set[int] | None:
@@ -158,14 +177,14 @@ def viewable_batch_ids(db: Session, user: User) -> set[int] | None:
     """
     if getattr(user, "role", None) in (ROLE_ADMIN, ROLE_INSPECTOR):
         return None
-    org_id = user_org_key(user)
-    held = get_batches_held_by_org(db, org_id) if org_id else set()
+    held = get_batches_held_by_org(db, user_org_keys(user))
     if not held:
         return set()
     return held | get_all_ancestor_ids(db, held)
 
 
 __all__ = [
+    "user_org_keys",
     "user_org_key",
     "viewable_batch_ids",
     "can_user_view_batch",
