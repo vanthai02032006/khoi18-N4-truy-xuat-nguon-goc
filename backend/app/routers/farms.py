@@ -16,12 +16,13 @@ sai vai trò → **403**.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Farm, User
+from app.models import Batch, BatchEvent, Farm, User
+
 from app.schemas import DeleteResponse, FarmCreate, FarmResponse, FarmUpdate
 from app.security import require_admin, require_farm_view, require_farmer
 
@@ -234,7 +235,24 @@ def delete_farm(
             detail=f"Không tìm thấy vùng trồng có id={farm_id}.",
         )
 
+    event_count = db.scalar(
+        select(func.count())
+        .select_from(BatchEvent)
+        .join(Batch, Batch.id == BatchEvent.batch_id)
+        .where(Batch.farm_id == farm_id)
+    )
+    if event_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Vùng trồng #{farm_id} có {event_count} sự kiện trong nhật ký "
+                "chuỗi băm của các lô thuộc vùng nên không thể xoá (bảng chỉ thêm). "
+                "Muốn đính chính, hãy ghi thêm sự kiện mới thay vì xoá vùng trồng."
+            ),
+        )
+
     # Đếm số lô TRƯỚC khi xoá: sau `db.delete()` không nên truy vấn lại quan hệ
+
     # này (bản ghi đang chờ bị xoá ở transaction hiện tại).
     deleted_batches = len(farm.batches)
 

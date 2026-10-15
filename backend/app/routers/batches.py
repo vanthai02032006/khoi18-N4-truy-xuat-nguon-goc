@@ -23,7 +23,8 @@ import secrets
 import string
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from sqlalchemy import cast, or_, select, String
+from sqlalchemy import cast, func, or_, select, String
+
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -169,13 +170,22 @@ def list_batches(
 
     # Tìm kiếm theo tên sản phẩm, mã lô (batch_code), hoặc ID (không phân biệt chữ thường chữ hoa)
     if search:
+        import re
         search_term = search.strip()
-        search_filter = or_(
+        conditions = [
             Batch.product_name.ilike(f"%{search_term}%"),
             Batch.batch_code.ilike(f"%{search_term}%"),
             cast(Batch.id, String).ilike(f"%{search_term}%"),
-        )
-        stmt = stmt.where(search_filter)
+        ]
+        digits = re.findall(r"\d+", search_term)
+        if digits:
+            try:
+                num_id = int(digits[-1])
+                conditions.append(Batch.id == num_id)
+                conditions.append(Batch.batch_code.ilike(f"LOT-%{num_id:04d}%"))
+            except ValueError:
+                pass
+        stmt = stmt.where(or_(*conditions))
 
     # Phân trang con trỏ (keyset cursor)
     if cursor:
@@ -337,8 +347,24 @@ def delete_batch(
             detail=f"Không tìm thấy lô nông sản có id={batch_id}.",
         )
 
+    event_count = db.scalar(
+        select(func.count())
+        .select_from(BatchEvent)
+        .where(BatchEvent.batch_id == batch_id)
+    )
+    if event_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Lô nông sản #{batch_id} đã có {event_count} sự kiện trong nhật ký "
+                "chuỗi băm nên không thể xoá (bảng chỉ thêm). "
+                "Muốn đính chính, hãy ghi thêm một sự kiện mới thay vì xoá lô."
+            ),
+        )
+
     # Lưu lại tên sản phẩm để viết thông báo (sau khi xoá không đọc được nữa).
     product_name = batch.product_name
+
 
     db.delete(batch)
     try:

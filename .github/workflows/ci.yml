@@ -84,7 +84,7 @@ jobs:
 
       # 4. CI xanh: build, lint, typecheck, test (DoD)
       - name: Code Syntax & Linting (flake8)
-        run: flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics
+        run: flake8 backend --exclude=.venv --count --select=E9,F63,F7,F82 --show-source --statistics
 
       # 5. Unit test & Test Coverage (DoD)
       # Bộ test nằm ở tests/ tại GỐC repo (không phải backend/tests), và conftest.py được
