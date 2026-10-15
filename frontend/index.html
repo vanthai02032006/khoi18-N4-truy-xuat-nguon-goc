@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=3.0" />
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
   <!-- Persistent SVG Fractal Noise Overlay (4% opacity) -->
@@ -56,6 +57,10 @@
         <button type="button" class="nav-tab-pill" data-tab="orders">
           <span class="tab-icon">🚨</span>
           <span>THU HỒI</span>
+        </button>
+        <button type="button" class="nav-tab-pill" data-tab="lineage" id="tab-lineage-btn">
+          <span class="tab-icon">🌳</span>
+          <span>PHẢ HỆ</span>
         </button>
         <button type="button" class="nav-tab-pill" data-tab="users" id="tab-users-btn" hidden>
           <span class="tab-icon">👥</span>
@@ -1014,6 +1019,139 @@
           <div id="order-empty" class="empty-placeholder" hidden>
             <h4>Chưa có lệnh kiểm tra nào</h4>
             <p>Sử dụng biểu mẫu phía trên để ban hành lệnh kiểm tra hoặc thu hồi mới.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section: Sơ đồ Phả hệ Nông sản (SCRUM-109, SCRUM-105, SCRUM-108) -->
+      <section id="lineage-card" class="content-card" hidden>
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar" style="background: linear-gradient(135deg, #059669 0%, #047857 100%); color: white;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">Sơ đồ phả hệ nông sản (Lineage Graph · SCRUM-109)</h3>
+              <p class="card-subtitle">
+                Bố cục phân tầng 3 khu vực: <strong>Tổ tiên bên trái</strong> &larr; <strong>Lô hiện tại ở giữa</strong> &rarr; <strong>Hậu duệ bên phải</strong>. Bấm nút để thu gọn/mở rộng các nhánh sâu.
+              </p>
+            </div>
+          </div>
+          <div class="header-right">
+            <span class="editorial-chip" style="background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;">
+              Thư viện Vis-Network · Tương tác thời gian thực
+            </span>
+          </div>
+        </header>
+
+        <!-- Thanh công cụ tương tác phả hệ -->
+        <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
+          <div style="display: flex; gap: 10px; align-items: center; flex: 1; min-width: 280px;">
+            <label for="lineage-batch-select" style="font-size: 0.82rem; font-weight: 700; color: #334155; white-space: nowrap;">
+              CHỌN LÔ NÔNG SẢN:
+            </label>
+            <select id="lineage-batch-select" style="flex: 1; max-width: 380px; padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-weight: 600; font-size: 0.88rem;">
+              <option value="">-- Chọn lô nông sản cần xem phả hệ --</option>
+            </select>
+            <button id="btn-load-lineage" type="button" class="btn btn--sm" style="background: #047857; color: white; padding: 8px 16px; font-weight: 700;">
+              TẢI PHẢ HỆ
+            </button>
+          </div>
+
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button id="btn-toggle-deep-branches" type="button" class="btn btn--sm" style="background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1; font-weight: 600;" title="Thu gọn hoặc mở ra các nhánh phả hệ nhiều tầng">
+              🔄 Thu gọn / Mở nhánh sâu
+            </button>
+            <button id="btn-fit-lineage-graph" type="button" class="btn btn--sm" style="background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1; font-weight: 600;">
+              🎯 Căn giữa
+            </button>
+          </div>
+        </div>
+
+        <!-- Chú thích trực quan -->
+        <div style="display: flex; gap: 16px; align-items: center; margin-bottom: 12px; font-size: 0.8rem; flex-wrap: wrap;">
+          <span style="display: flex; align-items: center; gap: 6px;">
+            <span style="width: 14px; height: 14px; background: #3b82f6; border-radius: 3px; display: inline-block;"></span>
+            <strong>Bên trái:</strong> Tổ tiên (Nguồn gốc xuất xứ)
+          </span>
+          <span style="display: flex; align-items: center; gap: 6px;">
+            <span style="width: 14px; height: 14px; background: #f59e0b; border-radius: 3px; display: inline-block;"></span>
+            <strong>Ở giữa:</strong> Lô đang tra cứu
+          </span>
+          <span style="display: flex; align-items: center; gap: 6px;">
+            <span style="width: 14px; height: 14px; background: #10b981; border-radius: 3px; display: inline-block;"></span>
+            <strong>Bên phải:</strong> Hậu duệ (Phân phối / Tiêu thụ)
+          </span>
+          <span style="color: #64748b; font-style: italic;">
+            * Mẹo: Kéo chuột để di chuyển, cuộn chuột để phóng to/thu nhỏ, nhấp vào nút để mở/thu gọn nhánh sâu.
+          </span>
+        </div>
+
+        <!-- Khung vẽ đồ thị tương tác Vis-Network -->
+        <div id="lineage-graph-container" style="height: 520px; width: 100%; border-radius: 12px; border: 1px solid #cbd5e1; background: #f8fafc; position: relative;">
+          <div id="lineage-graph-empty" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #64748b;">
+            <p style="font-size: 1.1rem; font-weight: 700;">Chưa tải sơ đồ phả hệ</p>
+            <p style="font-size: 0.85rem;">Vui lòng chọn một lô nông sản ở thanh điều khiển phía trên để vẽ phả hệ.</p>
+          </div>
+        </div>
+
+        <!-- Hai bảng thông tin chi tiết: SCRUM-105 & SCRUM-108 -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 18px; margin-top: 20px;">
+          <!-- Bảng SCRUM-105: Nguồn gốc Vùng trồng & Thửa -->
+          <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <h4 style="font-size: 0.95rem; font-weight: 800; color: #1e293b; margin: 0; display: flex; align-items: center; gap: 6px;">
+                <span>🌾</span> NGUỒN GỐC VÙNG TRỒNG & THỬA ĐẤT (SCRUM-105)
+              </h4>
+              <span id="traceback-badge" class="table-tag" style="background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe;">—</span>
+            </div>
+            <p style="font-size: 0.78rem; color: #64748b; margin-bottom: 12px;">
+              Truy ngược tìm về các lô thu hoạch ban đầu để trả lời khách hàng về xuất xứ và thửa đất canh tác.
+            </p>
+            <div class="responsive-table">
+              <table class="data-table" style="font-size: 0.82rem;">
+                <thead>
+                  <tr>
+                    <th>MÃ LÔ GỐC</th>
+                    <th>VÙNG TRỒNG & THỬA</th>
+                    <th>ĐỊA CHỈ</th>
+                    <th>NGÀY THU</th>
+                  </tr>
+                </thead>
+                <tbody id="traceback-table-body">
+                  <tr><td colspan="4" style="text-align: center; color: #94a3b8;">Chưa có dữ liệu</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Bảng SCRUM-108: Truy xuôi Phân phối & Tồn kho -->
+          <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <h4 style="font-size: 0.95rem; font-weight: 800; color: #1e293b; margin: 0; display: flex; align-items: center; gap: 6px;">
+                <span>📦</span> TRUY XUÔI VỊ TRÍ & TỒN KHO HẬU DUỆ (SCRUM-108)
+              </h4>
+              <span id="traceforward-badge" class="table-tag" style="background: #ecfdf5; color: #047857; border-color: #a7f3d0;">—</span>
+            </div>
+            <p style="font-size: 0.78rem; color: #64748b; margin-bottom: 12px;">
+              Phục vụ cán bộ kiểm tra: biết rõ từng lô đang ở đâu, đơn vị nào giữ, còn bao nhiêu để liên hệ khi cần.
+            </p>
+            <div class="responsive-table">
+              <table class="data-table" style="font-size: 0.82rem;">
+                <thead>
+                  <tr>
+                    <th>MÃ LÔ CON/CHÁU</th>
+                    <th>TỔ CHỨC ĐANG GIỮ</th>
+                    <th>ĐỊA ĐIỂM / CỬA HÀNG</th>
+                    <th class="is-right">CÒN LẠI</th>
+                    <th>TRẠNG THÁI</th>
+                  </tr>
+                </thead>
+                <tbody id="traceforward-table-body">
+                  <tr><td colspan="5" style="text-align: center; color: #94a3b8;">Chưa có dữ liệu</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
