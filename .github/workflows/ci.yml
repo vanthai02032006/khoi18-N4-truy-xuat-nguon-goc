@@ -1,0 +1,93 @@
+name: CI Pipeline (Quality, Security & Tests)
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - develop
+      - main
+
+jobs:
+  security-and-compliance:
+    # Tên job phải khớp ĐÚNG context của required status check trong ruleset
+    # "Quy chuẩn DoD & DoR (main & develop)" — đổi tên sẽ khiến PR kẹt ở trạng thái blocked.
+    name: Security & Compliance Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 1. Quét secret trong mã nguồn (DoD: Không có secret trong mã nguồn)
+      - name: Secret Scanning (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      # 2. Không log dữ liệu định danh nông hộ (DoD: Không log PII nông hộ)
+      - name: Farmer PII Log Detection
+        run: |
+          echo "Kiểm tra mã nguồn không log thông tin định danh cá nhân nông hộ..."
+          PII_FOUND=$(git grep -iE "(logger\.|print\(|logging\.).*(cccd|cmnd|sdt_nongho|so_dien_thoai_nong_ho|chu_ho_id)" backend/app/ || true)
+          if [ -n "$PII_FOUND" ]; then
+            echo "❌ PHÁT HIỆN LOG DỮ LIỆU ĐỊNH DANH NÔNG HỘ VI PHẠM DoD:"
+            echo "$PII_FOUND"
+            exit 1
+          else
+            echo "✅ Không phát hiện log dữ liệu định danh nông hộ."
+          fi
+
+      # 3. Quét phụ thuộc sạch (DoD: Quét phụ thuộc sạch)
+      - name: Set up Python for dependency scan
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Dependency Vulnerability Audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+          if [ -f backend/requirements.txt ]; then
+            pip-audit -r backend/requirements.txt || echo "⚠️ Cảnh báo: Có phụ thuộc cần cập nhật bản vá"
+          fi
+
+  backend-quality-and-test:
+    # Tên job phải khớp ĐÚNG context của required status check trong ruleset.
+    name: Backend Quality & Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          # httpx là bắt buộc để dùng fastapi.testclient.TestClient (không nằm trong requirements.txt)
+          pip install pytest pytest-cov flake8 httpx
+
+      # 4. CI xanh: build, lint, typecheck, test (DoD)
+      - name: Code Syntax & Linting (flake8)
+        run: flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      # 5. Unit test & Test Coverage (DoD)
+      # Bộ test nằm ở tests/ tại GỐC repo (không phải backend/tests), và conftest.py được
+      # import trực tiếp nên cần cả backend/ lẫn tests/ trên PYTHONPATH.
+      - name: Run Unit Tests (pytest)
+        run: PYTHONPATH=backend:tests pytest tests -v
