@@ -65,6 +65,11 @@
 
       <!-- Right Controls in White Pill -->
       <div class="navbar__controls">
+        <button id="btn-nav-public-trace" class="action-btn" type="button" title="Cổng tra cứu công khai cho người tiêu dùng (SCRUM-128)" style="background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span>QUÉT MÃ / TRA CỨU</span>
+        </button>
+
         <div id="user-badge" class="user-pill" hidden>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           <span id="user-badge-text">KHÁCH</span>
@@ -195,6 +200,15 @@
               <span>ĐĂNG NHẬP HỆ THỐNG</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             </button>
+
+            <!-- SCRUM-128: Người tiêu dùng tra cứu không cần đăng nhập -->
+            <div style="margin-top: 20px; padding-top: 16px; border-top: 1px dashed #e2e8f0; text-align: center;">
+              <p style="font-size: 12px; color: #64748b; margin-bottom: 8px;">Bạn là người tiêu dùng quét mã QR trên bao bì?</p>
+              <button id="btn-open-consumer-trace" type="button" class="btn-action-primary" style="width: 100%; background: #059669; padding: 10px 16px; font-size: 13px; font-weight: 600;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <span>Tra cứu nguồn gốc công khai (Không cần đăng nhập)</span>
+              </button>
+            </div>
           </form>
         </div>
       </div>
@@ -527,6 +541,10 @@
               <button id="btn-open-public-map" class="btn-action-primary" type="button" style="background: #0284c7; padding: 7px 14px; font-size: 13px;" title="Tra cứu bản đồ hành trình công khai">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
                 <span>Bản đồ hành trình</span>
+              </button>
+              <button id="btn-open-batch-consumer-trace" class="btn-action-primary" type="button" style="background: #059669; padding: 7px 14px; font-size: 13px;" title="Cổng tra cứu công khai cho người tiêu dùng (SCRUM-128)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <span>Tra cứu người tiêu dùng</span>
               </button>
             </div>
           </div>
@@ -1454,6 +1472,103 @@
           Xác nhận từ chối
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- ==================== SCRUM-127: MODAL SINH MÃ QR DÁN BAO BÌ ==================== -->
+  <div id="action-modal-batch-qr" class="modal-backdrop" hidden>
+    <div class="modal-container" style="max-width: 620px;">
+      <header class="modal-header" style="background: #fffbeb; border-bottom: 1px solid #fde68a;">
+        <div class="modal-header-left">
+          <div class="modal-icon-badge" style="background: #fef3c7; color: #b45309;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          </div>
+          <div>
+            <h3 class="modal-title" style="color: #92400e;">In Mã QR Dán Lên Bao Bì (SCRUM-127)</h3>
+            <p class="modal-subtitle">Tạo mã QR trỏ tới cổng tra cứu công khai cho người tiêu dùng quét bằng điện thoại.</p>
+          </div>
+        </div>
+        <button id="btn-close-batch-qr" class="modal-close-btn" type="button" aria-label="Đóng">&times;</button>
+      </header>
+      <div class="modal-body" style="padding: 24px; text-align: center;">
+        <div style="margin-bottom: 16px;">
+          <h4 id="qr-batch-title" style="font-size: 1.1rem; font-weight: 700; color: #0f172a; margin: 0 0 4px;">Lô Nông Sản</h4>
+          <span id="qr-batch-code-badge" class="meta-tag font-mono" style="font-size: 0.9rem; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; padding: 4px 10px; border-radius: 6px;">LOT-—</span>
+        </div>
+
+        <!-- Khung nhãn mẫu in tiêu chuẩn 3cm x 3cm -->
+        <div style="display: inline-block; padding: 16px; border: 2px dashed #d97706; border-radius: 12px; background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin: 0 auto;">
+          <div style="font-size: 11px; font-weight: 700; color: #b45309; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px;">
+            🏷️ Kích thước nhãn in tiêu chuẩn: 3 cm × 3 cm
+          </div>
+          <div id="qr-image-container" style="display: flex; justify-content: center; align-items: center; min-height: 200px;">
+            <img id="qr-preview-img" src="" alt="Mã QR tra cứu nguồn gốc" style="width: 190px; height: 190px; object-fit: contain; border-radius: 8px; border: 1px solid #e2e8f0; padding: 8px; background: #fff;" />
+          </div>
+          <div id="qr-target-url" style="font-size: 11px; color: #64748b; font-family: monospace; margin-top: 8px; word-break: break-all; max-width: 320px;">
+            https://...
+          </div>
+        </div>
+
+        <div style="margin-top: 20px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;">
+          <button id="btn-download-qr-png" class="btn-action-primary" type="button" style="background: #059669;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Tải về PNG (Tem in)</span>
+          </button>
+          <button id="btn-download-qr-svg" class="btn-action-primary" type="button" style="background: #2563eb;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Tải về SVG (Vector công nghiệp)</span>
+          </button>
+          <button id="btn-view-public-trace-from-qr" class="btn-action-ghost" type="button" style="border: 1px solid #cbd5e1;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span>Xem trang công khai</span>
+          </button>
+        </div>
+      </div>
+      <footer class="modal-footer">
+        <button id="btn-close-batch-qr-footer" type="button" class="btn-action-ghost">Đóng cửa sổ</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ==================== SCRUM-128: CỔNG TRA CỨU CÔNG KHAI CHO NGƯỜI TIÊU DÙNG ==================== -->
+  <div id="action-modal-public-trace" class="modal-backdrop" hidden>
+    <div class="modal-container" style="max-width: 820px; max-height: 90vh; overflow-y: auto;">
+      <header class="modal-header" style="background: linear-gradient(135deg, #ecfdf5, #d1fae5); border-bottom: 1px solid #a7f3d0;">
+        <div class="modal-header-left">
+          <div class="modal-icon-badge" style="background: #10b981; color: white;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <div>
+            <h3 class="modal-title" style="color: #065f46; font-size: 1.25rem;">Cổng Tra Cứu Nguồn Gốc Nông Sản (SCRUM-128)</h3>
+            <p class="modal-subtitle" style="color: #047857;">Không cần đăng nhập · Minh bạch xuất xứ thửa đất, ngày thu hoạch và lịch trình chế biến.</p>
+          </div>
+        </div>
+        <button id="btn-close-public-trace" class="modal-close-btn" type="button" aria-label="Đóng">&times;</button>
+      </header>
+
+      <div class="modal-body" style="padding: 24px;">
+        <!-- Search bar -->
+        <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+          <input id="public-trace-search-input" type="text" placeholder="Nhập mã lô hoặc mã QR trên bao bì (VD: LOT-2026-X01)..."
+                 style="flex: 1; padding: 11px 16px; border: 2px solid #a7f3d0; border-radius: 8px; font-family: monospace; font-size: 14px; font-weight: 600; outline: none;" />
+          <button id="btn-execute-public-trace" class="btn-action-primary" type="button" style="background: #059669; padding: 0 20px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span>Tra cứu</span>
+          </button>
+        </div>
+
+        <!-- Render area -->
+        <div id="public-trace-render-area">
+          <div style="text-align: center; color: #64748b; padding: 40px 0;">
+            Quét mã QR trên bao bì hoặc nhập mã định danh lô vào ô phía trên để tra cứu nguồn gốc.
+          </div>
+        </div>
+      </div>
+
+      <footer class="modal-footer" style="background: #f8fafc; display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 12px; color: #64748b;">🔒 Dữ liệu được bảo chứng bằng chuỗi khối mã hóa bất biến (Audit Hash Chain).</span>
+        <button id="btn-close-public-trace-footer" type="button" class="btn-action-ghost">Đóng cửa sổ</button>
+      </footer>
     </div>
   </div>
 

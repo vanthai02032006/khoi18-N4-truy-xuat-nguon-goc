@@ -147,6 +147,18 @@ class Batch(Base):
         nullable=False,
         default=False,
     )
+    # Trạng thái vòng đời của lô (SCRUM-128 / SCRUM-127)
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="ĐANG_LƯU_THÔNG",
+    )
+    # Khối lượng còn lại sau khi xuất kho / phân phối
+    remaining_quantity: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        default=None,
+    )
 
     # Quan hệ N-1: nhiều lô có thể thuộc về một vùng trồng.
     farm: Mapped["Farm"] = relationship(back_populates="batches")
@@ -188,6 +200,15 @@ class Batch(Base):
         self.current_owner = value
         if value:
             self.current_holder_org = value
+
+    @property
+    def organization(self) -> str:
+        return self.current_holder_org
+
+    @organization.setter
+    def organization(self, val: str) -> None:
+        if val:
+            self.current_holder_org = val
 
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return (
