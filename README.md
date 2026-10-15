@@ -68,3 +68,23 @@ trồng, tổng lô nông sản, tổng sản lượng kg) và 2 bảng dữ li�
   và quay về màn hình đăng nhập.
 - API tương ứng: `POST` / `GET` / `PUT` / `DELETE` cho `/farms` và `/batches`
   (bảng endpoint đầy đủ: xem `backend/README.md`, mục 3).
+
+## Các module nâng cao & Kiểm thử chất lượng (Sprint 1)
+
+### 1. Chuỗi sự kiện bất biến (Immutable Hash-Chain - SCRUM-39 & SCRUM-44)
+- **`POST /batches/{id}/events`**: Ghi thêm sự kiện (Append-only). Mỗi bản ghi tự động liên kết mã băm SHA-256 với sự kiện liền trước (`previous_hash`).
+- **`GET /batches/{id}/events`**: Lấy dòng thời gian truy xuất và tự động quét toàn bộ chuỗi để phát hiện sửa lén (`tampered_index`).
+
+### 2. Thuật toán duyệt phả hệ BFS & Benchmark đếm tay (SCRUM-65 & SCRUM-69)
+- **Thuật toán BFS** (`backend/app/lineage.py`): Duyệt ngược cây nguồn gốc từ con lên cha theo từng tầng, có cơ chế ngắt và phát hiện chu trình (`LineageCycleError`).
+- **Bộ benchmark chuẩn** (`backend/data/lineage_benchmark.json`): Đối chiếu 100% với đáp án đếm tay độc lập của nhóm.
+
+### 3. Phân giải tổ chức đa người dùng (Multi-tenant - SCRUM-27..29)
+- ContextVar tự động tiêm điều kiện lọc `organization` cho các câu truy vấn, đảm bảo các bên trong chuỗi cung ứng không xem chéo dữ liệu của nhau.
+
+### 4. Hướng dẫn chạy kiểm thử tự động
+```powershell
+$env:PYTHONPATH='backend'
+python -m pytest tests/ -v
+```
+Toàn bộ test suite kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
