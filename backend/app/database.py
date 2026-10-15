@@ -19,6 +19,11 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+from app.append_only import (
+    create_append_only_triggers,
+    install_append_only_authorizer,
+)
+
 # ---------------------------------------------------------------- Cấu hình ---
 # Thư mục `backend/` (cha của thư mục `app/`) - nơi đặt file database .db
 BASE_DIR: Path = Path(__file__).resolve().parent.parent
@@ -36,8 +41,12 @@ engine = create_engine(
     echo=False,  # đổi thành True nếu muốn xem câu SQL sinh ra khi debug
 )
 
+# Áp quyền "chỉ SELECT/INSERT" cho mọi kết nối của tài khoản ứng dụng
+install_append_only_authorizer(engine)
+
 # Mỗi request sẽ mở một Session riêng, không tự commit/autoflush (an toàn hơn).
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
 
 
 class Base(DeclarativeBase):
@@ -90,12 +99,13 @@ def seed_default_users() -> None:
     """
     # Import trong hàm để tránh import vòng: models cần `Base` ở module này,
     # còn security cần `get_db` ở module này.
-    from app.models import ROLE_ADMIN, ROLE_FARMER, User
+    from app.models import ROLE_ADMIN, ROLE_FARMER, ROLE_INSPECTOR, User
     from app.security import hash_password
 
     default_users: tuple[dict[str, str], ...] = (
         {"username": "admin", "password": "123456", "role": ROLE_ADMIN},
         {"username": "farmer", "password": "123456", "role": ROLE_FARMER},
+        {"username": "inspector", "password": "123456", "role": ROLE_INSPECTOR},
     )
 
     db: Session = SessionLocal()
@@ -268,19 +278,160 @@ def seed_sample_agricultural_data() -> None:
         db.close()
 
 
+def seed_default_thresholds() -> None:
+    """Tạo các cấu hình ngưỡng mẫu ban đầu cho từng loại sản phẩm (Rau lá, Thịt đông lạnh, Trái cây)."""
+    from datetime import datetime, timezone
+    from app.models import ColdChainThreshold
+
+    db: Session = SessionLocal()
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        samples = [
+            {
+                "product_type": "Rau lá",
+                "temp_min": 2.0,
+                "temp_max": 8.0,
+                "delay_minutes": 15,
+                "description": "Rau muống, rau cải, xà lách bảo quản mát tiêu chuẩn",
+            },
+            {
+                "product_type": "Thịt đông lạnh",
+                "temp_min": -22.0,
+                "temp_max": -18.0,
+                "delay_minutes": 5,
+                "description": "Thịt bò, thịt heo, thủy hải sản đông sâu",
+            },
+            {
+                "product_type": "Trái cây nhiệt đới",
+                "temp_min": 10.0,
+                "temp_max": 14.0,
+                "delay_minutes": 20,
+                "description": "Xoài, chuối, thanh long tránh tổn thương do lạnh",
+            },
+        ]
+        for s in samples:
+            exists = db.scalar(select(ColdChainThreshold).where(ColdChainThreshold.product_type == s["product_type"]))
+            if exists is None:
+                db.add(
+                    ColdChainThreshold(
+                        product_type=s["product_type"],
+                        temp_min=s["temp_min"],
+                        temp_max=s["temp_max"],
+                        delay_minutes=s["delay_minutes"],
+                        description=s["description"],
+                        created_at=now_iso,
+                        updated_at=now_iso,
+                    )
+                )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _migrate_sqlite_schema() -> None:
+    """Tự động bổ sung các cột mới vào SQLite nếu database đã tồn tại từ trước."""
+    try:
+        with engine.connect() as conn:
+            cursor = conn.exec_driver_sql("PRAGMA table_info(batches)").fetchall()
+            existing_cols = {row[1] for row in cursor}
+            if existing_cols:
+                if "batch_code" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN batch_code VARCHAR(50)")
+                conn.exec_driver_sql("UPDATE batches SET batch_code = printf('LOT-%04d', id) WHERE batch_code IS NULL OR batch_code NOT LIKE 'LOT-%'")
+                if "current_holder_org" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN current_holder_org VARCHAR(100) DEFAULT 'HTX Nông Nghiệp Số 4'")
+                if "current_owner" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN current_owner VARCHAR(255) DEFAULT 'HTX Nông Nghiệp Số 4'")
+                conn.exec_driver_sql("UPDATE batches SET current_owner = current_holder_org WHERE current_owner IS NULL")
+                if "pending_receiver_org" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN pending_receiver_org VARCHAR(100)")
+                if "parent_id" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN parent_id INTEGER REFERENCES batches(id) ON DELETE SET NULL")
+                if "is_restricted" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN is_restricted BOOLEAN DEFAULT 0")
+            conn.commit()
+    except Exception:
+        pass
+
+
+def seed_default_products() -> None:
+    """Nạp danh mục sản phẩm chuẩn dùng chung nếu bảng ``products`` còn trống (S-16)."""
+    from sqlalchemy import func
+    from app.models import Product
+
+    db: Session = SessionLocal()
+    try:
+        product_count = db.scalar(select(func.count()).select_from(Product)) or 0
+        if product_count > 0:
+            return
+
+        db.add_all(
+            [
+                Product(
+                    name="Xoài Cát Chu",
+                    unit="kg",
+                    description="Xoài cát chu loại 1 thu hoạch tại Cao Lãnh, Đồng Tháp.",
+                ),
+                Product(
+                    name="Sầu Riêng Ri6",
+                    unit="kg",
+                    description="Sầu riêng Ri6 cơm vàng hạt lép, vùng Chợ Lách - Bến Tre.",
+                ),
+                Product(
+                    name="Bưởi Da Xanh",
+                    unit="piece",
+                    description="Bưởi da xanh đạt chuẩn GlobalGAP, bán theo trái.",
+                ),
+                Product(
+                    name="Thanh Long Ruột Đỏ",
+                    unit="kg",
+                    description="Thanh long ruột đỏ hàng chọn xuất khẩu, Bình Thuận.",
+                ),
+                Product(
+                    name="Nhãn Lồng Hưng Yên",
+                    unit="kg",
+                    description="Nhãn lồng Hương Chi loại 1, tỉnh Hưng Yên.",
+                ),
+                Product(
+                    name="Bơ Booth 7",
+                    unit="kg",
+                    description="Bơ Booth 7 trái to đều, vùng Đắk Lắk.",
+                ),
+                Product(
+                    name="Vải Thiều Lục Ngạn",
+                    unit="box",
+                    description="Vải thiều Lục Ngạn chuẩn VietGAP, đóng hộp 5kg.",
+                ),
+                Product(
+                    name="Chè Ô Long Mộc Châu",
+                    unit="bundle",
+                    description="Chè ô long búp non thu hái sớm, đóng bó 1kg.",
+                ),
+            ]
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def init_db() -> None:
-    """Tạo toàn bộ bảng trong database dựa trên metadata của các models.
-
-    Được gọi một lần khi ứng dụng khởi động (xem ``app/main.py``):
-
-    - ``Base.metadata.create_all()``: bảng chưa có thì tạo, bảng đã có thì
-      giữ nguyên (không làm mất dữ liệu đang lưu).
-    - ``seed_default_users()``: tạo 2 tài khoản mặc định cho chức năng đăng nhập
-      + phân quyền (Sprint 4).
-    - ``seed_sample_agricultural_data()``: nạp dữ liệu mẫu về thửa đất và lô nông sản.
-    """
-    from app import models  # noqa: F401  (import để đăng ký metadata)
+    """Tạo toàn bộ bảng trong database dựa trên metadata của các models."""
+    from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    try:
+        with engine.begin() as connection:
+            create_append_only_triggers(connection)
+    except Exception:
+        pass
+
+    _migrate_sqlite_schema()
     seed_default_users()
     seed_sample_agricultural_data()
+    seed_default_products()
+    seed_default_thresholds()
+
