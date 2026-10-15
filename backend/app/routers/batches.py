@@ -22,7 +22,7 @@ import json
 import secrets
 import string
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from sqlalchemy import cast, func, or_, select, String
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -1209,4 +1209,87 @@ def get_batch_public_map_by_id(
             detail=f"Không tìm thấy lô nông sản #{batch_id}.",
         )
     return _build_public_tracking_map_response(batch, db)
+
+
+def _generate_qr_response(batch: Batch, format: str = "png") -> Response:
+    """Sinh ảnh QR (PNG hoặc SVG) trỏ tới đường dẫn công khai của lô (SCRUM-127)."""
+    import io
+    import qrcode
+    import qrcode.image.svg
+
+    code = batch.batch_code or f"LOT-{batch.id:04d}"
+    trace_path = f"/public/trace/{code}"
+
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=2,
+    )
+    qr.add_data(trace_path)
+    qr.make(fit=True)
+
+    fmt = (format or "png").lower().strip()
+    if fmt == "svg":
+        factory = qrcode.image.svg.SvgPathImage
+        img = qr.make_image(image_factory=factory)
+        buf = io.BytesIO()
+        img.save(buf)
+        content = buf.getvalue()
+        media_type = "image/svg+xml"
+        filename = f"QR_{code}.svg"
+    else:
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        content = buf.getvalue()
+        media_type = "image/png"
+        filename = f"QR_{code}.png"
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
+
+
+@router.get(
+    "/{batch_id}/qr",
+    summary="Sinh mã QR in ấn (PNG/SVG) cho lô hàng theo ID (SCRUM-127)",
+    description="Tạo mã QR trỏ tới đường dẫn công khai của lô, tải về dạng PNG (ảnh tem 3x3 cm) và SVG (vector in công nghiệp).",
+)
+def get_batch_qr_code(
+    batch_id: int = Path(..., ge=1, description="ID của lô nông sản"),
+    format: str = Query("png", description="Định dạng trả về: 'png' hoặc 'svg'"),
+    db: Session = Depends(get_db),
+) -> Response:
+    batch = db.get(Batch, batch_id)
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+    return _generate_qr_response(batch, format)
+
+
+@router.get(
+    "/code/{batch_code}/qr",
+    summary="Sinh mã QR in ấn (PNG/SVG) theo mã lô (SCRUM-127)",
+)
+def get_batch_qr_code_by_code(
+    batch_code: str = Path(..., description="Mã lô nông sản (vd: LOT-20261015-A1)"),
+    format: str = Query("png", description="Định dạng trả về: 'png' hoặc 'svg'"),
+    db: Session = Depends(get_db),
+) -> Response:
+    batch = db.scalar(select(Batch).where(or_(Batch.batch_code == batch_code, cast(Batch.id, String) == batch_code)))
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản với mã '{batch_code}'.",
+        )
+    return _generate_qr_response(batch, format)
+
 

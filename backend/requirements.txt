@@ -13,3 +13,8 @@ pydantic==2.10.4
 
 # PDF Export (Hồ sơ truy xuất nguồn gốc - S-53)
 reportlab==4.2.5
+
+# QR Code Generation (Tem in bao bì & truy xuất công khai - SCRUM-127 & SCRUM-128)
+qrcode>=8.0
+pillow>=10.0.0
+

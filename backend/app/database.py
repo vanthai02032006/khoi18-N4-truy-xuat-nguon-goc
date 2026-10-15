@@ -351,6 +351,11 @@ def _migrate_sqlite_schema() -> None:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN parent_id INTEGER REFERENCES batches(id) ON DELETE SET NULL")
                 if "is_restricted" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN is_restricted BOOLEAN DEFAULT 0")
+                if "status" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN status VARCHAR(50) DEFAULT 'ĐANG_LƯU_THÔNG'")
+                if "remaining_quantity" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN remaining_quantity FLOAT")
+                conn.exec_driver_sql("UPDATE batches SET remaining_quantity = quantity WHERE remaining_quantity IS NULL")
             conn.commit()
     except Exception:
         pass

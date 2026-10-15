@@ -638,6 +638,11 @@ function renderBatches() {
                     data-action="timeline" data-entity="batch"
                     data-id="${escapeHtml(batch.id)}"
                     title="Xem dòng thời gian lịch sử & tính toàn vẹn chuỗi">Lịch sử</button>
+            <button class="btn btn--sm" style="background: #fef3c7; color: #92400e; border: 1px solid #fde68a;" type="button"
+                    data-action="qr" data-entity="batch"
+                    data-id="${escapeHtml(batch.id)}"
+                    data-code="${escapeHtml(batch.batch_code || `LOT-${batch.id}`)}"
+                    title="In mã QR dán lên bao bì (SCRUM-127)">Mã QR</button>
             ${
               session && session.role !== ROLE_INSPECTOR
                 ? `<button class="btn btn--sm btn-table-split" type="button"
@@ -1897,6 +1902,303 @@ async function loadPublicMap(batchIdentifier) {
   }
 }
 
+/* ---------------------------------- SCRUM-127: In Tem Mã QR Bao Bì --- */
+let activeQrBatch = null;
+
+function openQrModal(batchId, batchCode) {
+  const batch = batches.find((b) => b.id === batchId);
+  activeQrBatch = batch || { id: batchId, batch_code: batchCode, product_name: "Lô Nông Sản" };
+
+  const modal = $("action-modal-batch-qr");
+  if (!modal) return;
+
+  const code = activeQrBatch.batch_code || `LOT-${activeQrBatch.id}`;
+  $("qr-batch-title").textContent = activeQrBatch.product_name || `Lô #${activeQrBatch.id}`;
+  $("qr-batch-code-badge").textContent = code;
+
+  // Đường dẫn công khai được mã hóa vào QR
+  const publicUrl = `${window.location.origin}${window.location.pathname}?batch_code=${encodeURIComponent(code)}#public-trace`;
+  $("qr-target-url").textContent = publicUrl;
+
+  // Hiển thị ảnh QR preview dạng PNG
+  const img = $("qr-preview-img");
+  if (img) {
+    img.src = `${API_BASE_URL}/batches/${activeQrBatch.id}/qr?format=png`;
+  }
+
+  modal.hidden = false;
+}
+
+function closeQrModal() {
+  const modal = $("action-modal-batch-qr");
+  if (modal) modal.hidden = true;
+  activeQrBatch = null;
+}
+
+async function downloadBatchQr(format = "png") {
+  if (!activeQrBatch) return;
+  const batchId = activeQrBatch.id;
+  const code = activeQrBatch.batch_code || `LOT-${batchId}`;
+
+  try {
+    const url = `${API_BASE_URL}/batches/${batchId}/qr?format=${format}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`Máy chủ phản hồi mã lỗi ${res.status}`);
+    }
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    a.download = `QR-TEM-IN-${code}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+    toast(`Đã tải về mã QR in bao bì dạng ${format.toUpperCase()} (${code})!`, "success");
+  } catch (err) {
+    toast(`Không tải được mã QR: ${err.message}`, "error");
+  }
+}
+
+/* ---------------------------------- SCRUM-128: Cổng Tra Cứu Nguồn Gốc Người Tiêu Dùng --- */
+function openPublicTraceModal(batchIdentifier = "") {
+  const modal = $("action-modal-public-trace");
+  if (!modal) return;
+  modal.hidden = false;
+
+  const input = $("public-trace-search-input");
+  if (input) {
+    if (batchIdentifier) {
+      input.value = batchIdentifier;
+      executePublicTrace(batchIdentifier);
+    } else {
+      input.focus();
+    }
+  }
+}
+
+function closePublicTraceModal() {
+  const modal = $("action-modal-public-trace");
+  if (modal) modal.hidden = true;
+}
+
+async function executePublicTrace(identifier) {
+  const container = $("public-trace-render-area");
+  if (!container || !identifier) return;
+
+  container.innerHTML = `
+    <div style="text-align: center; color: #059669; padding: 40px 0;">
+      <div style="font-size: 24px; margin-bottom: 8px;">🔍</div>
+      <div style="font-weight: 600; font-size: 15px;">Đang tra cứu dữ liệu xuất xứ nông sản...</div>
+      <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Đang xác thực chuỗi phả hệ thửa đất và các mốc sơ chế/vận chuyển</div>
+    </div>`;
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/public/trace/by-code/${encodeURIComponent(identifier)}`);
+    if (res.status === 404) {
+      // SCRUM-128: Mã không tồn tại trả về giao diện "không tìm thấy" không lộ gì thêm
+      container.innerHTML = `
+        <div style="text-align: center; padding: 36px 20px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 10px;">
+          <div style="width: 52px; height: 52px; border-radius: 50%; background: #ffe4e6; color: #e11d48; display: flex; align-items: center; justify-content: center; font-size: 24px; margin: 0 auto 14px;">
+            ⚠️
+          </div>
+          <h4 style="font-size: 1.15rem; font-weight: 800; color: #9f1239; margin: 0 0 8px;">Không tìm thấy thông tin nông sản</h4>
+          <p style="font-size: 0.9rem; color: #881337; max-width: 500px; margin: 0 auto 12px; line-height: 1.5;">
+            Mã lô hoặc tem quét <strong>"${escapeHtml(identifier)}"</strong> không tồn tại trong hệ thống kiểm định truy xuất nguồn gốc.
+          </p>
+          <div style="font-size: 0.8rem; color: #9f1239; background: #fff; padding: 10px 16px; border-radius: 6px; display: inline-block; border: 1px dashed #fda4af;">
+            💡 Khuyến nghị: Vui lòng kiểm tra lại tem nhãn dán trên bao bì hoặc liên hệ đại lý phân phối để được hỗ trợ.
+          </div>
+        </div>`;
+      return;
+    }
+
+    if (!res.ok) {
+      throw new Error(`Lỗi máy chủ (${res.status})`);
+    }
+
+    const data = await res.json();
+    renderPublicTraceData(container, data);
+  } catch (err) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 30px; background: #fef2f2; border-radius: 8px; color: #b91c1c;">
+        Không thể hoàn tất tra cứu: ${escapeHtml(err.message)}
+      </div>`;
+  }
+}
+
+function renderPublicTraceData(container, data) {
+  const originFarms = data.origin_farms || [];
+  const events = data.timeline_events || [];
+  const isMerged = data.is_merged || originFarms.length > 1;
+
+  let farmsHtml = "";
+  if (isMerged) {
+    farmsHtml = `
+      <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 14px 18px; margin-bottom: 20px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+          <span style="background: #d97706; color: #fff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase;">
+            Lô gộp từ nhiều nguồn gốc
+          </span>
+          <strong style="color: #92400e; font-size: 13px;">Hiển thị toàn bộ ${originFarms.length} vùng trồng gốc cấu thành nên lô nông sản này:</strong>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;">
+          ${originFarms.map((farm, idx) => `
+            <div style="background: #fff; border: 1px solid #fcd34d; border-radius: 6px; padding: 12px;">
+              <div style="font-weight: 700; color: #0f172a; font-size: 13px; margin-bottom: 4px;">
+                🌱 Vùng trồng gốc #${idx + 1}: ${escapeHtml(farm.name)}
+              </div>
+              <div style="font-size: 12px; color: #047857; font-weight: 600; margin-bottom: 2px;">
+                📍 Tỉnh / Thành phố: <strong>${escapeHtml(farm.province || '—')}</strong>
+              </div>
+              <div style="font-size: 12px; color: #64748b; margin-bottom: 2px;">
+                Địa chỉ: ${escapeHtml(farm.location)}
+              </div>
+              <div style="font-size: 12px; color: #475569;">
+                Chủ sở hữu: <strong>${escapeHtml(farm.owner)}</strong> ${farm.area ? `(${farm.area} ha)` : ''}
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  } else {
+    const singleFarm = originFarms[0] || (data.farm ? {
+      name: data.farm.name,
+      province: data.farm.province,
+      location: data.farm.location,
+      owner: data.farm.owner,
+      area: data.farm.area
+    } : null);
+
+    farmsHtml = `
+      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <div style="font-size: 11px; font-weight: 700; color: #16a34a; text-transform: uppercase;">
+              Vùng trồng xuất xứ đơn nguồn
+            </div>
+            <h4 style="font-size: 1.15rem; font-weight: 800; color: #065f46; margin: 4px 0;">
+              ${escapeHtml(singleFarm?.name || "Chưa định danh vùng")}
+            </h4>
+            <div style="font-size: 13px; color: #047857; font-weight: 600; margin-bottom: 4px;">
+              📍 Tỉnh / Thành phố: <strong>${escapeHtml(singleFarm?.province || data.province || '—')}</strong>
+            </div>
+            <div style="font-size: 12px; color: #475569;">
+              Địa chỉ: ${escapeHtml(singleFarm?.location || '—')}
+            </div>
+          </div>
+          <div style="background: #fff; padding: 8px 14px; border-radius: 6px; border: 1px solid #dcfce7; text-align: right;">
+            <div style="font-size: 11px; color: #64748b;">Hộ / Hợp tác xã canh tác</div>
+            <div style="font-size: 13px; font-weight: 700; color: #065f46;">${escapeHtml(singleFarm?.owner || '—')}</div>
+            ${singleFarm?.area ? `<div style="font-size: 11px; color: #64748b;">Quy mô: ${singleFarm.area} ha</div>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Events timeline
+  let timelineHtml = "";
+  if (events.length === 0) {
+    timelineHtml = `<div style="text-align: center; color: #64748b; padding: 20px;">Chưa ghi nhận sự kiện chuỗi cung ứng cho lô này.</div>`;
+  } else {
+    timelineHtml = events.map((ev, idx) => {
+      const isFirst = idx === 0;
+      const isLast = idx === events.length - 1;
+      const color = isFirst ? "#16a34a" : isLast ? "#2563eb" : "#0284c7";
+      const bg = isFirst ? "#f0fdf4" : isLast ? "#eff6ff" : "#f8fafc";
+      const icon = ev.stage_icon || "📌";
+
+      return `
+        <div style="display: flex; gap: 14px; margin-bottom: 14px; position: relative;">
+          <div style="display: flex; flex-direction: column; align-items: center; width: 34px; flex-shrink: 0;">
+            <div style="width: 32px; height: 32px; border-radius: 50%; background: ${color}; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); z-index: 2;">
+              ${icon}
+            </div>
+            ${!isLast ? `<div style="width: 2px; flex-grow: 1; background: #cbd5e1; margin: 4px 0;"></div>` : ''}
+          </div>
+
+          <div style="flex-grow: 1; background: ${bg}; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 4px;">
+              <div>
+                <span style="background: ${color}; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px;">
+                  MỐC #${ev.step_number || idx + 1}: ${escapeHtml(ev.stage_name)}
+                </span>
+                <strong style="margin-left: 8px; color: #0f172a; font-size: 13px;">${escapeHtml(ev.organization || 'Hệ thống')}</strong>
+              </div>
+              <span style="font-size: 12px; color: #64748b; font-family: monospace;">
+                ${escapeHtml(new Date(ev.timestamp).toLocaleString("vi-VN"))}
+              </span>
+            </div>
+
+            <div style="font-size: 13px; color: #334155; margin-top: 6px;">
+              ${escapeHtml(ev.description || 'Ghi nhận mốc sự kiện')}
+            </div>
+
+            ${ev.note ? `<div style="font-size: 12px; color: #64748b; margin-top: 4px; font-style: italic;">Ghi chú: ${escapeHtml(ev.note)}</div>` : ''}
+
+            <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.05); display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; font-family: monospace;">
+              <span>Người ghi nhận: <strong>${escapeHtml(ev.actor)}</strong></span>
+              <span>Mã kiểm định: ${escapeHtml((ev.hash || '').slice(0, 16))}…</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  container.innerHTML = `
+    <div>
+      <!-- Banner sản phẩm -->
+      <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+              <span style="background: #10b981; color: white; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px;">
+                ĐÃ KIỂM ĐỊNH NGUỒN GỐC
+              </span>
+              <span class="font-mono" style="font-weight: 700; color: #047857; font-size: 13px;">
+                ${escapeHtml(data.batch_code)}
+              </span>
+            </div>
+            <h3 style="font-size: 1.4rem; font-weight: 800; color: #0f172a; margin: 4px 0;">
+              ${escapeHtml(data.product_name)}
+            </h3>
+            <div style="font-size: 13px; color: #475569;">
+              Đơn vị hiện nắm giữ: <strong>${escapeHtml(data.current_holder_org || 'Hợp tác xã')}</strong>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
+            <div style="background: #f1f5f9; padding: 6px 12px; border-radius: 6px; font-size: 12px; color: #334155;">
+              📅 Ngày thu hoạch: <strong style="color: #0f172a;">${escapeHtml(formatDate(data.harvest_date))}</strong>
+            </div>
+            <div style="background: #ecfdf5; border: 1px solid #a7f3d0; padding: 6px 12px; border-radius: 6px; font-size: 12px; color: #065f46;">
+              ⚖️ Sản lượng lô: <strong>${formatNumber(data.quantity)} kg</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vùng trồng xuất xứ -->
+      ${farmsHtml}
+
+      <!-- Các mốc sơ chế, vận chuyển, phân phối theo thứ tự thời gian -->
+      <div style="margin-top: 24px;">
+        <h4 style="font-size: 1.05rem; font-weight: 700; color: #0f172a; margin: 0 0 14px; display: flex; align-items: center; gap: 8px;">
+          <span>📋</span>
+          <span>Lịch trình thu hoạch, sơ chế & lưu thông (Theo thứ tự thời gian)</span>
+        </h4>
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px;">
+          ${timelineHtml}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 /* --------------------------- 9b. Giám Sát Lệnh Kiểm Tra & Thu Hồi (Inspector Orders) --- */
 /** GET /orders -> tải danh sách các lệnh kiểm tra / thu hồi */
 async function loadOrders() {
@@ -2566,6 +2868,64 @@ function bindEvents() {
       }
     });
   }
+
+  // SCRUM-127: In Tem Mã QR Bao Bì
+  if ($("btn-close-batch-qr")) {
+    $("btn-close-batch-qr").addEventListener("click", closeQrModal);
+  }
+  if ($("btn-close-batch-qr-footer")) {
+    $("btn-close-batch-qr-footer").addEventListener("click", closeQrModal);
+  }
+  if ($("btn-download-qr-png")) {
+    $("btn-download-qr-png").addEventListener("click", () => downloadBatchQr("png"));
+  }
+  if ($("btn-download-qr-svg")) {
+    $("btn-download-qr-svg").addEventListener("click", () => downloadBatchQr("svg"));
+  }
+  if ($("btn-view-public-trace-from-qr")) {
+    $("btn-view-public-trace-from-qr").addEventListener("click", () => {
+      const code = activeQrBatch ? (activeQrBatch.batch_code || `LOT-${activeQrBatch.id}`) : "";
+      closeQrModal();
+      openPublicTraceModal(code);
+    });
+  }
+
+  // SCRUM-128: Cổng Tra Cứu Nguồn Gốc Người Tiêu Dùng (Không cần đăng nhập)
+  if ($("btn-nav-public-trace")) {
+    $("btn-nav-public-trace").addEventListener("click", () => openPublicTraceModal());
+  }
+  if ($("btn-open-consumer-trace")) {
+    $("btn-open-consumer-trace").addEventListener("click", () => openPublicTraceModal());
+  }
+  if ($("btn-open-batch-consumer-trace")) {
+    $("btn-open-batch-consumer-trace").addEventListener("click", () => openPublicTraceModal());
+  }
+  if ($("btn-close-public-trace")) {
+    $("btn-close-public-trace").addEventListener("click", closePublicTraceModal);
+  }
+  if ($("btn-close-public-trace-footer")) {
+    $("btn-close-public-trace-footer").addEventListener("click", closePublicTraceModal);
+  }
+  if ($("btn-execute-public-trace")) {
+    $("btn-execute-public-trace").addEventListener("click", () => {
+      const input = $("public-trace-search-input");
+      const val = input ? input.value.trim() : "";
+      if (!val) {
+        toast("Vui lòng nhập mã lô hoặc tem quét để tra cứu.", "error");
+        return;
+      }
+      executePublicTrace(val);
+    });
+  }
+  if ($("public-trace-search-input")) {
+    $("public-trace-search-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const val = e.target.value.trim();
+        if (val) executePublicTrace(val);
+      }
+    });
+  }
 }
 
 /** Huỷ chế độ sửa của form vùng trồng / lô nông sản / sản phẩm (nút "Huỷ sửa"). */
@@ -2604,6 +2964,11 @@ function handleTableAction(event) {
 
   if (action === "timeline") {
     openTimelineModal(id);
+    return;
+  }
+
+  if (action === "qr") {
+    openQrModal(id, button.dataset.code);
     return;
   }
 
@@ -2701,6 +3066,15 @@ async function init() {
 
   applySessionToUi(); // chỉ hiện màn hình login
   $("login-username").focus();
+
+  // SCRUM-128: Tự động mở cổng tra cứu công khai nếu quét mã QR từ điện thoại
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramCode = urlParams.get("batch_code") || urlParams.get("batch_id") || urlParams.get("code");
+  if (paramCode) {
+    openPublicTraceModal(paramCode);
+  } else if (window.location.hash.includes("public-trace")) {
+    openPublicTraceModal();
+  }
 }
 
 document.addEventListener("DOMContentLoaded", init);
