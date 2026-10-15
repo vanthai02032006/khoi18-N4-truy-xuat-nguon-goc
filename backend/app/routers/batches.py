@@ -29,9 +29,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Batch, BatchEvent, Farm, User
+from app.models import Batch, BatchEvent, BatchRelation, Farm, Organization, Product, User
 from app.schemas import (
     BatchCreate,
+    BatchDirectSummaryResponse,
     BatchMergeRequest,
     BatchMergeResponse,
     BatchResponse,
@@ -39,14 +40,28 @@ from app.schemas import (
     BatchSplitResponse,
     BatchUpdate,
     DeleteResponse,
+    DescendantBatchItem,
+    DirectParentChildItem,
     HandoverActionResponse,
     HandoverInitiateRequest,
     HandoverRejectRequest,
+    LineageGraphEdge,
+    LineageGraphNode,
+    LineageGraphResponse,
     MapWaypoint,
+    OriginFarmItem,
     PublicTrackingMapResponse,
+    TraceBackResponse,
+    TraceForwardResponse,
 )
-from app.security import compute_event_hash, require_admin, require_farmer
+from app.security import compute_event_hash, get_current_user, require_admin, require_farmer
 from app.tenant import get_tenant_org, require_tenant_context
+from app.lineage import (
+    LineageCycleError,
+    extract_lineage_relations_from_events,
+    find_ancestors_bfs,
+    find_descendants_bfs,
+)
 
 router = APIRouter(
     prefix="/batches",
@@ -1209,4 +1224,591 @@ def get_batch_public_map_by_id(
             detail=f"Không tìm thấy lô nông sản #{batch_id}.",
         )
     return _build_public_tracking_map_response(batch, db)
+
+
+# =====================================================================
+# SPRINT 2 / SPRINT 3: TỔNG HỢP CHI TIẾT & TRUY VẾT PHẢ HỆ
+# (SCRUM-74, SCRUM-105, SCRUM-108, SCRUM-109)
+# =====================================================================
+
+def _get_all_lineage_relations(db: Session) -> list[dict]:
+    """Tổng hợp tất cả các quan hệ cha - con trong hệ thống (từ BatchRelation, Batch.parent_id, và events)."""
+    relations: list[dict] = []
+    seen = set()
+
+    batch_cache: dict[int, str] = {}
+
+    def get_code(b_id: int) -> str:
+        if b_id not in batch_cache:
+            b = db.get(Batch, b_id)
+            batch_cache[b_id] = (b.batch_code if b and b.batch_code else f"LOT-{b_id:04d}")
+        return batch_cache[b_id]
+
+    # 1. Từ bảng BatchRelation (quan hệ gộp nhiều-nhiều)
+    br_stmt = select(
+        BatchRelation.parent_batch_id,
+        BatchRelation.child_batch_id,
+        BatchRelation.used_quantity,
+    )
+    br_rows = db.execute(br_stmt).all()
+    for p_id, c_id, qty in br_rows:
+        p_code = get_code(p_id)
+        c_code = get_code(c_id)
+        key = (p_code, c_code)
+        if key not in seen:
+            seen.add(key)
+            relations.append({
+                "parent": p_code,
+                "child": c_code,
+                "type": "MERGE",
+                "quantity": float(qty) if qty is not None else None,
+            })
+
+    # 2. Từ Batch.parent_id (quan hệ tách 1-cha -> nhiều-con)
+    split_batches = db.execute(
+        select(Batch.id, Batch.batch_code, Batch.parent_id, Batch.quantity)
+        .where(Batch.parent_id.is_not(None))
+    ).all()
+    for b_id, b_code, p_id, qty in split_batches:
+        p_code = get_code(p_id)
+        c_code = b_code or f"LOT-{b_id:04d}"
+        key = (p_code, c_code)
+        if key not in seen:
+            seen.add(key)
+            relations.append({
+                "parent": p_code,
+                "child": c_code,
+                "type": "SPLIT",
+                "quantity": float(qty) if qty is not None else None,
+            })
+
+    # 3. Từ BatchEvent (các sự kiện SPLIT và MERGE trong lịch sử nếu chưa có ở 2 bảng trên)
+    all_events = list(db.scalars(select(BatchEvent).order_by(BatchEvent.id.asc())).all())
+    event_relations = extract_lineage_relations_from_events(all_events)
+    for er in event_relations:
+        key = (er["parent"], er["child"])
+        if key not in seen:
+            seen.add(key)
+            relations.append(er)
+
+    return relations
+
+
+@router.get(
+    "/{batch_id}/direct-summary",
+    response_model=BatchDirectSummaryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Truy vấn tổng hợp chi tiết lô kèm lô mẹ và lô con trực tiếp (SCRUM-74)",
+    description="Gom thông tin lô, thửa, sản phẩm, tổ chức đang giữ và quan hệ trực tiếp 1 tầng (T-39). Kiểm quyền qua T-54. Tối đa 3 câu lệnh SQL, không tải toàn bộ dòng thời gian.",
+)
+def get_batch_direct_summary(
+    batch_id: int = Path(..., ge=1, description="ID lô nông sản."),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BatchDirectSummaryResponse:
+    """Hàm tổng hợp thông tin nhanh, chỉ đếm số lượng sự kiện thay vì tải toàn bộ.
+
+    Tối đa 3 câu lệnh SQL:
+    - Câu 1: Lấy Batch JOIN Farm (lô + thửa + tổ chức).
+    - Câu 2: Lấy các lô mẹ và lô con trực tiếp 1 tầng (T-39).
+    - Câu 3: Đếm số lượng sự kiện (COUNT(*)).
+    """
+    from sqlalchemy import literal, union_all
+
+    # -----------------------------------------------------------------
+    # Câu SQL 1: Lấy thông tin Lô kèm Vùng trồng (Farm)
+    # -----------------------------------------------------------------
+    stmt = (
+        select(
+            Batch.id,
+            Batch.batch_code,
+            Batch.product_name,
+            Batch.quantity,
+            Batch.harvest_date,
+            Batch.is_restricted,
+            Batch.current_holder_org,
+            Batch.current_owner,
+            Batch.parent_id,
+            Farm.id.label("farm_id"),
+            Farm.name.label("farm_name"),
+            Farm.location.label("farm_location"),
+            Farm.area.label("farm_area"),
+            Farm.owner.label("farm_owner"),
+        )
+        .join(Farm, Batch.farm_id == Farm.id)
+        .where(Batch.id == batch_id)
+    )
+    b_row = db.execute(stmt).first()
+    if not b_row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+
+    # Kiểm tra quyền qua T-54 (Cờ bảo mật is_restricted)
+    if b_row.is_restricted and current_user.role not in ("admin", "inspector"):
+        current_org = get_tenant_org()
+        user_is_owner = current_user.username == (b_row.current_owner or "")
+        org_matches = current_org == b_row.current_holder_org
+        if not (user_is_owner or org_matches):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Lô nông sản này đang bị hạn chế bảo mật (T-54). Bạn không có quyền truy cập.",
+            )
+
+    # -----------------------------------------------------------------
+    # Câu SQL 2: Lấy quan hệ mẹ và con trực tiếp (T-39 / 1 tầng, đúng 1 câu UNION ALL)
+    # -----------------------------------------------------------------
+    # 1. Lô mẹ từ gộp (BatchRelation)
+    parents_from_merge = select(
+        Batch.id,
+        Batch.batch_code,
+        Batch.product_name,
+        Batch.quantity,
+        BatchRelation.used_quantity.label("used_quantity"),
+        literal("PARENT_MERGE").label("rel_role"),
+    ).join(BatchRelation, Batch.id == BatchRelation.parent_batch_id).where(BatchRelation.child_batch_id == batch_id)
+
+    # 2. Lô mẹ từ tách (Batch.parent_id)
+    parents_from_split = select(
+        Batch.id,
+        Batch.batch_code,
+        Batch.product_name,
+        Batch.quantity,
+        literal(None).label("used_quantity"),
+        literal("PARENT_SPLIT").label("rel_role"),
+    ).where(Batch.id == b_row.parent_id if b_row.parent_id else False)
+
+    # 3. Lô con từ gộp (BatchRelation)
+    children_from_merge = select(
+        Batch.id,
+        Batch.batch_code,
+        Batch.product_name,
+        Batch.quantity,
+        BatchRelation.used_quantity.label("used_quantity"),
+        literal("CHILD_MERGE").label("rel_role"),
+    ).join(BatchRelation, Batch.id == BatchRelation.child_batch_id).where(BatchRelation.parent_batch_id == batch_id)
+
+    # 4. Lô con từ tách (Batch.parent_id == batch_id)
+    children_from_split = select(
+        Batch.id,
+        Batch.batch_code,
+        Batch.product_name,
+        Batch.quantity,
+        literal(None).label("used_quantity"),
+        literal("CHILD_SPLIT").label("rel_role"),
+    ).where(Batch.parent_id == batch_id)
+
+    union_stmt = union_all(
+        parents_from_merge,
+        parents_from_split,
+        children_from_merge,
+        children_from_split,
+    )
+    rel_rows = db.execute(union_stmt).all()
+
+    direct_parents: list[DirectParentChildItem] = []
+    direct_children: list[DirectParentChildItem] = []
+    seen_parent_ids = set()
+    seen_child_ids = set()
+
+    for r in rel_rows:
+        rb_id, rb_code, rb_pname, rb_qty, used_q, rel_role = r[0], r[1], r[2], r[3], r[4], r[5]
+        code_str = rb_code or f"LOT-{rb_id:04d}"
+        used_float = float(used_q) if used_q is not None else None
+
+        if "PARENT" in rel_role and rb_id not in seen_parent_ids:
+            seen_parent_ids.add(rb_id)
+            direct_parents.append(
+                DirectParentChildItem(
+                    batch_id=rb_id,
+                    batch_code=code_str,
+                    product_name=rb_pname,
+                    quantity=rb_qty,
+                    used_quantity=used_float,
+                    relation_type="MERGE" if "MERGE" in rel_role else "SPLIT",
+                )
+            )
+        elif "CHILD" in rel_role and rb_id not in seen_child_ids:
+            seen_child_ids.add(rb_id)
+            direct_children.append(
+                DirectParentChildItem(
+                    batch_id=rb_id,
+                    batch_code=code_str,
+                    product_name=rb_pname,
+                    quantity=rb_qty,
+                    used_quantity=used_float,
+                    relation_type="MERGE" if "MERGE" in rel_role else "SPLIT",
+                )
+            )
+
+    # -----------------------------------------------------------------
+    # Câu SQL 3: Chỉ đếm số lượng sự kiện, không tải toàn bộ dòng thời gian
+    # -----------------------------------------------------------------
+    events_count = db.scalar(
+        select(func.count(BatchEvent.id)).where(BatchEvent.batch_id == batch_id)
+    ) or 0
+
+    batch_code = b_row.batch_code or f"LOT-{b_row.id:04d}"
+
+    return BatchDirectSummaryResponse(
+        id=b_row.id,
+        batch_code=batch_code,
+        product_name=b_row.product_name,
+        quantity=b_row.quantity,
+        harvest_date=str(b_row.harvest_date),
+        is_restricted=b_row.is_restricted,
+        current_holder_org=b_row.current_holder_org,
+        current_owner=b_row.current_owner,
+        farm={
+            "id": b_row.farm_id,
+            "name": b_row.farm_name,
+            "location": b_row.farm_location,
+            "area": b_row.farm_area,
+            "owner": b_row.farm_owner,
+            "plot_name": f"Thửa {b_row.farm_id} - {b_row.farm_name}",
+        },
+        product={
+            "name": b_row.product_name,
+            "unit": "kg",
+            "description": f"Sản phẩm {b_row.product_name} thu hoạch tiêu chuẩn",
+        },
+        holder_org={
+            "code": b_row.current_holder_org,
+            "name": b_row.current_holder_org,
+            "owner": b_row.current_owner or b_row.current_holder_org,
+        },
+        direct_parents=direct_parents,
+        direct_children=direct_children,
+        events_count=events_count,
+    )
+
+
+@router.get(
+    "/{batch_id}/trace-back",
+    response_model=TraceBackResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Truy ngược nguồn gốc vùng trồng của lô nông sản (SCRUM-105)",
+    description="Truy ngược xuất xứ đến các lô thu hoạch gốc kèm vùng trồng và thửa. Khớp đáp án mẫu qua nhiều tầng tách/gộp, tự dừng khi có chu trình.",
+)
+def get_batch_trace_back(
+    batch_id: int = Path(..., ge=1, description="ID lô nông sản."),
+    db: Session = Depends(get_db),
+) -> TraceBackResponse:
+    """Truy ngược nguồn gốc vùng trồng (SCRUM-105):
+
+    - Giả sử lô là kết quả gộp của hai lô đến từ hai vùng trồng khác nhau -> thấy cả hai lô thu hoạch gốc kèm tên vùng trồng và thửa.
+    - Giả sử lô đi qua ba tầng tách và gộp -> kết quả khớp đáp án đếm tay.
+    - Giả sử lô chưa từng tách hay gộp -> trả về chính nó.
+    - Giả sử dữ liệu lỗi tạo ra chu trình cha-con -> dừng và báo lỗi thay vì lặp vô hạn.
+    """
+    batch = db.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+    b_code = batch.batch_code or f"LOT-{batch.id:04d}"
+
+    relations = _get_all_lineage_relations(db)
+
+    # Chạy BFS truy ngược tổ tiên
+    try:
+        ancestor_codes = find_ancestors_bfs(b_code, relations)
+    except LineageCycleError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Phát hiện chu trình phả hệ cha-con: Dữ liệu vòng lặp không hợp lệ ({str(e)}). Đã dừng truy ngược để chống lặp vô hạn.",
+        )
+
+    # Ca: Lô chưa từng tách hay gộp -> trả về chính nó
+    if not ancestor_codes:
+        farm = batch.farm
+        origin_farm = OriginFarmItem(
+            batch_id=batch.id,
+            batch_code=b_code,
+            product_name=batch.product_name,
+            harvest_date=str(batch.harvest_date),
+            initial_quantity=batch.quantity,
+            farm_id=farm.id if farm else 0,
+            farm_name=farm.name if farm else "—",
+            farm_location=farm.location if farm else "—",
+            farm_area=farm.area if farm else 0.0,
+            farm_owner=farm.owner if farm else "—",
+            plot_name=f"Thửa {farm.id if farm else 0} - {farm.name if farm else 'Vùng trồng gốc'}",
+        )
+        return TraceBackResponse(
+            target_batch_id=batch.id,
+            target_batch_code=b_code,
+            target_product_name=batch.product_name,
+            target_quantity=batch.quantity,
+            is_standalone=True,
+            depth=0,
+            all_ancestor_codes=[],
+            origin_farms=[origin_farm],
+        )
+
+    # Tìm các lô gốc thu hoạch (root harvest batches):
+    # Những lô trong ancestor_codes mà không có cha nào trong relations
+    parent_map: dict[str, list[str]] = {}
+    for r in relations:
+        parent_map.setdefault(r["child"], []).append(r["parent"])
+
+    root_codes = []
+    for code in ancestor_codes:
+        if not parent_map.get(code):
+            root_codes.append(code)
+
+    if not root_codes:
+        root_codes = ancestor_codes[-1:]
+
+    origin_farms: list[OriginFarmItem] = []
+    for r_code in root_codes:
+        r_batch = db.scalar(select(Batch).where(or_(Batch.batch_code == r_code, cast(Batch.id, String) == r_code)))
+        if r_batch:
+            farm = r_batch.farm
+            origin_farms.append(
+                OriginFarmItem(
+                    batch_id=r_batch.id,
+                    batch_code=r_code,
+                    product_name=r_batch.product_name,
+                    harvest_date=str(r_batch.harvest_date),
+                    initial_quantity=r_batch.quantity,
+                    farm_id=farm.id if farm else 0,
+                    farm_name=farm.name if farm else "—",
+                    farm_location=farm.location if farm else "—",
+                    farm_area=farm.area if farm else 0.0,
+                    farm_owner=farm.owner if farm else "—",
+                    plot_name=f"Thửa {farm.id if farm else 0} - {farm.name if farm else 'Vùng trồng gốc'}",
+                )
+            )
+
+    return TraceBackResponse(
+        target_batch_id=batch.id,
+        target_batch_code=b_code,
+        target_product_name=batch.product_name,
+        target_quantity=batch.quantity,
+        is_standalone=False,
+        depth=len(ancestor_codes),
+        all_ancestor_codes=ancestor_codes,
+        origin_farms=origin_farms,
+    )
+
+
+@router.get(
+    "/{batch_id}/trace-forward",
+    response_model=TraceForwardResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Truy xuôi phả hệ nói rõ từng lô đang ở đâu và còn bao nhiêu (SCRUM-108)",
+    description="Cán bộ kiểm tra xem danh sách các lô hậu duệ, tổ chức đang giữ, địa điểm và khối lượng còn lại. Hậu duệ đã bán hết hiện trạng thái Đã tiêu thụ và khối lượng 0.",
+)
+def get_batch_trace_forward(
+    batch_id: int = Path(..., ge=1, description="ID lô nông sản."),
+    db: Session = Depends(get_db),
+) -> TraceForwardResponse:
+    """Truy xuôi nguồn gốc hậu duệ (SCRUM-108):
+
+    - Mỗi lô kèm tổ chức đang giữ, địa điểm và khối lượng còn lại.
+    - Hậu duệ đã bán hết hiện trạng thái 'Đã tiêu thụ' và khối lượng còn lại 0.
+    """
+    batch = db.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+    b_code = batch.batch_code or f"LOT-{batch.id:04d}"
+
+    relations = _get_all_lineage_relations(db)
+
+    # Chạy BFS tìm hậu duệ
+    try:
+        descendant_codes = find_descendants_bfs(b_code, relations)
+    except Exception:
+        descendant_codes = []
+
+    # Xây dựng bản đồ độ sâu tầng hậu duệ
+    child_map: dict[str, list[str]] = {}
+    for r in relations:
+        child_map.setdefault(r["parent"], []).append(r["child"])
+
+    depth_map: dict[str, int] = {}
+    from collections import deque
+    q = deque([(b_code, 0)])
+    while q:
+        curr, d = q.popleft()
+        for ch in child_map.get(curr, []):
+            if ch not in depth_map:
+                depth_map[ch] = d + 1
+                q.append((ch, d + 1))
+
+    descendant_items: list[DescendantBatchItem] = []
+    for d_code in descendant_codes:
+        d_batch = db.scalar(select(Batch).where(or_(Batch.batch_code == d_code, cast(Batch.id, String) == d_code)))
+        if not d_batch:
+            continue
+
+        is_consumed = d_batch.quantity <= 0
+        latest_event = db.scalar(
+            select(BatchEvent)
+            .where(BatchEvent.batch_id == d_batch.id)
+            .order_by(BatchEvent.id.desc())
+        )
+        if latest_event and latest_event.event_type in ("CONSUMED", "SOLD", "EXHAUSTED", "RETAIL_SOLD"):
+            is_consumed = True
+
+        remaining_qty = 0.0 if is_consumed else round(float(d_batch.quantity), 2)
+        status_code = "CONSUMED" if is_consumed else "IN_STOCK"
+        status_label = "Đã tiêu thụ" if is_consumed else "Còn hàng (Lưu kho)"
+
+        location_str = "Kho trung chuyển"
+        if latest_event:
+            try:
+                ev_p = json.loads(latest_event.payload) if isinstance(latest_event.payload, str) else latest_event.payload
+                location_str = ev_p.get("location") or ev_p.get("store") or ev_p.get("destination") or location_str
+            except Exception:
+                pass
+        if location_str == "Kho trung chuyển" and d_batch.farm:
+            location_str = f"Kho tại {d_batch.farm.location}"
+
+        descendant_items.append(
+            DescendantBatchItem(
+                batch_id=d_batch.id,
+                batch_code=d_code,
+                product_name=d_batch.product_name,
+                current_holder_org=d_batch.current_holder_org,
+                location=location_str,
+                remaining_quantity=remaining_qty,
+                status=status_code,
+                status_label=status_label,
+                depth=depth_map.get(d_code, 1),
+            )
+        )
+
+    return TraceForwardResponse(
+        target_batch_id=batch.id,
+        target_batch_code=b_code,
+        target_product_name=batch.product_name,
+        total_descendants=len(descendant_items),
+        descendants=descendant_items,
+    )
+
+
+@router.get(
+    "/{batch_id}/lineage-graph",
+    response_model=LineageGraphResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Dữ liệu sơ đồ phả hệ (Trái - Giữa - Phải) cho lô nông sản (SCRUM-109)",
+    description="Cung cấp node và edge với lô hiện tại ở giữa (level=0), tổ tiên bên trái (level < 0), hậu duệ bên phải (level > 0).",
+)
+def get_batch_lineage_graph(
+    batch_id: int = Path(..., ge=1, description="ID lô nông sản."),
+    db: Session = Depends(get_db),
+) -> LineageGraphResponse:
+    """Sơ đồ phả hệ trực quan (SCRUM-109):
+
+    - Lô hiện tại ở giữa (level = 0, group = 'current').
+    - Tổ tiên bên trái (level < 0, group = 'ancestor').
+    - Hậu duệ bên phải (level > 0, group = 'descendant').
+    """
+    batch = db.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy lô nông sản #{batch_id}.",
+        )
+    b_code = batch.batch_code or f"LOT-{batch.id:04d}"
+
+    relations = _get_all_lineage_relations(db)
+
+    # 1. Tìm tổ tiên
+    try:
+        ancestors = find_ancestors_bfs(b_code, relations)
+    except Exception:
+        ancestors = []
+
+    # 2. Tìm hậu duệ
+    try:
+        descendants = find_descendants_bfs(b_code, relations)
+    except Exception:
+        descendants = []
+
+    all_involved_codes = set(ancestors) | {b_code} | set(descendants)
+
+    level_map = {b_code: 0}
+
+    parent_map: dict[str, list[str]] = {}
+    child_map: dict[str, list[str]] = {}
+    for r in relations:
+        p, c = r["parent"], r["child"]
+        parent_map.setdefault(c, []).append(p)
+        child_map.setdefault(p, []).append(c)
+
+    from collections import deque
+    q_anc = deque([(b_code, 0)])
+    visited_anc = {b_code}
+    while q_anc:
+        curr, lvl = q_anc.popleft()
+        for p in parent_map.get(curr, []):
+            if p not in visited_anc:
+                visited_anc.add(p)
+                level_map[p] = lvl - 1
+                q_anc.append((p, lvl - 1))
+
+    q_desc = deque([(b_code, 0)])
+    visited_desc = {b_code}
+    while q_desc:
+        curr, lvl = q_desc.popleft()
+        for c in child_map.get(curr, []):
+            if c not in visited_desc:
+                visited_desc.add(c)
+                level_map[c] = lvl + 1
+                q_desc.append((c, lvl + 1))
+
+    nodes: list[LineageGraphNode] = []
+    for code in all_involved_codes:
+        b = db.scalar(select(Batch).where(or_(Batch.batch_code == code, cast(Batch.id, String) == code)))
+        lvl = level_map.get(code, 0)
+        group = "current" if lvl == 0 else ("ancestor" if lvl < 0 else "descendant")
+
+        status_str = "Đã tiêu thụ" if (b and b.quantity <= 0) else "Còn hàng"
+        nodes.append(
+            LineageGraphNode(
+                id=code,
+                batch_id=b.id if b else 0,
+                label=f"{code}\n({b.product_name if b else 'Lô'} - {b.quantity if b else 0}kg)",
+                group=group,
+                level=lvl,
+                product_name=b.product_name if b else "Nông sản",
+                quantity=b.quantity if b else 0.0,
+                holder_org=b.current_holder_org if b else "HTX Nông Nghiệp",
+                status=status_str,
+                farm_name=b.farm.name if (b and b.farm) else None,
+            )
+        )
+
+    edges: list[LineageGraphEdge] = []
+    seen_edges = set()
+    for r in relations:
+        p, c = r["parent"], r["child"]
+        if p in all_involved_codes and c in all_involved_codes:
+            edge_key = (p, c)
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                edges.append(
+                    LineageGraphEdge(
+                        from_node=p,
+                        to_node=c,
+                        label=r.get("type", "DIRECT"),
+                        quantity=r.get("quantity"),
+                    )
+                )
+
+    return LineageGraphResponse(
+        target_batch_code=b_code,
+        target_batch_id=batch.id,
+        nodes=nodes,
+        edges=edges,
+    )
+
 

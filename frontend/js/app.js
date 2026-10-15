@@ -638,6 +638,10 @@ function renderBatches() {
                     data-action="timeline" data-entity="batch"
                     data-id="${escapeHtml(batch.id)}"
                     title="Xem dòng thời gian lịch sử & tính toàn vẹn chuỗi">Lịch sử</button>
+            <button class="btn btn--sm" style="background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;" type="button"
+                    data-action="lineage" data-entity="batch"
+                    data-id="${escapeHtml(batch.id)}"
+                    title="Xem sơ đồ phả hệ trực quan (SCRUM-109)">Phả hệ</button>
             ${
               session && session.role !== ROLE_INSPECTOR
                 ? `<button class="btn btn--sm btn-table-split" type="button"
@@ -1542,6 +1546,7 @@ function switchTab(tab) {
     coldchain: $("coldchain-card"),
     orders: $("orders-card"),
     users: $("users-card"),
+    lineage: $("lineage-card"),
   };
 
   const isAdmin = session !== null && session.role === ROLE_ADMIN;
@@ -1558,6 +1563,13 @@ function switchTab(tab) {
       el.hidden = key !== tab;
     }
   });
+
+  if (tab === "lineage") {
+    populateLineageSelect(activeLineageBatchId);
+    if (activeLineageBatchId) {
+      loadLineageForBatch(activeLineageBatchId);
+    }
+  }
 }
 
 /* ---------------------------------- 9. Dòng thời gian & Toàn vẹn chuỗi (Audit Chain) --- */
@@ -2566,6 +2578,388 @@ function bindEvents() {
       }
     });
   }
+  // Sự kiện Sơ đồ phả hệ nông sản (SCRUM-109, SCRUM-105, SCRUM-108)
+  if ($("btn-load-lineage")) {
+    $("btn-load-lineage").addEventListener("click", () => {
+      const selectVal = $("lineage-batch-select")?.value;
+      if (!selectVal) {
+        toast("Vui lòng chọn một lô nông sản để tải phả hệ.", "error");
+        return;
+      }
+      loadLineageForBatch(Number(selectVal));
+    });
+  }
+  if ($("lineage-batch-select")) {
+    $("lineage-batch-select").addEventListener("change", (e) => {
+      const bId = Number(e.target.value);
+      if (bId) {
+        loadLineageForBatch(bId);
+      }
+    });
+  }
+  if ($("btn-toggle-deep-branches")) {
+    $("btn-toggle-deep-branches").addEventListener("click", () => {
+      if (!currentLineageData || !currentLineageData.graph) {
+        toast("Chưa có dữ liệu phả hệ để thu gọn/mở rộng.", "info");
+        return;
+      }
+      isLineageDeepCollapsed = !isLineageDeepCollapsed;
+      renderVisNetworkGraph(currentLineageData.graph, isLineageDeepCollapsed);
+      toast(
+        isLineageDeepCollapsed
+          ? "Đã thu gọn các nhánh sâu (|cấp| > 1). Bấm lại nút để mở toàn bộ."
+          : "Đã mở toàn bộ các tầng nhánh phả hệ.",
+        "info"
+      );
+    });
+  }
+  if ($("btn-fit-lineage-graph")) {
+    $("btn-fit-lineage-graph").addEventListener("click", () => {
+      if (lineageNetwork) {
+        lineageNetwork.fit({ animation: { duration: 500, easingFunction: "easeInOutQuad" } });
+      }
+    });
+  }
+}
+
+/* ---------------- 11b. Sơ đồ phả hệ trực quan & Truy vết (SCRUM-109, 105, 108) --- */
+let activeLineageBatchId = null;
+let lineageNetwork = null;
+let currentLineageData = null;
+let isLineageDeepCollapsed = false;
+
+/** Đổ danh sách các lô nông sản vào select chọn lô xem phả hệ */
+function populateLineageSelect(selectedId = null) {
+  const select = $("lineage-batch-select");
+  if (!select) return;
+
+  if (batches.length === 0) {
+    select.innerHTML = '<option value="">— Chưa có lô nông sản nào —</option>';
+    return;
+  }
+
+  const currentVal = selectedId
+    ? String(selectedId)
+    : select.value || (activeLineageBatchId ? String(activeLineageBatchId) : String(batches[0].id));
+
+  select.innerHTML =
+    '<option value="">-- Chọn lô nông sản cần xem phả hệ --</option>' +
+    batches
+      .map(
+        (b) =>
+          `<option value="${b.id}" ${String(b.id) === currentVal ? "selected" : ""}>
+            ${escapeHtml(b.batch_code || `LOT-${b.id}`)} - ${escapeHtml(b.product_name)} (${formatNumber(b.quantity)} kg)
+          </option>`
+      )
+      .join("");
+
+  if (currentVal && !activeLineageBatchId) {
+    activeLineageBatchId = Number(currentVal);
+  }
+}
+
+/** Chuyển tab sang Phả hệ và tự động tải dữ liệu cho lô đã chọn */
+function openLineageTabForBatch(batchId) {
+  activeLineageBatchId = batchId;
+  switchTab("lineage");
+  const card = $("lineage-card");
+  if (card) {
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+/** Tải dữ liệu đồ thị phả hệ, truy ngược (SCRUM-105) và truy xuôi (SCRUM-108) */
+async function loadLineageForBatch(batchId) {
+  if (!batchId) return;
+  activeLineageBatchId = batchId;
+  const select = $("lineage-batch-select");
+  if (select) select.value = String(batchId);
+
+  const emptyPlaceholder = $("lineage-graph-empty");
+
+  try {
+    if (emptyPlaceholder) {
+      emptyPlaceholder.hidden = false;
+      emptyPlaceholder.innerHTML = `
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+          <div class="spinner" style="width: 28px; height: 28px; border: 3px solid #cbd5e1; border-top-color: #059669; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+          <p style="font-weight: 700; color: #047857;">Đang tải sơ đồ phả hệ và phân tích chuỗi cung ứng…</p>
+        </div>
+      `;
+    }
+
+    const [graphData, tracebackData, traceforwardData] = await Promise.all([
+      apiRequest(`/batches/${batchId}/lineage-graph`),
+      apiRequest(`/batches/${batchId}/trace-back`),
+      apiRequest(`/batches/${batchId}/trace-forward`),
+    ]);
+
+    currentLineageData = {
+      graph: graphData,
+      traceback: tracebackData,
+      traceforward: traceforwardData,
+    };
+
+    renderVisNetworkGraph(graphData, isLineageDeepCollapsed);
+    renderTracebackTable(tracebackData);
+    renderTraceforwardTable(traceforwardData);
+
+    toast(`Đã tải phả hệ lô ${graphData.batch_code || `#${batchId}`}: ${graphData.nodes.length} nút, ${graphData.edges.length} liên kết.`, "success");
+  } catch (error) {
+    if (emptyPlaceholder) {
+      emptyPlaceholder.hidden = false;
+      emptyPlaceholder.innerHTML = `
+        <p style="color: #dc2626; font-weight: 700;">Không thể tải phả hệ lô</p>
+        <p style="color: #64748b; font-size: 0.85rem;">${escapeHtml(error.message)}</p>
+      `;
+    }
+    toast(`Lỗi tải phả hệ: ${error.message}`, "error");
+  }
+}
+
+/** Vẽ đồ thị mạng phân cấp bằng thư viện Vis-Network */
+function renderVisNetworkGraph(graphData, collapseDeep = false) {
+  const container = $("lineage-graph-container");
+  const emptyPlaceholder = $("lineage-graph-empty");
+  if (!container || !graphData || !graphData.nodes) return;
+
+  if (typeof vis === "undefined" || !vis.Network) {
+    if (emptyPlaceholder) {
+      emptyPlaceholder.hidden = false;
+      emptyPlaceholder.innerHTML = `
+        <p style="color: #dc2626; font-weight: 700;">Thư viện Vis-Network chưa được tải</p>
+        <p style="color: #64748b;">Vui lòng kiểm tra kết nối mạng Internet để tải thư viện từ CDN.</p>
+      `;
+    }
+    return;
+  }
+
+  if (emptyPlaceholder) emptyPlaceholder.hidden = true;
+
+  // Lọc các nhánh sâu nếu bật chế độ thu gọn (chỉ hiển thị level -1, 0, 1)
+  let visibleNodes = graphData.nodes;
+  if (collapseDeep) {
+    visibleNodes = graphData.nodes.filter((n) => Math.abs(n.level) <= 1);
+  }
+
+  const visibleNodeIds = new Set(visibleNodes.map((n) => n.id));
+  const visibleEdges = graphData.edges.filter(
+    (e) => visibleNodeIds.has(e.from) && visibleNodeIds.has(e.to)
+  );
+
+  const visNodes = visibleNodes.map((node) => {
+    let bg = "#f1f5f9";
+    let border = "#94a3b8";
+    let fontColor = "#1e293b";
+    let levelTitle = `Cấp ${node.level}`;
+
+    if (node.is_current || node.level === 0) {
+      // Lô hiện tại ở giữa (level 0) - màu vàng hổ phách nổi bật
+      bg = "#fef3c7";
+      border = "#d97706";
+      fontColor = "#78350f";
+      levelTitle = "LÔ HIỆN TẠI (CẤP 0)";
+    } else if (node.level < 0) {
+      // Tổ tiên bên trái (level < 0) - màu xanh dương
+      bg = "#dbeafe";
+      border = "#2563eb";
+      fontColor = "#1e3a8a";
+      levelTitle = `Tổ tiên (Cấp ${node.level})`;
+    } else {
+      // Hậu duệ bên phải (level > 0) - màu xanh lục VietGAP
+      bg = "#d1fae5";
+      border = "#059669";
+      fontColor = "#064e3b";
+      levelTitle = `Hậu duệ (Cấp +${node.level})`;
+    }
+
+    const labelLines = [
+      node.batch_code || `LOT-${node.id}`,
+      node.product_name,
+      `${formatNumber(node.quantity)} kg`,
+    ];
+    if (node.status === "CONSUMED") {
+      labelLines.push("[ĐÃ TIÊU THỤ]");
+    }
+
+    return {
+      id: node.id,
+      level: node.level, // Vis-Network dùng level để sắp xếp thứ tự phân cấp Left-Right
+      label: labelLines.join("\n"),
+      title:
+        `<b>${escapeHtml(node.batch_code || `LOT-${node.id}`)}</b><br>` +
+        `Sản phẩm: ${escapeHtml(node.product_name)}<br>` +
+        `Khối lượng: ${formatNumber(node.quantity)} kg<br>` +
+        `Tổ chức: ${escapeHtml(node.current_holder_org || "—")}<br>` +
+        `Phân cấp: ${levelTitle}`,
+      shape: "box",
+      margin: 10,
+      borderWidth: node.is_current ? 3 : 1.5,
+      color: {
+        background: bg,
+        border: border,
+        highlight: {
+          background: "#fef08a",
+          border: "#ca8a04",
+        },
+        hover: {
+          background: bg,
+          border: "#0284c7",
+        },
+      },
+      font: {
+        color: fontColor,
+        face: "Inter, JetBrains Mono, sans-serif",
+        size: node.is_current ? 13 : 11,
+        bold: Boolean(node.is_current),
+      },
+      shadow: {
+        enabled: true,
+        color: "rgba(0, 0, 0, 0.06)",
+        size: 6,
+        x: 2,
+        y: 2,
+      },
+    };
+  });
+
+  const visEdges = visibleEdges.map((edge) => {
+    let edgeLabel = edge.action_type || "";
+    if (edgeLabel === "SPLIT") edgeLabel = "Tách";
+    if (edgeLabel === "MERGE") edgeLabel = "Gộp";
+
+    return {
+      from: edge.from,
+      to: edge.to,
+      arrows: { to: { enabled: true, scaleFactor: 0.8 } },
+      label: edgeLabel ? ` ${edgeLabel} ` : undefined,
+      font: { size: 10, align: "horizontal", background: "#ffffff", strokeWidth: 0 },
+      color: { color: "#64748b", highlight: "#0284c7", hover: "#0284c7" },
+      smooth: { type: "cubicBezier", forceDirection: "horizontal", roundness: 0.25 },
+      width: 1.5,
+    };
+  });
+
+  const data = {
+    nodes: new vis.DataSet(visNodes),
+    edges: new vis.DataSet(visEdges),
+  };
+
+  const options = {
+    layout: {
+      hierarchical: {
+        enabled: true,
+        direction: "LR", // Left to Right: Tổ tiên bên trái -> Hiện tại -> Hậu duệ bên phải
+        sortMethod: "directed",
+        levelSeparation: 220,
+        nodeSpacing: 130,
+        treeSpacing: 160,
+      },
+    },
+    physics: {
+      enabled: false,
+    },
+    interaction: {
+      hover: true,
+      tooltipDelay: 150,
+      zoomView: true,
+      dragView: true,
+      navigationButtons: true,
+      keyboard: true,
+    },
+  };
+
+  if (lineageNetwork) {
+    lineageNetwork.destroy();
+  }
+
+  lineageNetwork = new vis.Network(container, data, options);
+
+  // Khi bấm vào 1 node khác node hiện tại, hiển thị gợi ý hoặc nhấp đúp để đổi tâm điểm
+  lineageNetwork.on("selectNode", (params) => {
+    if (params.nodes.length > 0) {
+      const selectedNodeId = params.nodes[0];
+      if (selectedNodeId !== activeLineageBatchId) {
+        const found = batches.find((b) => b.id === selectedNodeId);
+        const name = found ? (found.batch_code || `LOT-${found.id}`) : `#${selectedNodeId}`;
+        toast(`Đã chọn lô ${name}. Nhấp đúp để chuyển trọng tâm phả hệ sang lô này.`, "info");
+      }
+    }
+  });
+
+  lineageNetwork.on("doubleClick", (params) => {
+    if (params.nodes.length > 0) {
+      const selectedNodeId = params.nodes[0];
+      if (selectedNodeId !== activeLineageBatchId) {
+        loadLineageForBatch(selectedNodeId);
+      }
+    }
+  });
+}
+
+/** Hiển thị bảng kết quả nguồn gốc vùng trồng & thửa đất (SCRUM-105) */
+function renderTracebackTable(tracebackData) {
+  const badge = $("traceback-badge");
+  const tbody = $("traceback-table-body");
+  if (!badge || !tbody) return;
+
+  const roots = (tracebackData && tracebackData.root_harvest_batches) || [];
+  badge.textContent = `${tracebackData.total_origin_farms || roots.length} vùng trồng · ${roots.length} lô thu hoạch`;
+
+  if (roots.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #94a3b8; padding: 16px;">Không tìm thấy lô gốc</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = roots
+    .map(
+      (item) => `
+      <tr>
+        <td class="font-mono" style="font-weight: 700; color: #1e3a8a;">${escapeHtml(item.batch_code || `LOT-${item.batch_id}`)}</td>
+        <td>
+          <strong>${escapeHtml(item.farm_name || "Vùng canh tác VietGAP")}</strong>
+          ${item.plot_name ? `<br><span style="font-size: 0.78rem; color: #059669;">Thửa: ${escapeHtml(item.plot_name)}</span>` : ""}
+        </td>
+        <td style="color: #475569;">${escapeHtml(item.farm_location || "—")}</td>
+        <td class="font-mono">${item.harvest_date ? formatDate(item.harvest_date) : "—"}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+/** Hiển thị bảng truy xuôi vị trí và tồn kho hậu duệ (SCRUM-108) */
+function renderTraceforwardTable(traceforwardData) {
+  const badge = $("traceforward-badge");
+  const tbody = $("traceforward-table-body");
+  if (!badge || !tbody) return;
+
+  const descendants = (traceforwardData && traceforwardData.descendants) || [];
+  badge.textContent = `${traceforwardData.total_descendants || descendants.length} lô hậu duệ`;
+
+  if (descendants.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 16px;">Lô chưa phân phối hoặc chưa có lô con</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = descendants
+    .map((item) => {
+      const isConsumed = item.status === "CONSUMED" || Number(item.remaining_quantity) <= 0;
+      const statusBadge = isConsumed
+        ? `<span class="table-tag" style="background: #f1f5f9; color: #64748b; border-color: #cbd5e1;">ĐÃ TIÊU THỤ</span>`
+        : `<span class="table-tag" style="background: #ecfdf5; color: #047857; border-color: #a7f3d0;">LƯU KHO / ĐANG BÁN</span>`;
+
+      return `
+      <tr>
+        <td class="font-mono" style="font-weight: 700; color: #065f46;">${escapeHtml(item.batch_code || `LOT-${item.batch_id}`)}</td>
+        <td><strong>${escapeHtml(item.current_holder_org || "Hợp tác xã nông nghiệp")}</strong></td>
+        <td>${escapeHtml(item.location || "Kho trung tâm")}</td>
+        <td class="is-right font-mono" style="font-weight: 700; color: ${isConsumed ? "#dc2626" : "#1e293b"};">
+          ${formatNumber(item.remaining_quantity)} kg
+        </td>
+        <td>${statusBadge}</td>
+      </tr>`;
+    })
+    .join("");
 }
 
 /** Huỷ chế độ sửa của form vùng trồng / lô nông sản / sản phẩm (nút "Huỷ sửa"). */
@@ -2590,7 +2984,7 @@ function cancelEdit(entity) {
 }
 
 /**
- * Xử lý click ở cột "Thao tác" của các bảng (nút Sửa / Xoá / Tách / Timeline).
+ * Xử lý click ở cột "Thao tác" của các bảng (nút Sửa / Xoá / Tách / Timeline / Phả hệ).
  */
 function handleTableAction(event) {
   const button = event.target.closest("button[data-action]");
@@ -2604,6 +2998,11 @@ function handleTableAction(event) {
 
   if (action === "timeline") {
     openTimelineModal(id);
+    return;
+  }
+
+  if (action === "lineage") {
+    openLineageTabForBatch(id);
     return;
   }
 
