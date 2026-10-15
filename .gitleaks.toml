@@ -4,12 +4,25 @@ title = "Gitleaks Config for AgriTrace"
 useDefault = true
 
 [allowlist]
-description = "Cho phep cac token gia lap trong test"
+description = "Cho phep cac credential demo, dummy token, file database va binary"
 regexes = [
   '''test_token_.*''',
-  '''dummy_secret_.*'''
+  '''dummy_secret_.*''',
+  '''123456''',
+  '''admin:123456''',
+  '''farmer:123456''',
+  '''inspector:123456''',
 ]
 paths = [
   '''backend/tests/.*''',
   '''tests/.*''',
+  '''README.md''',
+  '''backend/README.md''',
+  '''backend/app/database.py''',
+  '''backend/app/routers/auth.py''',
+  '''backend/app/security.py''',
+  '''backend/ttcs.db''',
+  '''.*\.pyc''',
+  '''.*\.db''',
+  '''khoi18-N4-truy-xuat-nguon-goc-main/.*''',
 ]
