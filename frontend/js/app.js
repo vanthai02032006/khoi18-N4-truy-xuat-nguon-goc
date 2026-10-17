@@ -73,7 +73,7 @@ function setButtonLoading(button, isLoading, loadingText, idleText) {
  * truyền `auth: false` cho request không cần xác thực (VD: đăng nhập).
  * Ném Error với thông điệp tiếng Việt dễ đọc nếu request thất bại.
  */
-async function apiRequest(path, { method = "GET", body, auth = true } = {}) {
+async function apiRequest(path, { method = "GET", body, auth = true, headers: extraHeaders = {} } = {}) {
   const headers = {};
   if (body) {
     headers["Content-Type"] = "application/json";
@@ -81,6 +81,7 @@ async function apiRequest(path, { method = "GET", body, auth = true } = {}) {
   if (auth) {
     Object.assign(headers, authHeader());
   }
+  Object.assign(headers, extraHeaders);
 
   let response;
   try {
@@ -164,6 +165,8 @@ const PARTNER_ORGANIZATIONS = [
 let editingFarmId = null;
 let editingBatchId = null;
 let isSubmittingBatch = false;
+let batchIdempotencyKey = null;
+let batchIdempotencyPayload = null;
 let editingProductId = null;
 let activeViewingOrderId = null;
 let editingThresholdId = null;
@@ -747,7 +750,8 @@ async function handleBatchSubmit(event) {
     return;
   }
 
-  const todayStr = new Date().toISOString().split("T")[0];
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   if (harvestDate && harvestDate > todayStr) {
     const msg = "Ngày thu hoạch không được ở trong tương lai.";
     showBatchError(msg);
@@ -778,7 +782,18 @@ async function handleBatchSubmit(event) {
       toast(`Đã cập nhật lô #${updated.id} "${updated.product_name}"`, "success");
       if ($("batch-created-banner")) $("batch-created-banner").hidden = true;
     } else {
-      const created = await apiRequest("/batches", { method: "POST", body: payload });
+      const payloadFingerprint = JSON.stringify(payload);
+      if (!batchIdempotencyKey || batchIdempotencyPayload !== payloadFingerprint) {
+        batchIdempotencyKey = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        batchIdempotencyPayload = payloadFingerprint;
+      }
+      const created = await apiRequest("/batches", {
+        method: "POST",
+        body: payload,
+        headers: { "Idempotency-Key": batchIdempotencyKey },
+      });
+      batchIdempotencyKey = null;
+      batchIdempotencyPayload = null;
       toast(
         `Tạo thành công lô ${created.batch_code || `#${created.id}`} "${created.product_name}" (${formatNumber(created.quantity)} kg)`,
         "success"

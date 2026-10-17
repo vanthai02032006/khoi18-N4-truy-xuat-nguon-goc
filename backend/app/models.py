@@ -121,6 +121,11 @@ class Batch(Base):
         unique=True,
         index=True,
     )
+    idempotency_key: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        unique=True,
+    )
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
     harvest_date: Mapped[date] = mapped_column(Date, nullable=False)

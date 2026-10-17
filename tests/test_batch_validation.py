@@ -61,10 +61,17 @@ def test_setup():
             area=3.5,
             owner="HTX Nong San B",
         )
-        db.add_all([farm_org_a, farm_org_b])
+        farm_org_c = Farm(
+            name="Vùng Trồng Chi Nhánh Thửa C",
+            location="Đồng Tháp",
+            area=1.5,
+            owner="HTX Nong San A - Chi Nhanh",
+        )
+        db.add_all([farm_org_a, farm_org_b, farm_org_c])
         db.commit()
         farm_a_id = farm_org_a.id
         farm_b_id = farm_org_b.id
+        farm_c_id = farm_org_c.id
 
     def override_get_db():
         db = TestingSessionLocal()
@@ -80,6 +87,7 @@ def test_setup():
         "client": client,
         "farm_a_id": farm_a_id,
         "farm_b_id": farm_b_id,
+        "farm_c_id": farm_c_id,
     }
 
     app.dependency_overrides.clear()
@@ -242,3 +250,70 @@ def test_reject_other_tenant_id_header(test_setup):
     data = response.json()
     assert "detail" in data
     assert "tổ chức khác" in data["detail"].lower() or "quyền" in data["detail"].lower()
+
+
+def test_reject_farm_whose_owner_only_contains_tenant_name(test_setup):
+    """Tên tenant là substring của owner khác vẫn phải bị từ chối."""
+    client = test_setup["client"]
+    payload = {
+        "farm_id": test_setup["farm_c_id"],
+        "product_name": "Xoài Cát Chu",
+        "quantity": 100.0,
+        "harvest_date": date.today().isoformat(),
+    }
+
+    response = client.post(
+        "/batches",
+        json=payload,
+        auth=("farmer_test", "123456"),
+        headers={"X-Organization-Id": "HTX Nong San A"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_duplicate_idempotency_key_creates_only_one_batch(test_setup):
+    """Retry POST cùng Idempotency-Key trả lại batch trước đó, không insert thêm."""
+    client = test_setup["client"]
+    payload = {
+        "farm_id": test_setup["farm_a_id"],
+        "product_name": "Xoài Cát Chu",
+        "quantity": 100.0,
+        "harvest_date": date.today().isoformat(),
+    }
+    headers = {"X-Organization-Id": "HTX Nong San A", "Idempotency-Key": "harvest-submit-001"}
+
+    first = client.post(
+        "/batches", json=payload, auth=("farmer_test", "123456"), headers=headers
+    )
+    duplicate = client.post(
+        "/batches", json=payload, auth=("farmer_test", "123456"), headers=headers
+    )
+
+    assert first.status_code == 201
+    assert duplicate.status_code == 201
+    assert duplicate.json()["id"] == first.json()["id"]
+    assert len(client.get("/batches").json()) == 1
+
+
+def test_idempotency_key_cannot_be_reused_for_different_payload(test_setup):
+    client = test_setup["client"]
+    payload = {
+        "farm_id": test_setup["farm_a_id"],
+        "product_name": "Xoài Cát Chu",
+        "quantity": 100.0,
+        "harvest_date": date.today().isoformat(),
+    }
+    headers = {"X-Organization-Id": "HTX Nong San A", "Idempotency-Key": "harvest-submit-002"}
+
+    first = client.post(
+        "/batches", json=payload, auth=("farmer_test", "123456"), headers=headers
+    )
+    changed_payload = {**payload, "quantity": 200.0}
+    second = client.post(
+        "/batches", json=changed_payload, auth=("farmer_test", "123456"), headers=headers
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+    assert "Idempotency-Key" in second.json()["detail"]
