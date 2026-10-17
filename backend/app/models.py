@@ -79,6 +79,14 @@ class Farm(Base):
         cascade="all, delete-orphan",
     )
 
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self, "_tenant_id", None) or getattr(self, "organization", None) or self.owner
+
+    @tenant_id.setter
+    def tenant_id(self, value: str) -> None:
+        self._tenant_id = value
+
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         return f"<Farm id={self.id} name={self.name!r} area={self.area}ha>"
 
@@ -450,23 +458,36 @@ class User(Base):
     password: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default=ROLE_FARMER)
 
+    @property
+    def tenant_id(self) -> Optional[str]:
+        return getattr(self, "_tenant_id", None) or getattr(self, "organization", None)
+
+    @tenant_id.setter
+    def tenant_id(self, value: Optional[str]) -> None:
+        self._tenant_id = value
+
     def __repr__(self) -> str:  # pragma: no cover - chỉ dùng khi debug/log
         # Không in `password` để tránh lộ mật khẩu đã băm ra log.
         return f"<User id={self.id} username={self.username!r} role={self.role}>"
 
 
 
-# ----------------------------------------------------------------- Products (S-16) ---
+# ----------------------------------------------------------------- Products (S-16 / SCRUM-93) ---
 class ProductUnit(str, Enum):
     """Đơn vị tính chuẩn của danh mục sản phẩm."""
     KG = "kg"
     G = "g"
+    GRAM = "gram"
     TON = "ton"
     LITER = "liter"
     BOX = "box"
     BOTTLE = "bottle"
     PIECE = "piece"
     BUNDLE = "bundle"
+    BAG = "bag"
+    CRATE = "crate"
+    TRAY = "tray"
+    BUNCH = "bunch"
 
 
 PRODUCT_UNITS: tuple[str, ...] = tuple(unit.value for unit in ProductUnit)
@@ -474,10 +495,11 @@ DEFAULT_PRODUCT_UNIT: str = ProductUnit.KG.value
 
 
 class Product(Base):
-    """Sản phẩm trong danh mục dùng chung cho mọi tổ chức - bảng ``products``."""
+    """Sản phẩm trong danh mục dùng chung cho mọi tổ chức (SCRUM-93) - bảng ``products``."""
 
     __tablename__ = "products"
     __table_args__ = (
+        Index("uq_products_name_lower", text("lower(name)"), unique=True),
         CheckConstraint(
             "unit IN (" + ", ".join(f"'{unit}'" for unit in PRODUCT_UNITS) + ")",
             name="chk_products_unit",
@@ -498,8 +520,13 @@ class Product(Base):
     )
     description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
+    @property
+    def is_shared(self) -> bool:
+        """Tính chất dùng chung toàn hệ thống cho mọi tổ chức (SCRUM-93)."""
+        return True
+
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<Product id={self.id} name={self.name!r} unit={self.unit!r}>"
+        return f"<Product id={self.id} name={self.name!r} unit={self.unit!r} is_shared=True>"
 
 
 # ----------------------------------------------------------------- Handovers (S-35) ---

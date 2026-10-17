@@ -110,9 +110,10 @@ def test_reject_future_harvest_date(test_setup):
     assert response.status_code == 422
     data = response.json()
     assert "detail" in data
-    # Kiểm tra rõ ràng trường lỗi là harvest_date
+    # Kiểm tra rõ ràng trường lỗi là harvest_date kèm thông báo tiếng Việt
     error_fields = [tuple(err["loc"]) for err in data["detail"]]
     assert any("harvest_date" in loc for loc in error_fields)
+    assert any("tương lai" in err.get("msg", "") for err in data["detail"])
 
 
 def test_reject_non_positive_quantity(test_setup):
@@ -139,6 +140,7 @@ def test_reject_non_positive_quantity(test_setup):
     data_zero = response_zero.json()
     error_fields_zero = [tuple(err["loc"]) for err in data_zero["detail"]]
     assert any("quantity" in loc for loc in error_fields_zero)
+    assert any("lớn hơn 0" in err.get("msg", "") for err in data_zero["detail"])
 
     # Thử với quantity âm (< 0)
     payload_neg = {
@@ -157,6 +159,7 @@ def test_reject_non_positive_quantity(test_setup):
     data_neg = response_neg.json()
     error_fields_neg = [tuple(err["loc"]) for err in data_neg["detail"]]
     assert any("quantity" in loc for loc in error_fields_neg)
+    assert any("lớn hơn 0" in err.get("msg", "") for err in data_neg["detail"])
 
 
 def test_reject_other_organization_farm(test_setup):
@@ -213,3 +216,29 @@ def test_valid_batch_creation_success(test_setup):
     assert created_batch["quantity"] == 250.5
     assert created_batch["harvest_date"] == today_str
     assert "id" in created_batch
+
+
+def test_reject_other_tenant_id_header(test_setup):
+    """SCRUM-95: Từ chối tạo lô khi X-Tenant-Id không khớp với tenant của thửa đất (403 Forbidden)."""
+    client = test_setup["client"]
+    farm_b_id = test_setup["farm_b_id"]
+
+    today_str = date.today().isoformat()
+    payload = {
+        "farm_id": farm_b_id,
+        "product_name": "Sầu Riêng Ri6",
+        "quantity": 100.0,
+        "harvest_date": today_str,
+    }
+
+    response = client.post(
+        "/batches",
+        json=payload,
+        auth=("farmer_test", "123456"),
+        headers={"X-Tenant-Id": "HTX Nong San A"},
+    )
+
+    assert response.status_code == 403
+    data = response.json()
+    assert "detail" in data
+    assert "tổ chức khác" in data["detail"].lower() or "quyền" in data["detail"].lower()

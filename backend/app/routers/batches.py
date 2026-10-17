@@ -115,11 +115,16 @@ def create_batch(
             detail=f"Không tìm thấy vùng trồng có id={payload.farm_id}.",
         )
 
-    # Bước 2: kiểm tra thửa đất có thuộc quyền quản lý của tổ chức hiện tại (SCRUM-36 / T-20).
+    # Bước 2: kiểm tra thửa đất có thuộc quyền quản lý của tổ chức hiện tại (SCRUM-36 / T-20 / SCRUM-95).
     # Áp dụng đối với các trường hợp tổ chức cụ thể (trừ admin hệ thống hoặc tổ chức mặc định toàn quyền).
-    if current_org and current_org != "HTX Nông Nghiệp Số 4" and current_user.role != "admin":
-        farm_org = getattr(farm, "organization", None) or farm.owner
-        if farm_org != current_org and current_org not in farm_org:
+    # Kiểm tra tenant_id của thửa (farm) so với tenant_id / organization của user đang request.
+    user_tenant = getattr(current_user, "tenant_id", None) or getattr(current_user, "organization", None) or (current_org if current_org != "HTX Nông Nghiệp Số 4" else None)
+    farm_tenant = getattr(farm, "tenant_id", None) or getattr(farm, "organization", None) or farm.owner
+
+    if current_user.role != "admin" and user_tenant:
+        user_tid_str = str(user_tenant).strip()
+        farm_tid_str = str(farm_tenant).strip()
+        if user_tid_str != farm_tid_str and user_tid_str not in farm_tid_str:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Thửa đất #{payload.farm_id} thuộc về tổ chức khác ({farm.owner}), bạn không có quyền tạo lô trên thửa đất này.",

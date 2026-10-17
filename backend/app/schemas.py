@@ -255,7 +255,6 @@ class BatchCreate(BaseModel):
     )
     quantity: float = Field(
         ...,
-        gt=0,
         description="Số lượng / khối lượng của lô, đơn vị kg. Phải lớn hơn 0.",
         examples=[120.5],
     )
@@ -265,10 +264,18 @@ class BatchCreate(BaseModel):
         examples=["2026-01-15"],
     )
 
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: float) -> float:
+        """Khối lượng thu hoạch phải lớn hơn 0 (SCRUM-95)."""
+        if v <= 0:
+            raise ValueError("Khối lượng thu hoạch phải lớn hơn 0.")
+        return v
+
     @field_validator("harvest_date")
     @classmethod
     def validate_harvest_date(cls, v: date) -> date:
-        """Từ chối ngày thu hoạch trong tương lai (SCRUM-36 / T-20)."""
+        """Từ chối ngày thu hoạch trong tương lai (SCRUM-36 / SCRUM-95)."""
         if v > date.today():
             raise ValueError("Ngày thu hoạch không được ở trong tương lai.")
         return v
@@ -817,6 +824,10 @@ class ProductResponse(BaseModel):
         default=None,
         description="Mô tả ngắn về sản phẩm (có thể là null).",
     )
+    is_shared: bool = Field(
+        default=True,
+        description="Tính chất danh mục dùng chung toàn hệ thống cho mọi tổ chức (SCRUM-93).",
+    )
 
 
 # ----------------------------------------------------------- Handovers (S-35) ---
@@ -977,6 +988,33 @@ class HandoverWorkflowResponse(HandoverResponse):
         description="Các loại sự kiện đã ghi vào nhật ký lô trong cùng transaction.",
         examples=[["HANDOVER_ACCEPTED", "OWNER_CHANGED"]],
     )
+
+
+# ----------------------------------------------------------- CSV Import (Products & Farms) ---
+class CsvRowError(BaseModel):
+    """Chi tiết lỗi tại một dòng và cột cụ thể trong tệp CSV."""
+
+    row: int = Field(..., description="Số thứ tự dòng bị lỗi trong tệp CSV (1-indexed).", examples=[5])
+    column: str = Field(..., description="Tên cột bị lỗi.", examples=["Tên sản phẩm"])
+    message: str = Field(..., description="Mô tả chi tiết lỗi phát hiện.", examples=["Bắt buộc nhập"])
+
+
+class CsvImportDetail(BaseModel):
+    """Cấu trúc thông báo lỗi trả về khi nhập tệp CSV thất bại (HTTP 400 / 422)."""
+
+    message: str = Field(..., description="Thông báo tổng quan.")
+    errors: list[CsvRowError] = Field(default_factory=list, description="Danh sách các dòng và cột bị sai.")
+
+
+class CsvImportResponse(BaseModel):
+    """Kết quả trả về khi nhập tệp CSV thành công (HTTP 200)."""
+
+    status: str = Field(default="success", description="Trạng thái thực hiện.")
+    message: str = Field(..., description="Thông báo kết quả.", examples=["Nhập thành công 4 dòng."])
+    total_imported: int = Field(..., description="Tổng số dòng dữ liệu đã nhập thành công vào CSDL.", examples=[4])
+    farms_imported: int = Field(default=0, description="Số lượng thửa đất canh tác đã tạo thành công.", examples=[2])
+    products_imported: int = Field(default=0, description="Số lượng sản phẩm đã tạo thành công.", examples=[2])
+
 
 
 
