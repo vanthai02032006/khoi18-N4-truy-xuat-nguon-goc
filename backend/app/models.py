@@ -499,6 +499,7 @@ class Product(Base):
 
     __tablename__ = "products"
     __table_args__ = (
+        Index("uq_products_name_lower", text("lower(name)"), unique=True),
         CheckConstraint(
             "unit IN (" + ", ".join(f"'{unit}'" for unit in PRODUCT_UNITS) + ")",
             name="chk_products_unit",

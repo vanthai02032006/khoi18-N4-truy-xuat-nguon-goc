@@ -15,6 +15,7 @@ import base64
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -166,6 +167,16 @@ def test_reject_duplicate_product_name(products_env):
     data_case = res_case.json()
     assert "detail" in data_case
     assert "đã tồn tại" in data_case["detail"].lower()
+
+
+def test_product_name_case_insensitive_unique_constraint(products_env):
+    """Constraint DB chặn tên trùng khác hoa/thường kể cả ngoài API."""
+    TestingSessionLocal = products_env["TestingSessionLocal"]
+    with TestingSessionLocal() as db:
+        db.add(Product(name="xoài cát chu cao lãnh", unit="kg"))
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
 
 
 def test_farmer_read_only_and_forbidden_write(products_env):

@@ -423,6 +423,11 @@ def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_products_name_lower "
+            "ON products (lower(name))"
+        )
     try:
         with engine.begin() as connection:
             create_append_only_triggers(connection)
