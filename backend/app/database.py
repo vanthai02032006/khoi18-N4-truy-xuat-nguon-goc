@@ -351,6 +351,12 @@ def _migrate_sqlite_schema() -> None:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN parent_id INTEGER REFERENCES batches(id) ON DELETE SET NULL")
                 if "is_restricted" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN is_restricted BOOLEAN DEFAULT 0")
+                if "idempotency_key" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN idempotency_key VARCHAR(100)")
+                    conn.exec_driver_sql(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS "
+                        "ix_batches_idempotency_key ON batches (idempotency_key)"
+                    )
             conn.commit()
     except Exception:
         pass
@@ -423,6 +429,11 @@ def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_products_name_lower "
+            "ON products (lower(name))"
+        )
     try:
         with engine.begin() as connection:
             create_append_only_triggers(connection)

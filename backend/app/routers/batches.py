@@ -22,14 +22,14 @@ import json
 import secrets
 import string
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, status
 from sqlalchemy import cast, func, or_, select, String
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Batch, BatchEvent, Farm, User
+from app.models import Batch, BatchEvent, ColdChainViolation, Farm, RecallOrder, User
 from app.schemas import (
     BatchCreate,
     BatchMergeRequest,
@@ -75,6 +75,16 @@ def generate_unique_batch_code(db: Session, prefix: str = "LOT") -> str:
     return f"{prefix}-{date_part}-{long_suffix}"
 
 
+def _matches_batch_payload(batch: Batch, payload: BatchCreate) -> bool:
+    """Check that an idempotency key is retried with the original harvest data."""
+    return (
+        batch.farm_id == payload.farm_id
+        and batch.product_name == payload.product_name
+        and batch.quantity == payload.quantity
+        and batch.harvest_date == payload.harvest_date
+    )
+
+
 @router.post(
     "",
     response_model=BatchResponse,
@@ -82,7 +92,9 @@ def generate_unique_batch_code(db: Session, prefix: str = "LOT") -> str:
     summary="Tạo lô nông sản",
     description=(
         "Tạo một lô nông sản thuộc về một vùng trồng. "
-        "Nếu `farm_id` không tồn tại, API trả về `404 Not Found`.\n\n"
+        "Nếu `farm_id` không tồn tại, API trả về `404 Not Found`. Có thể gửi "
+        "header `Idempotency-Key` để retry an toàn: cùng key và payload trả lại "
+        "lô đã tạo thay vì tạo lô thứ hai.\n\n"
         "**Phân quyền:** đăng nhập với role `farmer` hoặc `admin` (yêu cầu header "
         "`Authorization: Basic ...`)."
     ),
@@ -96,12 +108,16 @@ def generate_unique_batch_code(db: Session, prefix: str = "LOT") -> str:
         status.HTTP_404_NOT_FOUND: {
             "description": "Vùng trồng (farm_id) không tồn tại.",
         },
+        status.HTTP_409_CONFLICT: {
+            "description": "Idempotency-Key đã được dùng với dữ liệu khác.",
+        },
     },
 )
 def create_batch(
     payload: BatchCreate,
     current_user: User = Depends(require_farmer),
     current_org: str = Depends(require_tenant_context),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=1, max_length=100),
     db: Session = Depends(get_db),
 ) -> Batch:
     """Tạo lô nông sản mới."""
@@ -115,15 +131,29 @@ def create_batch(
             detail=f"Không tìm thấy vùng trồng có id={payload.farm_id}.",
         )
 
-    # Bước 2: kiểm tra thửa đất có thuộc quyền quản lý của tổ chức hiện tại (SCRUM-36 / T-20).
+    # Bước 2: kiểm tra thửa đất có thuộc quyền quản lý của tổ chức hiện tại (SCRUM-36 / T-20 / SCRUM-95).
     # Áp dụng đối với các trường hợp tổ chức cụ thể (trừ admin hệ thống hoặc tổ chức mặc định toàn quyền).
-    if current_org and current_org != "HTX Nông Nghiệp Số 4" and current_user.role != "admin":
-        farm_org = getattr(farm, "organization", None) or farm.owner
-        if farm_org != current_org and current_org not in farm_org:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Thửa đất #{payload.farm_id} thuộc về tổ chức khác ({farm.owner}), bạn không có quyền tạo lô trên thửa đất này.",
-            )
+    # Kiểm tra tenant_id của thửa (farm) so với tenant_id / organization của user đang request.
+    user_tenant = getattr(current_user, "tenant_id", None) or getattr(current_user, "organization", None) or current_org
+    farm_tenant = getattr(farm, "tenant_id", None) or getattr(farm, "organization", None) or farm.owner
+
+    if current_user.role != "admin" and str(user_tenant).strip() != str(farm_tenant).strip():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Thửa đất #{payload.farm_id} thuộc về tổ chức khác ({farm.owner}), bạn không có quyền tạo lô trên thửa đất này.",
+        )
+
+    if idempotency_key:
+        previous_batch = db.scalar(
+            select(Batch).where(Batch.idempotency_key == idempotency_key)
+        )
+        if previous_batch is not None:
+            if not _matches_batch_payload(previous_batch, payload):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Idempotency-Key này đã được dùng cho dữ liệu thu hoạch khác.",
+                )
+            return previous_batch
 
     # Bước 3: sinh mã lô tự động duy nhất
     code = generate_unique_batch_code(db)
@@ -131,11 +161,33 @@ def create_batch(
     # Bước 4: lưu lô nông sản.
     batch_data = payload.model_dump()
     holder_org = current_org if (current_org and current_org != "HTX Nông Nghiệp Số 4") else (farm.owner or "HTX Nông Nghiệp Số 4")
-    batch = Batch(**batch_data, batch_code=code, current_holder_org=holder_org)
+    batch = Batch(
+        **batch_data,
+        batch_code=code,
+        current_holder_org=holder_org,
+        idempotency_key=idempotency_key,
+    )
     db.add(batch)
 
     try:
         db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if idempotency_key:
+            previous_batch = db.scalar(
+                select(Batch).where(Batch.idempotency_key == idempotency_key)
+            )
+            if previous_batch is not None and _matches_batch_payload(previous_batch, payload):
+                return previous_batch
+            if previous_batch is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Idempotency-Key này đã được dùng cho dữ liệu thu hoạch khác.",
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Không thể lưu lô nông sản vào cơ sở dữ liệu.",
+            ) from exc
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(
@@ -1126,6 +1178,41 @@ def _build_public_tracking_map_response(batch: Batch, db: Session) -> PublicTrac
     )
     events = list(db.scalars(stmt_events).all())
 
+    active_recall = db.scalar(
+        select(RecallOrder)
+        .where(
+            RecallOrder.batch_id == batch.id,
+            RecallOrder.status.in_(("IN_PROGRESS", "OPEN", "ACTIVE")),
+        )
+        .order_by(RecallOrder.id.desc())
+        .limit(1)
+    )
+    recall_guidance = None
+    if active_recall is not None:
+        recall_guidance = (
+            "Không sử dụng hoặc tiêu thụ lô hàng này. Hãy giữ lại bao bì/nhãn, "
+            "ngừng phân phối và liên hệ nơi bán để được hướng dẫn hoàn trả."
+        )
+        if active_recall.description and active_recall.description.strip():
+            recall_guidance += f" Hướng dẫn bổ sung: {active_recall.description.strip()}"
+
+    has_cold_chain_violation = any(
+        ev.event_type == "COLD_CHAIN_VIOLATION" for ev in events
+    )
+    if not has_cold_chain_violation:
+        violations = db.scalars(select(ColdChainViolation)).all()
+        for violation in violations:
+            try:
+                product_types = json.loads(violation.product_types_json)
+            except (TypeError, ValueError):
+                product_types = [violation.product_types_json]
+            if (
+                (batch.batch_code and batch.batch_code in violation.shipment_code)
+                or batch.product_name in product_types
+            ):
+                has_cold_chain_violation = True
+                break
+
     known_stops = [
         {"name": "Nhà máy sơ chế & làm mát Cai Lậy", "level": "Cấp Thị Xã Cai Lậy, Tiền Giang", "lat": 10.4080, "lng": 106.1200},
         {"name": "Trung tâm đóng gói & kiểm dịch Tân An", "level": "Cấp Thành Phố Tân An, Long An", "lat": 10.5360, "lng": 106.4130},
@@ -1167,6 +1254,9 @@ def _build_public_tracking_map_response(batch: Batch, db: Session) -> PublicTrac
         product_name=batch.product_name,
         origin_point=origin,
         waypoints=waypoints,
+        is_recalled=active_recall is not None,
+        recall_guidance=recall_guidance,
+        has_cold_chain_violation=has_cold_chain_violation,
         privacy_note="Toạ độ hiển thị ở cấp xã/huyện nhằm bảo vệ bí mật nông hộ và quyền riêng tư thửa đất.",
     )
 

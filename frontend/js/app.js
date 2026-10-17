@@ -73,7 +73,7 @@ function setButtonLoading(button, isLoading, loadingText, idleText) {
  * truyền `auth: false` cho request không cần xác thực (VD: đăng nhập).
  * Ném Error với thông điệp tiếng Việt dễ đọc nếu request thất bại.
  */
-async function apiRequest(path, { method = "GET", body, auth = true } = {}) {
+async function apiRequest(path, { method = "GET", body, auth = true, headers: extraHeaders = {} } = {}) {
   const headers = {};
   if (body) {
     headers["Content-Type"] = "application/json";
@@ -81,6 +81,7 @@ async function apiRequest(path, { method = "GET", body, auth = true } = {}) {
   if (auth) {
     Object.assign(headers, authHeader());
   }
+  Object.assign(headers, extraHeaders);
 
   let response;
   try {
@@ -163,6 +164,9 @@ const PARTNER_ORGANIZATIONS = [
 // gọi PUT thay vì POST.
 let editingFarmId = null;
 let editingBatchId = null;
+let isSubmittingBatch = false;
+let batchIdempotencyKey = null;
+let batchIdempotencyPayload = null;
 let editingProductId = null;
 let activeViewingOrderId = null;
 let editingThresholdId = null;
@@ -299,9 +303,20 @@ function applySessionToUi() {
     $("threshold-form").hidden = !isAdmin;
   }
 
-  // 5. Form sản phẩm dùng chung: chỉ admin mới thêm/sửa sản phẩm
+  // 5. Form sản phẩm dùng chung: chỉ admin mới thêm/sửa sản phẩm; vùng trồng chỉ xem (SCRUM-93)
   if ($("product-form")) {
     $("product-form").hidden = !isAdmin;
+  }
+  if ($("product-farmer-note")) {
+    $("product-farmer-note").hidden = isAdmin;
+  }
+
+  // 6. Nhập dữ liệu CSV: chỉ farmer hoặc admin (inspector xem dạng kiểm tra)
+  if ($("tab-import-btn")) {
+    $("tab-import-btn").hidden = isInspector;
+  }
+  if ($("csv-import-card")) {
+    $("csv-import-card").hidden = isInspector;
   }
 
   populateHandoverOrgs();
@@ -671,34 +686,94 @@ function batchSubmitLabel() {
   return editingBatchId === null ? "Tạo lô nông sản" : "Cập nhật lô nông sản";
 }
 
+/** Hiển thị cảnh báo lỗi màu đỏ cho form thu hoạch lô (SCRUM-95). */
+function showBatchError(message) {
+  const alertEl = $("batch-error-alert");
+  if (alertEl) {
+    alertEl.innerHTML = `<div style="display: flex; align-items: flex-start; gap: 8px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <div><strong>Lỗi không thể lưu lô thu hoạch:</strong><br/><span>${escapeHtml(message)}</span></div>
+    </div>`;
+    alertEl.style.display = "block";
+    alertEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+}
+
+/** Ẩn cảnh báo lỗi form thu hoạch lô. */
+function hideBatchError() {
+  const alertEl = $("batch-error-alert");
+  if (alertEl) {
+    alertEl.textContent = "";
+    alertEl.style.display = "none";
+  }
+}
+
 /**
- * Xử lý submit form lô nông sản:
- * - chế độ tạo mới (`editingBatchId === null`) -> POST /batches;
- * - chế độ sửa (đã bấm nút "Sửa" ở bảng)       -> PUT /batches/{id}.
+ * Xử lý submit form lô nông sản (SCRUM-95):
+ * - Chặn bấm lưu hai lần liên tiếp (double click submission) bằng cờ isSubmittingBatch và disabled nút submit.
+ * - Kiểm tra tính hợp lệ dữ liệu thu hoạch (ngày không ở tương lai, khối lượng > 0).
+ * - Hiển thị lỗi từ backend (422, 403...) bằng alert màu đỏ ra giao diện.
+ * - Chế độ tạo mới (`editingBatchId === null`) -> POST /batches;
+ * - Chế độ sửa (đã bấm nút "Sửa" ở bảng)       -> PUT /batches/{id}.
  */
 async function handleBatchSubmit(event) {
   event.preventDefault();
+
+  // Bỏ qua nếu form đang trong quá trình gửi để tránh tạo trùng lô (SCRUM-95)
+  if (isSubmittingBatch) {
+    return;
+  }
 
   const form = event.currentTarget;
   if (!form.reportValidity()) {
     return;
   }
 
+  hideBatchError();
+
   const farmSelect = $("batch-farm-id");
   if (!farmSelect.value) {
-    toast("Chưa có vùng trồng nào. Hãy thêm vùng trồng ở mục 1 trước khi tạo lô.", "error");
+    const msg = "Chưa có vùng trồng nào. Hãy thêm vùng trồng ở mục 1 trước khi tạo lô.";
+    showBatchError(msg);
+    toast(msg, "error");
+    return;
+  }
+
+  const quantity = Number($("batch-quantity").value);
+  const harvestDate = $("batch-harvest-date").value;
+
+  // Kiểm tra tính hợp lệ trước khi gửi (Client-side fast feedback - SCRUM-95)
+  if (isNaN(quantity) || quantity <= 0) {
+    const msg = "Khối lượng thu hoạch phải lớn hơn 0.";
+    showBatchError(msg);
+    toast(msg, "error");
+    return;
+  }
+
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  if (harvestDate && harvestDate > todayStr) {
+    const msg = "Ngày thu hoạch không được ở trong tương lai.";
+    showBatchError(msg);
+    toast(msg, "error");
     return;
   }
 
   const payload = {
     farm_id: Number(farmSelect.value),
     product_name: $("batch-product-name").value.trim(),
-    quantity: Number($("batch-quantity").value),
-    harvest_date: $("batch-harvest-date").value,
+    quantity: quantity,
+    harvest_date: harvestDate,
   };
 
   const isEditing = editingBatchId !== null;
   const button = $("batch-submit");
+
+  // Đặt cờ đang gửi và lập tức vô hiệu hoá nút bấm submit
+  isSubmittingBatch = true;
+  if (button) {
+    button.disabled = true;
+  }
   setButtonLoading(button, true, "Đang lưu…", batchSubmitLabel());
 
   try {
@@ -707,7 +782,18 @@ async function handleBatchSubmit(event) {
       toast(`Đã cập nhật lô #${updated.id} "${updated.product_name}"`, "success");
       if ($("batch-created-banner")) $("batch-created-banner").hidden = true;
     } else {
-      const created = await apiRequest("/batches", { method: "POST", body: payload });
+      const payloadFingerprint = JSON.stringify(payload);
+      if (!batchIdempotencyKey || batchIdempotencyPayload !== payloadFingerprint) {
+        batchIdempotencyKey = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        batchIdempotencyPayload = payloadFingerprint;
+      }
+      const created = await apiRequest("/batches", {
+        method: "POST",
+        body: payload,
+        headers: { "Idempotency-Key": batchIdempotencyKey },
+      });
+      batchIdempotencyKey = null;
+      batchIdempotencyPayload = null;
       toast(
         `Tạo thành công lô ${created.batch_code || `#${created.id}`} "${created.product_name}" (${formatNumber(created.quantity)} kg)`,
         "success"
@@ -723,12 +809,16 @@ async function handleBatchSubmit(event) {
         banner.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }
+    hideBatchError();
     resetBatchForm(); // về lại chế độ "tạo mới"
     farmSelect.value = String(payload.farm_id); // giữ lại vùng trồng vừa chọn
     await loadBatches();
   } catch (error) {
-    toast(`${isEditing ? "Cập nhật" : "Tạo"} lô nông sản thất bại: ${error.message}`, "error");
+    const errMsg = `${isEditing ? "Cập nhật" : "Tạo"} lô nông sản thất bại: ${error.message}`;
+    showBatchError(error.message);
+    toast(errMsg, "error");
   } finally {
+    isSubmittingBatch = false;
     setButtonLoading(button, false, "Đang lưu…", batchSubmitLabel());
   }
 }
@@ -736,6 +826,7 @@ async function handleBatchSubmit(event) {
 /** Đưa form lô nông sản về chế độ "tạo mới" (bỏ dữ liệu đang sửa). */
 function resetBatchForm() {
   editingBatchId = null;
+  hideBatchError();
   $("batch-form").reset();
   $("batch-form-mode").hidden = true;
   $("batch-cancel").hidden = true;
@@ -753,9 +844,26 @@ function startEditBatch(batchId) {
     return;
   }
 
+  hideBatchError();
   editingBatchId = batch.id;
   $("batch-farm-id").value = String(batch.farm_id); // select đã được đổ ở loadFarms()
-  $("batch-product-name").value = batch.product_name;
+  const productSelect = $("batch-product-name");
+  if (productSelect && batch.product_name) {
+    let found = false;
+    for (const opt of productSelect.options) {
+      if (opt.value === batch.product_name) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      const opt = document.createElement("option");
+      opt.value = batch.product_name;
+      opt.textContent = `${batch.product_name}`;
+      productSelect.appendChild(opt);
+    }
+    productSelect.value = batch.product_name;
+  }
   $("batch-quantity").value = batch.quantity;
   $("batch-harvest-date").value = batch.harvest_date; // API trả sẵn dạng yyyy-MM-dd
 
@@ -1181,9 +1289,49 @@ async function executeBatchMerge() {
   }
 }
 
-/* ---------------------------------- 8d. Danh mục sản phẩm chuẩn (S-16) --- */
+/* ---------------------------------- 8d. Danh mục sản phẩm chuẩn dùng chung (SCRUM-93) --- */
 function canWriteProducts() {
   return session !== null && session.role === ROLE_ADMIN;
+}
+
+/** Hiển thị lỗi form sản phẩm (ví dụ: trùng tên sản phẩm) (SCRUM-93). */
+function showProductError(message) {
+  const alertEl = $("product-error-alert");
+  if (alertEl) {
+    alertEl.innerHTML = `<div style="display: flex; align-items: flex-start; gap: 8px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <div><strong>Lỗi danh mục sản phẩm:</strong><br/><span>${escapeHtml(message)}</span></div>
+    </div>`;
+    alertEl.style.display = "block";
+    alertEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+  const errorMsg = $("product-name-error");
+  if (errorMsg) {
+    errorMsg.textContent = message;
+    errorMsg.style.display = "block";
+  }
+  const nameInput = $("product-name");
+  if (nameInput) {
+    nameInput.style.borderColor = "#dc2626";
+  }
+}
+
+/** Ẩn thông báo lỗi form sản phẩm. */
+function hideProductError() {
+  const alertEl = $("product-error-alert");
+  if (alertEl) {
+    alertEl.textContent = "";
+    alertEl.style.display = "none";
+  }
+  const errorMsg = $("product-name-error");
+  if (errorMsg) {
+    errorMsg.textContent = "";
+    errorMsg.style.display = "none";
+  }
+  const nameInput = $("product-name");
+  if (nameInput) {
+    nameInput.style.borderColor = "";
+  }
 }
 
 async function loadProducts() {
@@ -1191,9 +1339,24 @@ async function loadProducts() {
     const data = await apiRequest("/products");
     products = Array.isArray(data) ? data : [];
     renderProducts();
+    populateBatchProductSelect();
     updateProductsDatalist();
   } catch (error) {
     // Không ném lỗi
+  }
+}
+
+/** Đổ danh sách sản phẩm dùng chung vào thẻ <select> khi tạo lô thu hoạch (SCRUM-93). */
+function populateBatchProductSelect() {
+  const select = $("batch-product-name");
+  if (!select) return;
+  const currentVal = select.value;
+  select.innerHTML = '<option value="">-- Chọn sản phẩm trong danh mục dùng chung --</option>' +
+    products
+      .map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)} (${escapeHtml(p.unit)})</option>`)
+      .join("");
+  if (currentVal) {
+    select.value = currentVal;
   }
 }
 
@@ -1227,7 +1390,7 @@ function renderProducts() {
                   <button class="btn btn--sm btn--danger" type="button"
                           data-action="delete" data-entity="product" data-id="${escapeHtml(p.id)}">Xoá</button>
                 </div>`
-              : `<span style="font-size: 11px; color: #64748b;">Chỉ xem</span>`
+              : `<span style="font-size: 11px; color: #64748b; font-style: italic;">Chỉ xem (Không có quyền sửa)</span>`
           }
         </td>
       </tr>`
@@ -1245,6 +1408,8 @@ function productSubmitLabel() {
 
 async function handleProductSubmit(event) {
   event.preventDefault();
+  hideProductError();
+
   const nameInput = $("product-name");
   const unitSelect = $("product-unit");
   const descInput = $("product-description");
@@ -1255,7 +1420,9 @@ async function handleProductSubmit(event) {
   const description = descInput.value.trim() || null;
 
   if (!name) {
-    toast("Vui lòng nhập tên sản phẩm nông sản.", "error");
+    const msg = "Vui lòng nhập tên sản phẩm nông sản.";
+    showProductError(msg);
+    toast(msg, "error");
     nameInput.focus();
     return;
   }
@@ -1279,6 +1446,7 @@ async function handleProductSubmit(event) {
     resetProductForm();
     await loadProducts();
   } catch (error) {
+    showProductError(error.message);
     toast(error.message, "error");
   } finally {
     setButtonLoading(submitBtn, false, "Đang lưu…", productSubmitLabel());
@@ -1287,6 +1455,7 @@ async function handleProductSubmit(event) {
 
 function resetProductForm() {
   editingProductId = null;
+  hideProductError();
   $("product-id").value = "";
   $("product-name").value = "";
   $("product-unit").value = "kg";
@@ -1299,6 +1468,7 @@ function resetProductForm() {
 function startEditProduct(id) {
   const p = products.find((item) => item.id === Number(id));
   if (!p) return;
+  hideProductError();
   editingProductId = p.id;
   $("product-id").value = p.id;
   $("product-name").value = p.name;
@@ -1313,7 +1483,7 @@ function startEditProduct(id) {
 async function deleteProduct(id) {
   const p = products.find((item) => item.id === Number(id));
   const confirmMsg = p
-    ? `Bạn có chắc muốn xoá sản phẩm "${p.name}" (#${p.id})?`
+    ? `Bạn có chắc muốn xoá sản phẩm "${p.name}" (#${p.id}) khỏi danh mục dùng chung?`
     : `Xoá sản phẩm #${id}?`;
   if (!window.confirm(confirmMsg)) return;
 
@@ -1471,13 +1641,39 @@ async function handleHandoverSubmit(event) {
 }
 
 async function handleAcceptHandover(id) {
-  if (!window.confirm(`Xác nhận tiếp nhận lô hàng theo phiếu bàn giao #${id}?`)) return;
+  const handover = handovers.find((item) => item.id === Number(id));
+  if (!handover) {
+    toast(`Không tìm thấy phiếu bàn giao #${id}.`, "error");
+    return;
+  }
+
+  const violations = Array.isArray(handover.violations) ? handover.violations : [];
+  const warning = $("accept-handover-warning");
+  const warningList = $("accept-handover-violations");
+  warningList.innerHTML = violations.map((violation) => {
+    const when = violation.timestamp ? new Date(violation.timestamp).toLocaleString("vi-VN") : "Không rõ thời điểm";
+    const peakTemperature = violation.peak_temperature ?? violation.recorded_temperature;
+    return `<li style="margin-bottom: 6px;">${formatNumber(violation.duration_minutes)} phút; đỉnh <strong>${escapeHtml(peakTemperature)}°C</strong>; ${escapeHtml(when)}.</li>`;
+  }).join("");
+  warning.hidden = violations.length === 0;
+  $("accept-handover-clear").hidden = violations.length > 0;
+  $("accept-handover-id").value = String(id);
+  $("accept-handover-modal").hidden = false;
+}
+
+function closeAcceptHandoverModal() {
+  $("accept-handover-modal").hidden = true;
+}
+
+async function confirmAcceptHandover() {
+  const id = Number($("accept-handover-id").value);
   try {
     await apiRequest(`/handovers/${id}/accept`, {
       method: "POST",
       body: { notes: "Tiếp nhận lô hàng vào kho thành công." },
     });
     toast(`Đã tiếp nhận lô hàng thành công (quyền sở hữu đã được chuyển giao)!`, "success");
+    closeAcceptHandoverModal();
     await loadHandovers();
     await loadBatches();
   } catch (error) {
@@ -1541,14 +1737,20 @@ function switchTab(tab) {
     handovers: $("handovers-card"),
     coldchain: $("coldchain-card"),
     orders: $("orders-card"),
+    import: $("csv-import-card"),
     users: $("users-card"),
   };
 
   const isAdmin = session !== null && session.role === ROLE_ADMIN;
+  const isInspector = session !== null && session.role === ROLE_INSPECTOR;
 
   Object.entries(cards).forEach(([key, el]) => {
     if (!el) return;
     if (key === "users" && !isAdmin) {
+      el.hidden = true;
+      return;
+    }
+    if (key === "import" && isInspector) {
       el.hidden = true;
       return;
     }
@@ -1658,6 +1860,19 @@ function formatEventDetail(ev, payload) {
       <div class="event-chips">
         <span class="event-chip event-chip--danger">⚠️ Lý do: <strong>${escapeHtml(payload.reason || payload.notes || 'Không rõ lý do')}</strong></span>
         <span class="event-chip">🏢 Đơn vị từ chối: <strong>${escapeHtml(payload.rejecter_name || ev.actor || 'Bên nhận')}</strong></span>
+      </div>`;
+  } else if (t === "COLD_CHAIN_VIOLATION") {
+    badgeColor = "#dc2626";
+    icon = "❄️";
+    title = "Vi phạm chuỗi lạnh";
+    const peakTemperature = payload.peak_temperature ?? payload.recorded_temperature;
+    bodyHtml = `
+      <div class="event-desc" style="color: #991b1b; font-weight: 600;">${escapeHtml(payload.violation_reason || "Đã ghi nhận vi phạm ngưỡng nhiệt độ trong quá trình vận chuyển.")}</div>
+      <div class="event-chips">
+        <span class="event-chip event-chip--danger">⏱ Thời lượng: <strong>${formatNumber(payload.duration_minutes)} phút</strong></span>
+        <span class="event-chip event-chip--danger">🌡️ Nhiệt độ đỉnh: <strong>${escapeHtml(peakTemperature ?? "—")}°C</strong></span>
+        <span class="event-chip">🚚 Chuyến xe: <strong>${escapeHtml(payload.shipment_code || "—")}</strong></span>
+        ${payload.location ? `<span class="event-chip">📍 Vị trí: ${escapeHtml(payload.location)}</span>` : ""}
       </div>`;
   } else if (t === "TEMPERATURE_EXCURSION" || t === "COLDCHAIN_ALERT") {
     badgeColor = "#ef4444";
@@ -1848,7 +2063,21 @@ async function loadPublicMap(batchIdentifier) {
     const mapData = await apiRequest(`/batches/code/${encodeURIComponent(batchIdentifier)}/map`, { auth: false });
     const allStops = [mapData.origin_point, ...(mapData.waypoints || [])];
 
+    const recallAlertHtml = mapData.is_recalled
+      ? `<div role="alert" style="margin-bottom: 14px; padding: 14px 16px; border: 1px solid #fca5a5; border-left: 6px solid #dc2626; border-radius: 6px; background: #fef2f2; color: #7f1d1d;">
+          <strong style="display: block; margin-bottom: 5px;">CẢNH BÁO THU HỒI SẢN PHẨM</strong>
+          <span>${escapeHtml(mapData.recall_guidance || "Không sử dụng lô hàng này. Hãy liên hệ nơi bán để được hướng dẫn thu hồi.")}</span>
+        </div>`
+      : "";
+    const coldChainNoteHtml = mapData.has_cold_chain_violation
+      ? `<div role="note" style="margin-bottom: 16px; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 6px; background: #f1f5f9; color: #475569; font-size: 13px;">
+          Lịch sử lô hàng có ghi nhận sự cố trong quá trình bảo quản hoặc vận chuyển. Thông tin chi tiết được cung cấp qua các kênh hỗ trợ phù hợp.
+        </div>`
+      : "";
+
     let stopsListHtml = `
+      ${recallAlertHtml}
+      ${coldChainNoteHtml}
       <div style="margin-bottom: 16px;">
         <h5 style="margin: 0 0 8px; font-size: 14px; font-weight: 700; color: #0f172a;">Lô: ${escapeHtml(mapData.product_name)} [Mã: ${escapeHtml(mapData.batch_code)}]</h5>
         <div style="font-size: 12px; color: #64748b;">Hành trình bao gồm ${allStops.length} điểm dừng chính qua các cấp hành chính:</div>
@@ -2484,6 +2713,15 @@ function bindEvents() {
   if ($("btn-close-reject-modal")) {
     $("btn-close-reject-modal").addEventListener("click", closeRejectModal);
   }
+  if ($("btn-close-accept-handover-modal")) {
+    $("btn-close-accept-handover-modal").addEventListener("click", closeAcceptHandoverModal);
+  }
+  if ($("btn-cancel-accept-handover")) {
+    $("btn-cancel-accept-handover").addEventListener("click", closeAcceptHandoverModal);
+  }
+  if ($("btn-confirm-accept-handover")) {
+    $("btn-confirm-accept-handover").addEventListener("click", confirmAcceptHandover);
+  }
   if ($("btn-cancel-reject-modal")) {
     $("btn-cancel-reject-modal").addEventListener("click", closeRejectModal);
   }
@@ -2565,6 +2803,14 @@ function bindEvents() {
         if (code) loadPublicMap(code);
       }
     });
+  }
+
+  // Sự kiện nhập dữ liệu từ tệp CSV (Sản phẩm & Thửa đất)
+  if ($("csv-import-form")) {
+    $("csv-import-form").addEventListener("submit", handleCsvImportSubmit);
+  }
+  if ($("btn-download-csv-template")) {
+    $("btn-download-csv-template").addEventListener("click", downloadCsvTemplate);
   }
 }
 
@@ -2664,6 +2910,167 @@ async function reloadAll({ silent = false } = {}) {
   if (!silent) {
     toast(`Đã tải lại: ${farms.length} vùng trồng, ${batches.length} lô, ${products.length} sản phẩm.`, "info");
   }
+}
+
+/* ------------------------------------------- 11b. Nhập dữ liệu từ tệp CSV --- */
+/** Xử lý submit tệp CSV -> POST /imports/csv (FormData). */
+async function handleCsvImportSubmit(event) {
+  event.preventDefault();
+
+  const fileInput = $("csv-file-input");
+  const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+
+  if (!file) {
+    toast("Vui lòng chọn tệp CSV để nhập dữ liệu.", "error");
+    return;
+  }
+
+  const resultContainer = $("csv-import-result");
+  const successAlert = $("csv-import-success-alert");
+  const errorSection = $("csv-import-error-section");
+  const errorsBody = $("csv-import-errors-body");
+  const submitBtn = $("btn-import-submit");
+
+  // Reset hiển thị kết quả cũ
+  if (resultContainer) resultContainer.hidden = true;
+  if (successAlert) successAlert.hidden = true;
+  if (errorSection) errorSection.hidden = true;
+  if (errorsBody) errorsBody.innerHTML = "";
+
+  setButtonLoading(submitBtn, true, "Đang xử lý…", "Nhập dữ liệu");
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const headers = {};
+    if (session) {
+      Object.assign(headers, authHeader());
+    }
+
+    const response = await fetch(`${API_BASE_URL}/imports/csv`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    const data = await readJson(response);
+
+    if (response.ok) {
+      // HTTP 200: Kịch bản thành công
+      const total = data && typeof data.total_imported === "number" ? data.total_imported : 0;
+      const farmsCount = data && typeof data.farms_imported === "number" ? data.farms_imported : 0;
+      const productsCount = data && typeof data.products_imported === "number" ? data.products_imported : 0;
+
+      toast(`Nhập thành công ${total} dòng`, "success");
+
+      if (resultContainer) resultContainer.hidden = false;
+      if (successAlert) {
+        successAlert.hidden = false;
+        $("csv-import-success-msg").textContent = `Nhập thành công ${total} dòng.`;
+        if ($("csv-import-success-detail")) {
+          $("csv-import-success-detail").textContent =
+            `Đã tạo ${productsCount} sản phẩm và ${farmsCount} thửa đất canh tác vào cơ sở dữ liệu.`;
+        }
+      }
+
+      // Reset form
+      $("csv-import-form").reset();
+
+      // Đồng bộ lại dữ liệu giao diện
+      await loadFarms();
+      await loadProducts();
+      await loadBatches();
+    } else {
+      // HTTP 400 / 422: Kịch bản thất bại (lỗi dòng / cột, rollback)
+      let errorList = [];
+      let summaryMsg = "Dữ liệu tệp CSV không hợp lệ. Đã huỷ toàn bộ thao tác (rollback).";
+
+      if (data) {
+        if (typeof data.detail === "string") {
+          summaryMsg = data.detail;
+          errorList = [{ row: "—", column: "Tệp tin", message: data.detail }];
+        } else if (Array.isArray(data.detail)) {
+          errorList = data.detail;
+        } else if (data.detail && typeof data.detail === "object") {
+          if (data.detail.message) summaryMsg = data.detail.message;
+          if (Array.isArray(data.detail.errors)) errorList = data.detail.errors;
+        } else if (Array.isArray(data.errors)) {
+          errorList = data.errors;
+        }
+      }
+
+      if (resultContainer) resultContainer.hidden = false;
+      if (errorSection) {
+        errorSection.hidden = false;
+        if ($("csv-import-error-desc")) {
+          $("csv-import-error-desc").textContent = summaryMsg;
+        }
+        if ($("csv-import-error-count")) {
+          $("csv-import-error-count").textContent = `${errorList.length} lỗi`;
+        }
+      }
+
+      if (errorsBody) {
+        if (errorList.length === 0) {
+          errorsBody.innerHTML = `
+            <tr>
+              <td class="is-center font-mono">1</td>
+              <td><span class="role-pill" style="background: #fef2f2; color: #b91c1c;">Dữ liệu</span></td>
+              <td style="color: #dc2626; font-weight: 500;">${escapeHtml(summaryMsg)}</td>
+            </tr>`;
+        } else {
+          errorsBody.innerHTML = errorList
+            .map((err) => {
+              const rowNum = err.row !== undefined && err.row !== null ? err.row : "—";
+              const colName = err.column || (Array.isArray(err.loc) ? err.loc.join(".") : "Cột dữ liệu");
+              const errMsg = err.message || err.msg || "Không hợp lệ";
+              return `
+                <tr>
+                  <td class="is-center font-mono" style="font-weight: 700; color: #b91c1c;">${escapeHtml(rowNum)}</td>
+                  <td><span class="role-pill" style="background: #fef2f2; color: #b91c1c; font-weight: 600;">${escapeHtml(colName)}</span></td>
+                  <td style="color: #991b1b; font-weight: 500;">${escapeHtml(errMsg)}</td>
+                </tr>`;
+            })
+            .join("");
+        }
+      }
+
+      if (errorList.length === 1) {
+        const first = errorList[0];
+        toast(`Lỗi dòng ${first.row}, cột '${first.column || "Dữ liệu"}': ${first.message || "Bắt buộc nhập"}`, "error");
+      } else if (errorList.length > 1) {
+        toast(`Lỗi nhập CSV: Phát hiện ${errorList.length} dòng/cột bị sai (toàn bộ đã rollback).`, "error");
+      } else {
+        toast(`Nhập dữ liệu thất bại: ${summaryMsg}`, "error");
+      }
+    }
+  } catch (error) {
+    toast(`Lỗi khi nhập tệp CSV: ${error.message}`, "error");
+  } finally {
+    setButtonLoading(submitBtn, false, "Đang xử lý…", "Nhập dữ liệu");
+  }
+}
+
+/** Tải tệp CSV mẫu chuẩn từ client hoặc API */
+function downloadCsvTemplate() {
+  const csvContent =
+    "type,name,unit,description,location,area,owner\r\n" +
+    "product,Xoài Cát Chu Cao Lãnh,kg,Xoài cát chu chuẩn VietGAP đóng thùng,,,\r\n" +
+    "product,Sầu riêng Ri6 Bến Tre,kg,Sầu riêng cơm vàng hạt lép đạt chuẩn xuất khẩu,,,\r\n" +
+    'farm,Vườn Xoài Mỹ Xương 1,,,"Xã Mỹ Xương, Huyện Cao Lãnh, Tỉnh Đồng Tháp",3.5,Hợp tác xã Xoài Mỹ Xương\r\n' +
+    'farm,Vùng Canh Tác Sầu Riêng 2,,,"Xã Bình Hàng Tây, Huyện Cao Lãnh, Tỉnh Đồng Tháp",2.0,Hộ Nông Dân Nguyễn Văn An\r\n';
+
+  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", "mau_nhap_san_pham_va_thua.csv");
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  toast("Đã tải xuống tệp CSV mẫu chuẩn (mau_nhap_san_pham_va_thua.csv).", "info");
 }
 
 /* -------------------------------------------------------- 12. Khởi động --- */

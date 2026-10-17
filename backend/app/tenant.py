@@ -25,11 +25,15 @@ def get_tenant_org() -> str:
     return _current_tenant_org.get()
 
 
-def require_tenant_context(x_organization: str | None = Header(None, alias="X-Organization-Id")) -> str:
-    """Dependency kiểm tra bắt buộc có header tổ chức hợp lệ (SCRUM-27)."""
-    if x_organization and x_organization.strip():
-        set_tenant_org(x_organization.strip())
-        return x_organization.strip()
+def require_tenant_context(
+    x_organization: str | None = Header(None, alias="X-Organization-Id"),
+    x_tenant: str | None = Header(None, alias="X-Tenant-Id"),
+) -> str:
+    """Dependency kiểm tra bắt buộc có header tổ chức hợp lệ (SCRUM-27 / SCRUM-95)."""
+    org = x_organization or x_tenant
+    if org and org.strip():
+        set_tenant_org(org.strip())
+        return org.strip()
     # Mặc định lấy tổ chức tiêu chuẩn nếu không chỉ định header riêng
     default_org = get_tenant_org()
     return default_org

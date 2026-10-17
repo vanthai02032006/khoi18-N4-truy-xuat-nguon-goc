@@ -15,7 +15,7 @@ sai vai trò → **403**.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Batch, BatchEvent, Farm, User
 
-from app.schemas import DeleteResponse, FarmCreate, FarmResponse, FarmUpdate
+from app.schemas import CsvImportResponse, DeleteResponse, FarmCreate, FarmResponse, FarmUpdate
 from app.security import require_admin, require_farm_view, require_farmer
 
 router = APIRouter(
@@ -274,4 +274,23 @@ def delete_farm(
         deleted_id=farm_id,
         deleted_batches=deleted_batches,
     )
+
+
+@router.post(
+    "/import-csv",
+    response_model=CsvImportResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Nhập sản phẩm và thửa từ tệp CSV",
+    description="Endpoint hỗ trợ tải tệp CSV tạo hàng loạt sản phẩm và thửa đất.",
+)
+async def import_farms_csv(
+    file: UploadFile = File(..., description="Tệp tin CSV cần tải lên."),
+    current_user: User = Depends(require_farmer),
+    db: Session = Depends(get_db),
+) -> CsvImportResponse:
+    """Tải tệp CSV để tạo hàng loạt sản phẩm và thửa đất."""
+    from app.routers.imports import import_products_and_farms_csv
+
+    return await import_products_and_farms_csv(file=file, current_user=current_user, db=db)
+
 

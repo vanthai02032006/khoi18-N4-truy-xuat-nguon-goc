@@ -57,6 +57,10 @@
           <span class="tab-icon">🚨</span>
           <span>THU HỒI</span>
         </button>
+        <button type="button" class="nav-tab-pill" data-tab="import" id="tab-import-btn">
+          <span class="tab-icon">📥</span>
+          <span>NHẬP CSV</span>
+        </button>
         <button type="button" class="nav-tab-pill" data-tab="users" id="tab-users-btn" hidden>
           <span class="tab-icon">👥</span>
           <span>THÀNH VIÊN</span>
@@ -440,6 +444,7 @@
 
         <form id="batch-form" class="form-wrapper">
           <div id="batch-form-mode" class="mode-alert" hidden></div>
+          <div id="batch-error-alert" class="mode-alert mode-alert--error" style="background: #fef2f2; color: #b91c1c; border: 1.5px solid #f87171; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-weight: 500; display: none;" role="alert"></div>
           <div class="form-grid">
             <div class="form-group">
               <label for="batch-farm-id" class="input-label">
@@ -450,18 +455,18 @@
 
             <div class="form-group">
               <label for="batch-product-name" class="input-label">
-                Loại cây trồng / Nông sản <span class="required">*</span>
+                Loại cây trồng / Nông sản (Danh mục dùng chung) <span class="required">*</span>
               </label>
-              <input id="batch-product-name" list="products-datalist" type="text" maxlength="255" required
-                     placeholder="Ví dụ: Xoài Cát Chu / Sầu Riêng Ri6..." />
-              <datalist id="products-datalist"></datalist>
+              <select id="batch-product-name" required>
+                <option value="">-- Chọn sản phẩm trong danh mục dùng chung --</option>
+              </select>
             </div>
 
             <div class="form-group">
               <label for="batch-quantity" class="input-label">
                 Sản lượng thu hoạch (kg) <span class="required">*</span>
               </label>
-              <input id="batch-quantity" type="number" min="0.1" step="0.1" required
+              <input id="batch-quantity" type="number" step="any" required
                      placeholder="Ví dụ: 1500" />
             </div>
 
@@ -586,7 +591,13 @@
           </div>
         </header>
 
+        <div id="product-farmer-note" style="padding: 12px 18px; background: #f0fdf4; border: 1.5px solid #bbf7d0; border-radius: 8px; margin: 16px 20px; color: #166534; font-size: 0.9rem; display: flex; align-items: center; gap: 10px;" hidden>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <div><strong>Chế độ Vùng Trồng (Người dùng thường):</strong> Bạn có quyền tra cứu danh mục nông sản dùng chung toàn hệ thống để chọn khi ghi nhận thu hoạch. Quyền thêm mới, sửa hoặc xoá sản phẩm thuộc về Quản trị viên (Admin).</div>
+        </div>
+
         <form id="product-form" class="form-wrapper" novalidate>
+          <div id="product-error-alert" class="mode-alert mode-alert--error" style="background: #fef2f2; color: #b91c1c; border: 1.5px solid #f87171; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-weight: 500; display: none;" role="alert"></div>
           <input type="hidden" id="product-id" />
           <div class="form-grid">
             <div class="form-group">
@@ -595,7 +606,7 @@
               </label>
               <input id="product-name" type="text" required maxlength="120"
                      placeholder="Ví dụ: Xoài Cát Chu Cao Lãnh, Dưa lưới Huỳnh Long..." />
-              <span id="product-name-error" class="field-error-msg" hidden></span>
+              <span id="product-name-error" class="field-error-msg" style="color: #dc2626; font-size: 0.85rem; margin-top: 4px; display: none;"></span>
             </div>
 
             <div class="form-group">
@@ -1053,6 +1064,100 @@
           </div>
         </div>
       </section>
+
+      <!-- Section 8: Nhập Dữ Liệu Hàng Loạt Từ Tệp CSV (Sản Phẩm & Thửa Đất) -->
+      <section id="csv-import-card" class="content-card">
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar" style="background: linear-gradient(135deg, #059669 0%, #047857 100%); color: #fff;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">8. Nhập sản phẩm & Thửa đất từ tệp CSV</h3>
+              <p class="card-subtitle">
+                Tải lên tệp CSV để tạo hàng loạt Sản phẩm và Thửa đất cho hợp tác xã mới. Áp dụng quy tắc toàn vẹn Transaction: chỉ lưu khi 100% các dòng đều hợp lệ.
+              </p>
+            </div>
+          </div>
+          <div class="header-right">
+            <button id="btn-download-csv-template" type="button" class="btn-action-ghost" style="font-size: 13px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>Tải tệp CSV mẫu</span>
+            </button>
+          </div>
+        </header>
+
+        <form id="csv-import-form" class="form-wrapper">
+          <div class="form-grid">
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label for="csv-file-input" class="input-label">
+                Chọn tệp CSV từ máy tính (.csv) <span class="required">*</span>
+              </label>
+              <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                <input id="csv-file-input" type="file" accept=".csv" required
+                       style="flex: 1; padding: 10px; border: 1.5px dashed #cbd5e1; border-radius: 8px; background: #f8fafc; font-size: 14px;" />
+              </div>
+              <small style="color: #64748b; font-size: 0.84rem; margin-top: 6px; display: block;">
+                Định dạng hỗ trợ: UTF-8 CSV với các cột: <code>type,name,unit,description,location,area,owner</code> (hoặc tiếng Việt: <code>loại,tên,đơn vị tính,mô tả,địa điểm,diện tích,chủ sở hữu</code>).
+              </small>
+            </div>
+          </div>
+
+          <div class="form-buttons">
+            <button id="btn-import-submit" class="btn-action-primary" type="submit" style="background: linear-gradient(135deg, #059669 0%, #047857 100%);">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <span id="btn-import-submit-label">Nhập dữ liệu</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- Khung hiển thị thông báo kết quả và bảng lỗi -->
+        <div id="csv-import-result" style="padding: 18px 24px;" hidden>
+          <!-- Thông báo thành công (HTTP 200) -->
+          <div id="csv-import-success-alert" class="mode-alert" style="background: #ecfdf5; border: 1.5px solid #a7f3d0; color: #065f46; display: flex; align-items: center; gap: 12px; margin-bottom: 0;" hidden>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            <div>
+              <strong id="csv-import-success-msg" style="font-size: 1rem;">Nhập thành công 0 dòng.</strong>
+              <div id="csv-import-success-detail" style="font-size: 0.88rem; color: #047857; margin-top: 3px;">Dữ liệu đã được đồng bộ vào hệ thống.</div>
+            </div>
+          </div>
+
+          <!-- Thông báo lỗi (HTTP 400/422) -->
+          <div id="csv-import-error-section" hidden>
+            <div class="split-alert-danger" style="margin-bottom: 14px; display: flex; align-items: flex-start; gap: 12px;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2.2" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <div>
+                <strong id="csv-import-error-title" style="font-size: 0.95rem; color: #b91c1c;">Lỗi nhập dữ liệu: Giao dịch đã bị huỷ (Rollback)</strong>
+                <p id="csv-import-error-desc" style="font-size: 0.86rem; color: #991b1b; margin-top: 4px;">
+                  Do có ít nhất một dòng dữ liệu không hợp lệ, không có dòng nào được tạo trong cơ sở dữ liệu. Vui lòng sửa lại các lỗi bên dưới và thử lại.
+                </p>
+              </div>
+            </div>
+
+            <!-- Bảng chi tiết lỗi theo dòng và cột -->
+            <div class="table-container" style="border: 1px solid #fecaca; border-radius: 8px;">
+              <div class="table-subhead" style="background: #fef2f2; border-bottom: 1px solid #fee2e2;">
+                <span class="table-heading" style="color: #991b1b;">Chi tiết các dòng và cột bị sai</span>
+                <span id="csv-import-error-count" class="badge-count" style="background: #dc2626; color: #fff;">0 lỗi</span>
+              </div>
+              <div class="responsive-table">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 100px;" class="is-center">DÒNG SỐ</th>
+                      <th style="width: 220px;">CỘT BỊ SAI</th>
+                      <th>NỘI DUNG LỖI CHI TIẾT</th>
+                    </tr>
+                  </thead>
+                  <tbody id="csv-import-errors-body">
+                    <!-- Render dynamic rows -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   </main>
 
@@ -1421,6 +1526,33 @@
         <button id="btn-close-merge-success" class="btn-action-primary" type="button" style="margin-top: 14px; width: 100%;">
           Đồng ý & Xem danh sách lô
         </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="accept-handover-modal" class="modal-backdrop" hidden>
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title">Xác nhận tiếp nhận bàn giao</h3>
+          <p class="card-subtitle">Kiểm tra thông tin lô trước khi nhận hàng.</p>
+        </div>
+        <button id="btn-close-accept-handover-modal" class="modal-close" type="button" aria-label="Đóng modal">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 20px;">
+        <input type="hidden" id="accept-handover-id" />
+        <div id="accept-handover-warning" role="alert" hidden style="padding: 14px 16px; border: 1px solid #f59e0b; border-left: 5px solid #dc2626; border-radius: 6px; background: #fff7ed; color: #7c2d12;">
+          <strong style="display: block; margin-bottom: 8px;">Cảnh báo vi phạm chuỗi lạnh</strong>
+          <p style="margin: 0 0 8px;">Lô hàng có vi phạm nhiệt độ trong quá trình vận chuyển:</p>
+          <ul id="accept-handover-violations" style="margin: 0; padding-left: 20px;"></ul>
+        </div>
+        <p id="accept-handover-clear" style="margin: 0; color: #334155;">Bạn sắp xác nhận nhận lô hàng này.</p>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-accept-handover" class="btn-action-ghost" type="button">Quay lại</button>
+        <button id="btn-confirm-accept-handover" class="btn-action-primary" type="button">Xác nhận nhận hàng</button>
       </div>
     </div>
   </div>

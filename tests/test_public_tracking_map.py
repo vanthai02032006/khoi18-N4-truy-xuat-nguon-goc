@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.database import Base, SessionLocal, get_db
-from app.models import Batch, BatchEvent, Farm, User, ROLE_ADMIN
+from app.models import Batch, BatchEvent, ColdChainViolation, Farm, RecallOrder, User, ROLE_ADMIN
 from app.security import compute_event_hash
 
 
@@ -78,14 +78,14 @@ def map_test_client():
         db.commit()
 
     with TestClient(app) as client:
-        yield client
+        yield {"client": client, "session_factory": TestingSessionLocal}
 
     app.dependency_overrides.clear()
 
 
-def test_get_batch_map_by_code(map_test_client: TestClient):
+def test_get_batch_map_by_code(map_test_client):
     """Kiểm tra tra cứu bản đồ theo mã lô."""
-    response = map_test_client.get("/batches/code/LOT-MAP-001/map")
+    response = map_test_client["client"].get("/batches/code/LOT-MAP-001/map")
     assert response.status_code == 200
     data = response.json()
     assert data["batch_code"] == "LOT-MAP-001"
@@ -93,12 +93,59 @@ def test_get_batch_map_by_code(map_test_client: TestClient):
     assert data["origin_point"]["order"] == 1
     assert "Cấp Xã / Huyện" in data["origin_point"]["location_level"]
     assert len(data["waypoints"]) >= 1
+    assert data["is_recalled"] is False
+    assert data["recall_guidance"] is None
+    assert data["has_cold_chain_violation"] is False
 
 
-def test_get_batch_map_by_id(map_test_client: TestClient):
+def test_get_batch_map_by_id(map_test_client):
     """Kiểm tra tra cứu bản đồ theo ID lô."""
-    response = map_test_client.get("/batches/1/map")
+    response = map_test_client["client"].get("/batches/1/map")
     assert response.status_code == 200
     data = response.json()
     assert data["origin_point"]["order"] == 1
     assert "privacy_note" in data
+
+
+def test_public_batch_map_returns_recall_and_cold_chain_flags_without_measurements(map_test_client):
+    """Public response flags active recall and past violations without exposing readings."""
+    session_factory = map_test_client["session_factory"]
+    with session_factory() as db:
+        batch = db.query(Batch).filter(Batch.batch_code == "LOT-MAP-001").one()
+        db.add(
+            RecallOrder(
+                order_code="ORD-REC-PUBLIC-01",
+                title="Thu hồi lô kiểm thử",
+                description="Ngừng phân phối và liên hệ điểm bán để hoàn trả sản phẩm.",
+                reason="Kiểm tra an toàn sản phẩm",
+                batch_id=batch.id,
+                issuer_username="inspector",
+                created_at="2026-10-03T09:00:00Z",
+                status="IN_PROGRESS",
+            )
+        )
+        db.add(
+            ColdChainViolation(
+                shipment_code="SHIP-LOT-MAP-001",
+                product_types_json='["Xoài Cát Chu"]',
+                recorded_temperature=12.7,
+                duration_minutes=18.0,
+                applied_temp_min=2.0,
+                applied_temp_max=8.0,
+                applied_delay_minutes=15,
+                violation_reason="Vượt ngưỡng trong quá trình vận chuyển.",
+                timestamp="2026-10-02T11:00:00Z",
+                location="Trạm kiểm thử",
+            )
+        )
+        db.commit()
+
+    response = map_test_client["client"].get("/batches/code/LOT-MAP-001/map")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_recalled"] is True
+    assert "hoàn trả" in data["recall_guidance"]
+    assert data["has_cold_chain_violation"] is True
+    assert "recorded_temperature" not in data
+    assert "peak_temperature" not in data
+    assert "12.7" not in response.text

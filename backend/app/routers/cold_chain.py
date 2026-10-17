@@ -22,7 +22,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ColdChainThreshold, ColdChainViolation, User
+from app.events import DEFAULT_ORGANIZATION, record_event
+from app.models import (
+    EVENT_TYPE_COLD_CHAIN_VIOLATION,
+    Batch,
+    ColdChainThreshold,
+    ColdChainViolation,
+    User,
+)
 from app.schemas import (
     ColdChainThresholdCreate,
     ColdChainThresholdResponse,
@@ -289,6 +296,41 @@ def check_telemetry(
             location=data.location or "Xe lạnh chuyên dụng",
         )
         db.add(violation)
+
+        # The domain has no shipment-to-batch join table yet. Match the same
+        # shipment-code/product association exposed by traceability exports.
+        batches = list(db.scalars(select(Batch)).all())
+        related_batches = [
+            batch
+            for batch in batches
+            if (batch.batch_code and batch.batch_code in data.shipment_code)
+            or batch.product_name in clean_types
+        ]
+        event_payload = {
+            "violation_id": None,
+            "shipment_code": data.shipment_code,
+            "product_types": clean_types,
+            "duration_minutes": duration,
+            "peak_temperature": temp,
+            "recorded_temperature": temp,
+            "applied_temp_min": eff_min,
+            "applied_temp_max": eff_max,
+            "timestamp": now_iso,
+            "location": data.location or "Xe lạnh chuyên dụng",
+            "violation_reason": reason,
+        }
+        db.flush()
+        event_payload["violation_id"] = violation.id
+        for batch in related_batches:
+            record_event(
+                db,
+                batch_id=batch.id,
+                event_type=EVENT_TYPE_COLD_CHAIN_VIOLATION,
+                actor=current_user.username,
+                organization=DEFAULT_ORGANIZATION,
+                payload=event_payload,
+            )
+
         db.commit()
         db.refresh(violation)
         violation_id = violation.id
@@ -340,6 +382,7 @@ def list_violations(
                 product_types_json=r.product_types_json,
                 product_types=ptypes,
                 recorded_temperature=r.recorded_temperature,
+                peak_temperature=r.recorded_temperature,
                 duration_minutes=r.duration_minutes,
                 applied_temp_min=r.applied_temp_min,
                 applied_temp_max=r.applied_temp_max,

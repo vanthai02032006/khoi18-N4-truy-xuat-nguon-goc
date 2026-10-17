@@ -19,15 +19,15 @@ database + kiểm tra trước khi ghi) nên thêm/sửa trùng tên trả ``409
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile, status
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Product, User
-from app.schemas import ProductCreate, ProductResponse, ProductUpdate
+from app.schemas import CsvImportResponse, ProductCreate, ProductResponse, ProductUpdate
 from app.security import get_current_user, require_admin, require_farmer
 
 router = APIRouter(
@@ -42,7 +42,7 @@ def _ensure_name_available(
     *,
     exclude_id: int | None = None,
 ) -> None:
-    """Chặn trùng tên sản phẩm trong danh mục dùng chung.
+    """Chặn trùng tên sản phẩm trong danh mục dùng chung (SCRUM-93).
 
     Args:
         db: Session SQLAlchemy hiện tại.
@@ -51,13 +51,18 @@ def _ensure_name_available(
             sản phẩm mà không đổi tên.
 
     Raises:
-        HTTPException: **409** nếu đã có sản phẩm khác mang đúng tên này.
+        HTTPException: **409 Conflict** nếu đã có sản phẩm khác mang đúng tên này.
     """
-    existing = db.scalar(select(Product).where(Product.name == name))
+    cleaned_name = name.strip()
+    existing = db.scalar(
+        select(Product).where(
+            func.lower(Product.name) == func.lower(cleaned_name)
+        )
+    )
     if existing is not None and existing.id != exclude_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Sản phẩm '{name}' đã tồn tại trong danh mục dùng chung.",
+            detail=f"Tên sản phẩm '{cleaned_name}' đã tồn tại trong danh mục dùng chung. Vui lòng chọn tên khác.",
         )
 
 
@@ -147,7 +152,7 @@ def create_product(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Sản phẩm '{payload.name}' đã tồn tại trong danh mục dùng chung.",
+            detail=f"Tên sản phẩm '{payload.name}' đã tồn tại trong danh mục dùng chung. Vui lòng chọn tên khác.",
         ) from exc
     except SQLAlchemyError as exc:
         db.rollback()
@@ -221,7 +226,7 @@ def update_product(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Sản phẩm '{payload.name}' đã tồn tại trong danh mục dùng chung.",
+            detail=f"Tên sản phẩm '{payload.name}' đã tồn tại trong danh mục dùng chung. Vui lòng chọn tên khác.",
         ) from exc
     except SQLAlchemyError as exc:
         db.rollback()
@@ -232,3 +237,60 @@ def update_product(
 
     db.refresh(product)
     return product
+
+
+@router.delete(
+    "/{product_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Xoá sản phẩm khỏi danh mục dùng chung (chỉ admin)",
+    description="Xoá sản phẩm theo ID. Chỉ dành riêng cho quyền quản trị viên (admin).",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Chưa đăng nhập."},
+        status.HTTP_403_FORBIDDEN: {"description": "Đã đăng nhập nhưng không phải admin."},
+        status.HTTP_404_NOT_FOUND: {"description": "Không tìm thấy sản phẩm."},
+    },
+)
+def delete_product(
+    product_id: int = Path(..., ge=1, description="ID sản phẩm cần xoá."),
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """Xoá sản phẩm khỏi danh mục dùng chung (chỉ admin)."""
+    _ = current_user
+    product = db.get(Product, product_id)
+    if product is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy sản phẩm có id={product_id} trong danh mục dùng chung.",
+        )
+
+    db.delete(product)
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Không thể xoá sản phẩm khỏi cơ sở dữ liệu.",
+        ) from exc
+
+    return {"message": f"Đã xoá sản phẩm '{product.name}' thành công."}
+
+
+@router.post(
+    "/import-csv",
+    response_model=CsvImportResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Nhập sản phẩm và thửa từ tệp CSV",
+    description="Endpoint hỗ trợ tải tệp CSV tạo hàng loạt sản phẩm và thửa đất.",
+)
+async def import_products_csv(
+    file: UploadFile = File(..., description="Tệp tin CSV cần tải lên."),
+    current_user: User = Depends(require_farmer),
+    db: Session = Depends(get_db),
+) -> CsvImportResponse:
+    """Tải tệp CSV để tạo hàng loạt sản phẩm và thửa đất."""
+    from app.routers.imports import import_products_and_farms_csv
+
+    return await import_products_and_farms_csv(file=file, current_user=current_user, db=db)
+
