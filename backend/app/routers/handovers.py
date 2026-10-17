@@ -29,6 +29,8 @@ Ba nguyên tắc nghiệp vụ quan trọng:
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from sqlalchemy import select
@@ -46,6 +48,7 @@ from app.models import (
     HANDOVER_STATUS_PENDING,
     HANDOVER_STATUS_REJECTED,
     Batch,
+    ColdChainViolation,
     Handover,
     User,
 )
@@ -55,6 +58,7 @@ from app.schemas import (
     HandoverReject,
     HandoverResponse,
     HandoverWorkflowResponse,
+    ColdChainViolationResponse,
 )
 from app.security import get_current_user
 
@@ -64,7 +68,55 @@ router = APIRouter(
 )
 
 
-def _to_response(handover: Handover, owner: str | None = None) -> HandoverResponse:
+def _violations_for_batch(
+    batch: Batch | None,
+    db: Session,
+    records: list[ColdChainViolation] | None = None,
+) -> list[ColdChainViolationResponse]:
+    if batch is None:
+        return []
+
+    if records is None:
+        records = list(
+            db.scalars(select(ColdChainViolation).order_by(ColdChainViolation.id.desc())).all()
+        )
+    related: list[ColdChainViolationResponse] = []
+    for violation in records:
+        try:
+            product_types = json.loads(violation.product_types_json)
+        except (TypeError, ValueError):
+            product_types = [violation.product_types_json]
+
+        is_related = (
+            bool(batch.batch_code and batch.batch_code in violation.shipment_code)
+            or batch.product_name in product_types
+        )
+        if is_related:
+            related.append(
+                ColdChainViolationResponse(
+                    id=violation.id,
+                    shipment_code=violation.shipment_code,
+                    product_types_json=violation.product_types_json,
+                    product_types=product_types,
+                    recorded_temperature=violation.recorded_temperature,
+                    peak_temperature=violation.recorded_temperature,
+                    duration_minutes=violation.duration_minutes,
+                    applied_temp_min=violation.applied_temp_min,
+                    applied_temp_max=violation.applied_temp_max,
+                    applied_delay_minutes=violation.applied_delay_minutes,
+                    violation_reason=violation.violation_reason,
+                    timestamp=violation.timestamp,
+                    location=violation.location,
+                )
+            )
+    return related
+
+
+def _to_response(
+    handover: Handover,
+    owner: str | None = None,
+    violations: list[ColdChainViolationResponse] | None = None,
+) -> HandoverResponse:
     """Chuyển ORM ``Handover`` -> ``HandoverResponse`` kèm chủ sở hữu hiện tại của lô."""
     return HandoverResponse(
         id=handover.id,
@@ -78,6 +130,8 @@ def _to_response(handover: Handover, owner: str | None = None) -> HandoverRespon
         created_at=handover.created_at,
         updated_at=handover.updated_at,
         current_batch_owner=owner,
+        has_cold_chain_violation=bool(violations),
+        violations=violations or [],
     )
 
 
@@ -246,7 +300,11 @@ def create_handover(
 
     db.refresh(handover)
     db.refresh(batch)
-    return _to_response(handover, batch.current_owner if batch else None)
+    return _to_response(
+        handover,
+        batch.current_owner if batch else None,
+        _violations_for_batch(batch, db),
+    )
 
 
 @router.get(
@@ -266,7 +324,7 @@ def list_handovers(
     db: Session = Depends(get_db),
 ) -> list[HandoverResponse]:
     """Danh sách phiếu bàn giao, mới nhất trước."""
-    stmt = select(Handover, Batch.current_owner).join(
+    stmt = select(Handover, Batch).join(
         Batch, Batch.id == Handover.batch_id, isouter=True
     )
     if batch_id is not None:
@@ -275,9 +333,16 @@ def list_handovers(
         stmt = stmt.where(Handover.status == status_filter.lower().strip())
 
     stmt = stmt.order_by(Handover.created_at.desc(), Handover.id.desc())
+    violations = list(
+        db.scalars(select(ColdChainViolation).order_by(ColdChainViolation.id.desc())).all()
+    )
     return [
-        _to_response(handover, owner)
-        for handover, owner in db.execute(stmt).all()
+        _to_response(
+            handover,
+            batch.current_owner if batch else None,
+            _violations_for_batch(batch, db, violations),
+        )
+        for handover, batch in db.execute(stmt).all()
     ]
 
 
@@ -300,7 +365,11 @@ def get_handover(
             detail=f"Không tìm thấy phiếu bàn giao có id={handover_id}.",
         )
     batch = db.get(Batch, handover.batch_id)
-    return _to_response(handover, batch.current_owner if batch else None)
+    return _to_response(
+        handover,
+        batch.current_owner if batch else None,
+        _violations_for_batch(batch, db),
+    )
 
 
 @router.post(
@@ -382,7 +451,11 @@ def accept_handover(
     if batch is not None:
         db.refresh(batch)
     return HandoverWorkflowResponse(
-        **_to_response(handover, batch.current_owner if batch else None).model_dump(),
+        **_to_response(
+            handover,
+            batch.current_owner if batch else None,
+            _violations_for_batch(batch, db),
+        ).model_dump(),
         recorded_events=[EVENT_TYPE_HANDOVER_ACCEPTED, EVENT_TYPE_OWNER_CHANGED],
     )
 
@@ -447,7 +520,11 @@ def reject_handover(
     if batch is not None:
         db.refresh(batch)
     return HandoverWorkflowResponse(
-        **_to_response(handover, batch.current_owner if batch else None).model_dump(),
+        **_to_response(
+            handover,
+            batch.current_owner if batch else None,
+            _violations_for_batch(batch, db),
+        ).model_dump(),
         recorded_events=[EVENT_TYPE_HANDOVER_REJECTED],
     )
 

@@ -17,17 +17,23 @@
 
 from __future__ import annotations
 
+import json
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
 from app.models import (
+    Batch,
+    BatchEvent,
     ColdChainThreshold,
     ColdChainViolation,
+    Farm,
     ROLE_ADMIN,
     ROLE_FARMER,
     User,
@@ -304,3 +310,85 @@ def test_updating_threshold_config_does_not_recalculate_recorded_violations(cold
     assert new_result["is_violated"] is False
     assert new_result["applied_temp_max"] == 12.0
     assert new_result["applied_delay_minutes"] == 30
+
+
+def test_violation_is_appended_to_related_batch_timelines_and_handover_warns(cold_chain_env):
+    """A single shipment violation is audited on all related batches and returned on handover."""
+    client: TestClient = cold_chain_env["client"]
+    admin_auth = cold_chain_env["admin_auth"]
+    session_factory = cold_chain_env["session_factory"]
+
+    with session_factory() as db:
+        farm = Farm(
+            name="Vùng trồng kiểm thử chuỗi lạnh",
+            location="Đồng Tháp",
+            area=2.0,
+            owner="HTX Nong San A",
+        )
+        db.add(farm)
+        db.flush()
+        batches = [
+            Batch(
+                farm_id=farm.id,
+                batch_code=f"SHIP-VN-125-LOT-{suffix}",
+                product_name="Rau lá",
+                quantity=100.0,
+                harvest_date=date.today(),
+                current_owner=farm.owner,
+            )
+            for suffix in ("A", "B")
+        ]
+        db.add_all(batches)
+        db.commit()
+        batch_ids = [batch.id for batch in batches]
+        receiver_id = db.scalar(select(User.id).where(User.username == "farmer_test"))
+
+    telemetry = client.post(
+        "/cold-chain/check-telemetry",
+        auth=admin_auth,
+        json={
+            "shipment_code": "SHIP-VN-125",
+            "product_types": ["Rau lá"],
+            "recorded_temperature": 11.4,
+            "duration_minutes": 27.5,
+            "location": "Xe lạnh tuyến Cao Lãnh",
+        },
+    )
+    assert telemetry.status_code == 200
+    violation_id = telemetry.json()["violation_id"]
+
+    for batch_id in batch_ids:
+        timeline = client.get(f"/batches/{batch_id}/events", auth=admin_auth)
+        assert timeline.status_code == 200
+        violation_event = next(
+            event for event in timeline.json()["events"]
+            if event["event_type"] == "COLD_CHAIN_VIOLATION"
+        )
+        assert timeline.json()["is_valid"] is True
+        event_payload = json.loads(violation_event["payload"])
+        assert event_payload["violation_id"] == violation_id
+        assert event_payload["duration_minutes"] == 27.5
+        assert event_payload["peak_temperature"] == 11.4
+        assert event_payload["timestamp"]
+
+    handover = client.post(
+        "/handovers",
+        auth=admin_auth,
+        json={
+            "batch_id": batch_ids[0],
+            "receiver_id": receiver_id,
+            "receiver_name": "Nhà phân phối kiểm thử",
+            "notes": "Bàn giao lô kiểm thử",
+        },
+    )
+    assert handover.status_code == 201
+
+    handover_detail = client.get(f"/handovers/{handover.json()['id']}")
+    assert handover_detail.status_code == 200
+    handover_data = handover_detail.json()
+    assert handover_data["has_cold_chain_violation"] is True
+    assert len(handover_data["violations"]) == 1
+    assert handover_data["violations"][0]["id"] == violation_id
+    assert handover_data["violations"][0]["duration_minutes"] == 27.5
+    assert handover_data["violations"][0]["recorded_temperature"] == 11.4
+    assert handover_data["violations"][0]["peak_temperature"] == 11.4

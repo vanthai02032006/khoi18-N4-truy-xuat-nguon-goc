@@ -1530,6 +1530,33 @@
     </div>
   </div>
 
+  <div id="accept-handover-modal" class="modal-backdrop" hidden>
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title">Xác nhận tiếp nhận bàn giao</h3>
+          <p class="card-subtitle">Kiểm tra thông tin lô trước khi nhận hàng.</p>
+        </div>
+        <button id="btn-close-accept-handover-modal" class="modal-close" type="button" aria-label="Đóng modal">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 20px;">
+        <input type="hidden" id="accept-handover-id" />
+        <div id="accept-handover-warning" role="alert" hidden style="padding: 14px 16px; border: 1px solid #f59e0b; border-left: 5px solid #dc2626; border-radius: 6px; background: #fff7ed; color: #7c2d12;">
+          <strong style="display: block; margin-bottom: 8px;">Cảnh báo vi phạm chuỗi lạnh</strong>
+          <p style="margin: 0 0 8px;">Lô hàng có vi phạm nhiệt độ trong quá trình vận chuyển:</p>
+          <ul id="accept-handover-violations" style="margin: 0; padding-left: 20px;"></ul>
+        </div>
+        <p id="accept-handover-clear" style="margin: 0; color: #334155;">Bạn sắp xác nhận nhận lô hàng này.</p>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-accept-handover" class="btn-action-ghost" type="button">Quay lại</button>
+        <button id="btn-confirm-accept-handover" class="btn-action-primary" type="button">Xác nhận nhận hàng</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal Nhập Lý Do Từ Chối Bàn Giao (S-35) -->
   <div id="reject-handover-modal" class="modal-backdrop" hidden>
     <div class="modal-card" style="max-width: 480px;">

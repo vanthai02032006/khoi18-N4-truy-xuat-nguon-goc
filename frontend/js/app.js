@@ -1641,13 +1641,39 @@ async function handleHandoverSubmit(event) {
 }
 
 async function handleAcceptHandover(id) {
-  if (!window.confirm(`Xác nhận tiếp nhận lô hàng theo phiếu bàn giao #${id}?`)) return;
+  const handover = handovers.find((item) => item.id === Number(id));
+  if (!handover) {
+    toast(`Không tìm thấy phiếu bàn giao #${id}.`, "error");
+    return;
+  }
+
+  const violations = Array.isArray(handover.violations) ? handover.violations : [];
+  const warning = $("accept-handover-warning");
+  const warningList = $("accept-handover-violations");
+  warningList.innerHTML = violations.map((violation) => {
+    const when = violation.timestamp ? new Date(violation.timestamp).toLocaleString("vi-VN") : "Không rõ thời điểm";
+    const peakTemperature = violation.peak_temperature ?? violation.recorded_temperature;
+    return `<li style="margin-bottom: 6px;">${formatNumber(violation.duration_minutes)} phút; đỉnh <strong>${escapeHtml(peakTemperature)}°C</strong>; ${escapeHtml(when)}.</li>`;
+  }).join("");
+  warning.hidden = violations.length === 0;
+  $("accept-handover-clear").hidden = violations.length > 0;
+  $("accept-handover-id").value = String(id);
+  $("accept-handover-modal").hidden = false;
+}
+
+function closeAcceptHandoverModal() {
+  $("accept-handover-modal").hidden = true;
+}
+
+async function confirmAcceptHandover() {
+  const id = Number($("accept-handover-id").value);
   try {
     await apiRequest(`/handovers/${id}/accept`, {
       method: "POST",
       body: { notes: "Tiếp nhận lô hàng vào kho thành công." },
     });
     toast(`Đã tiếp nhận lô hàng thành công (quyền sở hữu đã được chuyển giao)!`, "success");
+    closeAcceptHandoverModal();
     await loadHandovers();
     await loadBatches();
   } catch (error) {
@@ -1834,6 +1860,19 @@ function formatEventDetail(ev, payload) {
       <div class="event-chips">
         <span class="event-chip event-chip--danger">⚠️ Lý do: <strong>${escapeHtml(payload.reason || payload.notes || 'Không rõ lý do')}</strong></span>
         <span class="event-chip">🏢 Đơn vị từ chối: <strong>${escapeHtml(payload.rejecter_name || ev.actor || 'Bên nhận')}</strong></span>
+      </div>`;
+  } else if (t === "COLD_CHAIN_VIOLATION") {
+    badgeColor = "#dc2626";
+    icon = "❄️";
+    title = "Vi phạm chuỗi lạnh";
+    const peakTemperature = payload.peak_temperature ?? payload.recorded_temperature;
+    bodyHtml = `
+      <div class="event-desc" style="color: #991b1b; font-weight: 600;">${escapeHtml(payload.violation_reason || "Đã ghi nhận vi phạm ngưỡng nhiệt độ trong quá trình vận chuyển.")}</div>
+      <div class="event-chips">
+        <span class="event-chip event-chip--danger">⏱ Thời lượng: <strong>${formatNumber(payload.duration_minutes)} phút</strong></span>
+        <span class="event-chip event-chip--danger">🌡️ Nhiệt độ đỉnh: <strong>${escapeHtml(peakTemperature ?? "—")}°C</strong></span>
+        <span class="event-chip">🚚 Chuyến xe: <strong>${escapeHtml(payload.shipment_code || "—")}</strong></span>
+        ${payload.location ? `<span class="event-chip">📍 Vị trí: ${escapeHtml(payload.location)}</span>` : ""}
       </div>`;
   } else if (t === "TEMPERATURE_EXCURSION" || t === "COLDCHAIN_ALERT") {
     badgeColor = "#ef4444";
@@ -2659,6 +2698,15 @@ function bindEvents() {
   }
   if ($("btn-close-reject-modal")) {
     $("btn-close-reject-modal").addEventListener("click", closeRejectModal);
+  }
+  if ($("btn-close-accept-handover-modal")) {
+    $("btn-close-accept-handover-modal").addEventListener("click", closeAcceptHandoverModal);
+  }
+  if ($("btn-cancel-accept-handover")) {
+    $("btn-cancel-accept-handover").addEventListener("click", closeAcceptHandoverModal);
+  }
+  if ($("btn-confirm-accept-handover")) {
+    $("btn-confirm-accept-handover").addEventListener("click", confirmAcceptHandover);
   }
   if ($("btn-cancel-reject-modal")) {
     $("btn-cancel-reject-modal").addEventListener("click", closeRejectModal);

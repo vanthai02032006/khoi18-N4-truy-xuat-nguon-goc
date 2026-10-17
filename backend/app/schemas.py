@@ -695,6 +695,7 @@ class ColdChainViolationResponse(BaseModel):
     product_types_json: str
     product_types: list[str] = []
     recorded_temperature: float
+    peak_temperature: float
     duration_minutes: float
     applied_temp_min: float
     applied_temp_max: float
@@ -964,6 +965,14 @@ class HandoverResponse(BaseModel):
     current_batch_owner: str | None = Field(
         default=None,
         description="Tổ chức/đơn vị hiện đang giữ quyền quản lý lô.",
+    )
+    has_cold_chain_violation: bool = Field(
+        default=False,
+        description="Lô có ít nhất một vi phạm chuỗi lạnh đã ghi nhận hay không.",
+    )
+    violations: list[ColdChainViolationResponse] = Field(
+        default_factory=list,
+        description="Các vi phạm chuỗi lạnh liên quan đến lô, gồm nhiệt độ đỉnh và thời lượng.",
     )
 
 
