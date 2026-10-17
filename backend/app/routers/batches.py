@@ -29,7 +29,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Batch, BatchEvent, Farm, User
+from app.models import Batch, BatchEvent, ColdChainViolation, Farm, RecallOrder, User
 from app.schemas import (
     BatchCreate,
     BatchMergeRequest,
@@ -1178,6 +1178,41 @@ def _build_public_tracking_map_response(batch: Batch, db: Session) -> PublicTrac
     )
     events = list(db.scalars(stmt_events).all())
 
+    active_recall = db.scalar(
+        select(RecallOrder)
+        .where(
+            RecallOrder.batch_id == batch.id,
+            RecallOrder.status.in_(("IN_PROGRESS", "OPEN", "ACTIVE")),
+        )
+        .order_by(RecallOrder.id.desc())
+        .limit(1)
+    )
+    recall_guidance = None
+    if active_recall is not None:
+        recall_guidance = (
+            "Không sử dụng hoặc tiêu thụ lô hàng này. Hãy giữ lại bao bì/nhãn, "
+            "ngừng phân phối và liên hệ nơi bán để được hướng dẫn hoàn trả."
+        )
+        if active_recall.description and active_recall.description.strip():
+            recall_guidance += f" Hướng dẫn bổ sung: {active_recall.description.strip()}"
+
+    has_cold_chain_violation = any(
+        ev.event_type == "COLD_CHAIN_VIOLATION" for ev in events
+    )
+    if not has_cold_chain_violation:
+        violations = db.scalars(select(ColdChainViolation)).all()
+        for violation in violations:
+            try:
+                product_types = json.loads(violation.product_types_json)
+            except (TypeError, ValueError):
+                product_types = [violation.product_types_json]
+            if (
+                (batch.batch_code and batch.batch_code in violation.shipment_code)
+                or batch.product_name in product_types
+            ):
+                has_cold_chain_violation = True
+                break
+
     known_stops = [
         {"name": "Nhà máy sơ chế & làm mát Cai Lậy", "level": "Cấp Thị Xã Cai Lậy, Tiền Giang", "lat": 10.4080, "lng": 106.1200},
         {"name": "Trung tâm đóng gói & kiểm dịch Tân An", "level": "Cấp Thành Phố Tân An, Long An", "lat": 10.5360, "lng": 106.4130},
@@ -1219,6 +1254,9 @@ def _build_public_tracking_map_response(batch: Batch, db: Session) -> PublicTrac
         product_name=batch.product_name,
         origin_point=origin,
         waypoints=waypoints,
+        is_recalled=active_recall is not None,
+        recall_guidance=recall_guidance,
+        has_cold_chain_violation=has_cold_chain_violation,
         privacy_note="Toạ độ hiển thị ở cấp xã/huyện nhằm bảo vệ bí mật nông hộ và quyền riêng tư thửa đất.",
     )
 

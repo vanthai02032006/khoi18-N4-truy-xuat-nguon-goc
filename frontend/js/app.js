@@ -2063,7 +2063,21 @@ async function loadPublicMap(batchIdentifier) {
     const mapData = await apiRequest(`/batches/code/${encodeURIComponent(batchIdentifier)}/map`, { auth: false });
     const allStops = [mapData.origin_point, ...(mapData.waypoints || [])];
 
+    const recallAlertHtml = mapData.is_recalled
+      ? `<div role="alert" style="margin-bottom: 14px; padding: 14px 16px; border: 1px solid #fca5a5; border-left: 6px solid #dc2626; border-radius: 6px; background: #fef2f2; color: #7f1d1d;">
+          <strong style="display: block; margin-bottom: 5px;">CẢNH BÁO THU HỒI SẢN PHẨM</strong>
+          <span>${escapeHtml(mapData.recall_guidance || "Không sử dụng lô hàng này. Hãy liên hệ nơi bán để được hướng dẫn thu hồi.")}</span>
+        </div>`
+      : "";
+    const coldChainNoteHtml = mapData.has_cold_chain_violation
+      ? `<div role="note" style="margin-bottom: 16px; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 6px; background: #f1f5f9; color: #475569; font-size: 13px;">
+          Lịch sử lô hàng có ghi nhận sự cố trong quá trình bảo quản hoặc vận chuyển. Thông tin chi tiết được cung cấp qua các kênh hỗ trợ phù hợp.
+        </div>`
+      : "";
+
     let stopsListHtml = `
+      ${recallAlertHtml}
+      ${coldChainNoteHtml}
       <div style="margin-bottom: 16px;">
         <h5 style="margin: 0 0 8px; font-size: 14px; font-weight: 700; color: #0f172a;">Lô: ${escapeHtml(mapData.product_name)} [Mã: ${escapeHtml(mapData.batch_code)}]</h5>
         <div style="font-size: 12px; color: #64748b;">Hành trình bao gồm ${allStops.length} điểm dừng chính qua các cấp hành chính:</div>

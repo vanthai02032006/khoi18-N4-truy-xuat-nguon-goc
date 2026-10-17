@@ -726,6 +726,9 @@ class PublicTrackingMapResponse(BaseModel):
     product_name: str
     origin_point: MapWaypoint = Field(..., description="Điểm vùng trồng xuất xứ (toạ độ đại diện cấp xã/huyện).")
     waypoints: list[MapWaypoint] = Field(default_factory=list, description="Các điểm dừng chính theo thứ tự thời gian.")
+    is_recalled: bool = Field(default=False, description="Lô đang thuộc lệnh thu hồi chưa hoàn tất.")
+    recall_guidance: str | None = Field(default=None, description="Hướng dẫn xử lý công khai khi lô đang bị thu hồi.")
+    has_cold_chain_violation: bool = Field(default=False, description="Lịch sử lô có ghi nhận vi phạm chuỗi lạnh hay không.")
     privacy_note: str = Field(
         default="Toạ độ hiển thị ở cấp xã/huyện nhằm bảo vệ bí mật nông hộ và quyền riêng tư thửa đất.",
         description="Ghi chú về tính ẩn danh và bảo vệ vị trí chính xác của thửa đất.",
