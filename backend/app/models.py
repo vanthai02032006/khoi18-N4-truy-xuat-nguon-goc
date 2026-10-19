@@ -179,6 +179,13 @@ class Batch(Base):
         cascade="all, delete-orphan",
     )
 
+    # Quan hệ 1-N: chuyến xe vận chuyển (TripBatch)
+    trip_batches: Mapped[list["TripBatch"]] = relationship(
+        "TripBatch",
+        back_populates="batch",
+        cascade="all, delete-orphan",
+    )
+
     @property
     def owner(self) -> Optional[str]:
         return self.current_owner or self.current_holder_org
@@ -577,6 +584,133 @@ class Handover(Base):
         )
 
 
+# ----------------------------------------------------------- Trips & Telemetry ---
+TRIP_STATUS_IN_TRANSIT: str = "in_transit"
+TRIP_STATUS_COMPLETED: str = "completed"
+TRIP_STATUSES: tuple[str, ...] = (
+    TRIP_STATUS_IN_TRANSIT,
+    TRIP_STATUS_COMPLETED,
+)
+
+EVENT_TYPE_BATCH_LOADED_TO_TRIP: str = "BATCH_LOADED_TO_TRIP"
+EVENT_TYPE_BATCH_UNLOADED_FROM_TRIP: str = "BATCH_UNLOADED_FROM_TRIP"
+
+
+class Trip(Base):
+    """Chuyến xe vận chuyển nông sản trong chuỗi lạnh - bảng ``trips``."""
+
+    __tablename__ = "trips"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    container_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    vehicle_plate: Mapped[str] = mapped_column(String(50), nullable=False)
+    driver_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=TRIP_STATUS_IN_TRANSIT,
+        index=True,
+    )
+    organization: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="HTX Nông Nghiệp Số 4",
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=_utcnow,
+        nullable=False,
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        default=None,
+        onupdate=_utcnow,
+        nullable=True,
+    )
+
+    trip_batches: Mapped[list["TripBatch"]] = relationship(
+        "TripBatch",
+        back_populates="trip",
+        cascade="all, delete-orphan",
+    )
+    temperature_logs: Mapped[list["TemperatureLog"]] = relationship(
+        "TemperatureLog",
+        back_populates="trip",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Trip id={self.id} code={self.code!r} status={self.status!r}>"
+
+
+class TripBatch(Base):
+    """Liên kết giữa chuyến xe và các lô hàng được xếp lên xe - bảng ``trip_batches``."""
+
+    __tablename__ = "trip_batches"
+    __table_args__ = (
+        UniqueConstraint("trip_id", "batch_id", name="uq_trip_batch"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trip_id: Mapped[int] = mapped_column(
+        ForeignKey("trips.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=_utcnow,
+        nullable=False,
+    )
+
+    trip: Mapped["Trip"] = relationship("Trip", back_populates="trip_batches")
+    batch: Mapped["Batch"] = relationship("Batch", back_populates="trip_batches")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<TripBatch id={self.id} trip_id={self.trip_id} batch_id={self.batch_id}>"
+
+
+class TemperatureLog(Base):
+    """Nhật ký đo nhiệt độ từ cảm biến IoT (Telemetry) - bảng ``temperature_logs``."""
+
+    __tablename__ = "temperature_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trip_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("trips.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    trip_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    container_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    temperature: Mapped[float] = mapped_column(Float, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    organization: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="HTX Nông Nghiệp Số 4",
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=_utcnow,
+        nullable=False,
+    )
+
+    trip: Mapped[Optional["Trip"]] = relationship("Trip", back_populates="temperature_logs")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<TemperatureLog id={self.id} temp={self.temperature}°C timestamp={self.timestamp}>"
+
+
 __all__ = [
     "Base",
     "Batch",
@@ -607,5 +741,13 @@ __all__ = [
     "EVENT_TYPE_HANDOVER_ACCEPTED",
     "EVENT_TYPE_HANDOVER_REJECTED",
     "EVENT_TYPE_OWNER_CHANGED",
+    "Trip",
+    "TripBatch",
+    "TemperatureLog",
+    "TRIP_STATUS_IN_TRANSIT",
+    "TRIP_STATUS_COMPLETED",
+    "TRIP_STATUSES",
+    "EVENT_TYPE_BATCH_LOADED_TO_TRIP",
+    "EVENT_TYPE_BATCH_UNLOADED_FROM_TRIP",
 ]
 

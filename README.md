@@ -82,9 +82,16 @@ trồng, tổng lô nông sản, tổng sản lượng kg) và 2 bảng dữ li�
 ### 3. Phân giải tổ chức đa người dùng (Multi-tenant - SCRUM-27..29)
 - ContextVar tự động tiêm điều kiện lọc `organization` cho các câu truy vấn, đảm bảo các bên trong chuỗi cung ứng không xem chéo dữ liệu của nhau.
 
-### 4. Hướng dẫn chạy kiểm thử tự động
+### 4. Vận chuyển & Giám sát Chuỗi Lạnh IoT (Trips & Telemetry)
+- **`POST /trips`**: Khởi hành chuyến xe vận chuyển, kiểm tra Multi-tenant các lô hàng và tự động ghi sự kiện `BATCH_LOADED_TO_TRIP` vào chuỗi băm SHA-256 Hash-Chain của từng lô.
+- **`GET /trips`**: Danh sách chuyến xe theo tổ chức.
+- **`PATCH /trips/{id}/status`**: Cập nhật trạng thái chuyến xe (kết thúc chuyến `completed`), tự động ghi sự kiện `BATCH_UNLOADED_FROM_TRIP` nối tiếp vào Hash-Chain.
+- **`POST /telemetry/temperature`**: Tiếp nhận dữ liệu cảm biến IoT chuỗi lạnh, tự động nhận diện mốc thời gian mới (`recorded`) hoặc trùng/cũ hơn (`ignored`) để loại bỏ dữ liệu sai lệch.
+- **`GET /telemetry/temperature`**: Tra cứu lịch sử đo nhiệt độ theo chuyến xe hoặc thùng lạnh.
+
+### 5. Hướng dẫn chạy kiểm thử tự động
 ```powershell
-$env:PYTHONPATH='backend'
+$env:PYTHONPATH='backend;tests'
 python -m pytest tests/ -v
 ```
-Toàn bộ test suite kiểm tra song song (concurrency), kiểm chứng phả hệ (lineage) và cô lập đa tổ chức (tenant isolation) đều chạy xanh 100%.
+Toàn bộ test suite (87 test cases) kiểm tra toàn vẹn chuỗi băm (Hash-Chain), phả hệ lô (lineage), cô lập đa tổ chức (tenant isolation), vận chuyển (trips) và telemetry IoT đều chạy xanh 100%.

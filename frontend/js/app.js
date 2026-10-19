@@ -73,14 +73,18 @@ function setButtonLoading(button, isLoading, loadingText, idleText) {
  * truyền `auth: false` cho request không cần xác thực (VD: đăng nhập).
  * Ném Error với thông điệp tiếng Việt dễ đọc nếu request thất bại.
  */
-async function apiRequest(path, { method = "GET", body, auth = true } = {}) {
+async function apiRequest(path, { method = "GET", body, auth = true, headers: customHeaders = {} } = {}) {
   const headers = {};
   if (body) {
     headers["Content-Type"] = "application/json";
   }
   if (auth) {
     Object.assign(headers, authHeader());
+    if (session && session.username) {
+      headers["X-Organization-Id"] = session.username;
+    }
   }
+  Object.assign(headers, customHeaders);
 
   let response;
   try {
@@ -140,6 +144,8 @@ let thresholds = [];
 let violations = [];
 let products = [];
 let handovers = [];
+let trips = [];
+let lastTelemetryTimestamp = null;
 
 // Tab đang chọn trong thanh điều hướng phân hệ
 let activeTab = "all";
@@ -353,6 +359,7 @@ function handleLogout() {
 
   farms = [];
   batches = [];
+  trips = [];
   users = [];
   orders = [];
   thresholds = [];
@@ -362,6 +369,7 @@ function handleLogout() {
   renderFarms();
   renderFarmOptions();
   renderBatches();
+  renderTrips();
   renderUsers();
   renderOrders();
   renderViolations();
@@ -664,6 +672,8 @@ function renderBatches() {
 
   $("batch-empty").hidden = batches.length > 0;
   renderStats(); // thẻ "Tổng lô nông sản" + "Tổng sản lượng" lấy từ mảng `batches`
+  populateHandoverBatches();
+  populateTripBatches();
 }
 
 /** Nhãn nút submit form lô nông sản theo chế độ hiện tại (tạo mới / sửa). */
@@ -1518,6 +1528,229 @@ async function handleRejectHandoverSubmit() {
   }
 }
 
+/* ---------------------------------- 8e2. Quản lý Vận Chuyển & Telemetry Chuỗi Lạnh --- */
+function populateTripBatches() {
+  const select = $("trip-batch-select");
+  if (!select) return;
+  select.innerHTML = batches
+    .map(
+      (b) =>
+        `<option value="${b.id}">${escapeHtml(b.batch_code || ('LOT-' + b.id))} — ${escapeHtml(b.product_name)} (${formatNumber(b.quantity)} kg)</option>`
+    )
+    .join("");
+}
+
+function populateTelemetryTrips() {
+  const select = $("telemetry-trip-id");
+  if (!select) return;
+  if (trips.length === 0) {
+    select.innerHTML = '<option value="">-- Chưa có chuyến xe nào --</option>';
+    return;
+  }
+  select.innerHTML = trips
+    .map(
+      (t) =>
+        `<option value="${t.id}">${escapeHtml(t.code)} — ${escapeHtml(t.vehicle_plate)} (${t.status === 'in_transit' ? 'Đang chạy' : 'Đã xong'})</option>`
+    )
+    .join("");
+}
+
+async function loadTrips() {
+  try {
+    const data = await apiRequest("/trips");
+    trips = Array.isArray(data) ? data : [];
+    renderTrips();
+    populateTelemetryTrips();
+    populateTripBatches();
+  } catch (error) {
+    trips = [];
+    renderTrips();
+  }
+}
+
+function renderTrips() {
+  const tbody = $("trip-table-body");
+  const empty = $("trip-empty");
+  if (!tbody) return;
+
+  if (trips.length === 0) {
+    tbody.innerHTML = "";
+    if (empty) empty.hidden = false;
+    return;
+  }
+
+  if (empty) empty.hidden = true;
+  tbody.innerHTML = trips
+    .map((t) => {
+      const isInTransit = t.status === "in_transit";
+      const statusPill = isInTransit
+        ? `<span class="handover-badge handover-badge--pending">🚚 Đang vận chuyển</span>`
+        : `<span class="handover-badge handover-badge--accepted">✓ Đã hoàn thành</span>`;
+
+      const batchListHtml = (t.batches || [])
+        .map(
+          (b) =>
+            `<span class="event-chip" style="font-size: 0.78rem; display: inline-block; margin: 2px;">📦 ${escapeHtml(b.batch_code || ('#' + b.batch_id))}: <strong>${escapeHtml(b.product_name)}</strong></span>`
+        )
+        .join("") || `<span style="color: #94a3b8; font-style: italic;">Chưa gán lô</span>`;
+
+      const actionBtn = isInTransit
+        ? `<button class="btn btn--secondary btn--sm" type="button" data-action="end-trip" data-id="${t.id}">🏁 Kết thúc chuyến</button>`
+        : `<span style="font-size: 0.8rem; color: #059669; font-weight: 600;">Đã trả hàng</span>`;
+
+      return `
+        <tr>
+          <td class="id-cell font-mono">#${t.id}</td>
+          <td><strong>${escapeHtml(t.code)}</strong></td>
+          <td class="font-mono">${escapeHtml(t.container_code || "—")}</td>
+          <td><strong style="color: #0369a1;">${escapeHtml(t.vehicle_plate)}</strong></td>
+          <td>${escapeHtml(t.driver_name)}</td>
+          <td>${batchListHtml}</td>
+          <td class="is-center">${statusPill}</td>
+          <td class="is-center">${actionBtn}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+async function handleTripSubmit(e) {
+  e.preventDefault();
+  const btn = $("trip-submit");
+  const code = $("trip-code").value.trim();
+  const container = $("trip-container").value.trim();
+  const vehicle = $("trip-vehicle-plate").value.trim();
+  const driver = $("trip-driver-name").value.trim();
+
+  const select = $("trip-batch-select");
+  const selectedBatchIds = Array.from(select.selectedOptions).map((opt) => Number(opt.value));
+
+  setButtonLoading(btn, true, "Đang khởi hành…", "Khởi hành Chuyến Xe Mới");
+
+  try {
+    await apiRequest("/trips", {
+      method: "POST",
+      body: {
+        code,
+        container_code: container || null,
+        vehicle_plate: vehicle,
+        driver_name: driver,
+        batch_ids: selectedBatchIds,
+      },
+    });
+
+    toast(`Khởi hành chuyến xe "${code}" thành công! Sự kiện BATCH_LOADED_TO_TRIP đã ghi vào Hash-Chain.`, "success");
+    $("trip-form").reset();
+    await loadTrips();
+    await loadBatches();
+  } catch (error) {
+    toast(`Không thể tạo chuyến xe: ${error.message}`, "error");
+  } finally {
+    setButtonLoading(btn, false, "Đang khởi hành…", "Khởi hành Chuyến Xe Mới");
+  }
+}
+
+async function handleEndTrip(tripId) {
+  const trip = trips.find((t) => t.id === Number(tripId));
+  const confirmMsg = trip
+    ? `Xác nhận kết thúc chuyến xe "${trip.code}" và dỡ hàng khỏi xe?`
+    : `Kết thúc chuyến xe #${tripId}?`;
+
+  if (!window.confirm(confirmMsg)) return;
+
+  try {
+    await apiRequest(`/trips/${tripId}/status`, {
+      method: "PATCH",
+      body: { status: "completed" },
+    });
+
+    toast(`Chuyến xe #${tripId} đã hoàn thành! Sự kiện BATCH_UNLOADED_FROM_TRIP đã nối vào Hash-Chain.`, "success");
+    await loadTrips();
+    await loadBatches();
+  } catch (error) {
+    toast(`Không thể kết thúc chuyến: ${error.message}`, "error");
+  }
+}
+
+async function handleSendTelemetry(e) {
+  e.preventDefault();
+  const tripIdVal = $("telemetry-trip-id").value;
+  const tempVal = parseFloat($("telemetry-temp").value);
+  const timeVal = $("telemetry-timestamp").value;
+  const box = $("telemetry-feedback-box");
+
+  if (!tripIdVal) {
+    toast("Vui lòng chọn chuyến xe cần gửi telemetry!", "error");
+    return;
+  }
+
+  const isoTime = timeVal ? new Date(timeVal).toISOString() : new Date().toISOString();
+  lastTelemetryTimestamp = isoTime;
+
+  try {
+    const res = await apiRequest("/telemetry/temperature", {
+      method: "POST",
+      body: {
+        trip_id: Number(tripIdVal),
+        temperature: tempVal,
+        timestamp: isoTime,
+      },
+    });
+
+    box.hidden = false;
+    if (res.status === "recorded") {
+      box.style.background = "#ecfdf5";
+      box.style.border = "1px solid #6ee7b7";
+      box.style.color = "#065f46";
+      box.innerHTML = `✓ <strong>ĐÃ GHI NHẬN (recorded):</strong> Bản ghi #${res.log_id} | Nhiệt độ: ${res.recorded_temperature}°C | Mốc: ${res.timestamp}`;
+      toast(`Ghi nhận nhiệt độ ${res.recorded_temperature}°C thành công!`, "success");
+    } else {
+      box.style.background = "#fffbeb";
+      box.style.border = "1px solid #fde68a";
+      box.style.color = "#92400e";
+      box.innerHTML = `⚠️ <strong>ĐÃ BỎ QUA (ignored):</strong> ${escapeHtml(res.message)} | Mốc: ${res.timestamp}`;
+      toast(`Mốc thời gian trùng hoặc cũ hơn -> Hệ thống tự động bỏ qua (ignored).`, "info");
+    }
+  } catch (error) {
+    toast(`Gửi telemetry thất bại: ${error.message}`, "error");
+  }
+}
+
+async function handleTestDuplicateTelemetry() {
+  const tripIdVal = $("telemetry-trip-id").value;
+  if (!tripIdVal) {
+    toast("Vui lòng chọn chuyến xe trước!", "error");
+    return;
+  }
+  const box = $("telemetry-feedback-box");
+
+  const duplicateTime = lastTelemetryTimestamp || new Date(Date.now() - 3600000).toISOString();
+
+  try {
+    const res = await apiRequest("/telemetry/temperature", {
+      method: "POST",
+      body: {
+        trip_id: Number(tripIdVal),
+        temperature: 9.9,
+        timestamp: duplicateTime,
+      },
+    });
+
+    box.hidden = false;
+    if (res.status === "ignored") {
+      box.style.background = "#fffbeb";
+      box.style.border = "1px solid #fde68a";
+      box.style.color = "#92400e";
+      box.innerHTML = `⚠️ <strong>TEST TRÙNG/CŨ THÀNH CÔNG (ignored):</strong> ${escapeHtml(res.message)} | Mốc: ${res.timestamp}`;
+      toast("Đã kiểm tra thành công: Mốc trùng/cũ được backend tự động bỏ qua (status: ignored).", "info");
+    } else {
+      box.innerHTML = `Kết quả: ${res.status}`;
+    }
+  } catch (error) {
+    toast(`Lỗi khi test: ${error.message}`, "error");
+  }
+}
+
 /* ---------------------------------- 8f. Điều hướng phân hệ (Tab Navigation) --- */
 function initTabs() {
   const pills = document.querySelectorAll(".nav-tab-pill");
@@ -1539,6 +1772,7 @@ function switchTab(tab) {
     batches: $("batches-card"),
     products: $("products-card"),
     handovers: $("handovers-card"),
+    trips: $("trips-card"),
     coldchain: $("coldchain-card"),
     orders: $("orders-card"),
     users: $("users-card"),
@@ -1679,6 +1913,27 @@ function formatEventDetail(ev, payload) {
       <div class="event-chips">
         <span class="event-chip event-chip--danger">Mã lệnh: <strong>${escapeHtml(payload.order_code || '—')}</strong></span>
         <span class="event-chip">Lý do: <strong>${escapeHtml(payload.reason || '—')}</strong></span>
+      </div>`;
+  } else if (t === "BATCH_LOADED_TO_TRIP") {
+    badgeColor = "#0284c7";
+    icon = "🚚";
+    title = "Xếp lên xe vận chuyển";
+    bodyHtml = `
+      <div class="event-desc">Lô hàng được xếp lên chuyến xe <strong>${escapeHtml(payload.trip_code || ('#' + payload.trip_id))}</strong>.</div>
+      <div class="event-chips">
+        <span class="event-chip">🚛 Biển số: <strong>${escapeHtml(payload.vehicle_plate || '—')}</strong></span>
+        <span class="event-chip">👨‍✈️ Tài xế: <strong>${escapeHtml(payload.driver_name || '—')}</strong></span>
+        ${payload.container_code ? `<span class="event-chip">❄️ Thùng lạnh: <strong>${escapeHtml(payload.container_code)}</strong></span>` : ""}
+      </div>`;
+  } else if (t === "BATCH_UNLOADED_FROM_TRIP") {
+    badgeColor = "#059669";
+    icon = "🏁";
+    title = "Dỡ hàng khỏi xe vận chuyển";
+    bodyHtml = `
+      <div class="event-desc">Chuyến xe <strong>${escapeHtml(payload.trip_code || ('#' + payload.trip_id))}</strong> đã kết thúc hành trình và dỡ hàng an toàn.</div>
+      <div class="event-chips">
+        <span class="event-chip">🚛 Xe: <strong>${escapeHtml(payload.vehicle_plate || '—')}</strong></span>
+        <span class="event-chip">🏁 Trạng thái: <strong>Đã hoàn thành</strong></span>
       </div>`;
   } else {
     const keys = Object.keys(payload);
@@ -2348,6 +2603,26 @@ function bindEvents() {
     });
   }
 
+  // Quản lý Chuyến xe & Telemetry IoT
+  if ($("trip-form")) {
+    $("trip-form").addEventListener("submit", handleTripSubmit);
+  }
+  const tripTableBody = $("trip-table-body");
+  if (tripTableBody) {
+    tripTableBody.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-action='end-trip']");
+      if (!btn) return;
+      const tripId = Number(btn.dataset.id);
+      handleEndTrip(tripId);
+    });
+  }
+  if ($("telemetry-form")) {
+    $("telemetry-form").addEventListener("submit", handleSendTelemetry);
+  }
+  if ($("btn-test-duplicate-telemetry")) {
+    $("btn-test-duplicate-telemetry").addEventListener("click", handleTestDuplicateTelemetry);
+  }
+
   // Event delegation cho xác nhận từng bên trong modal lệnh
   const orderTargetsBody = $("order-targets-table-body");
   if (orderTargetsBody) {
@@ -2645,6 +2920,7 @@ async function loadAllData() {
   await loadBatches();
   await loadProducts(); // tải danh mục nông sản dùng chung
   await loadHandovers(); // tải danh sách bàn giao
+  await loadTrips(); // tải danh sách chuyến xe
   await loadOrders(); // tải danh sách lệnh kiểm tra
   await loadThresholds(); // tải danh mục ngưỡng từng loại sản phẩm
   await loadViolations(); // tải nhật ký vi phạm chuỗi lạnh

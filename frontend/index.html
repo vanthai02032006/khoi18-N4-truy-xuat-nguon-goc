@@ -49,6 +49,10 @@
           <span class="tab-icon">🤝</span>
           <span>BÀN GIAO</span>
         </button>
+        <button type="button" class="nav-tab-pill" data-tab="trips">
+          <span class="tab-icon">🚚</span>
+          <span>VẬN CHUYỂN</span>
+        </button>
         <button type="button" class="nav-tab-pill" data-tab="coldchain">
           <span class="tab-icon">❄️</span>
           <span>CHUỖI LẠNH</span>
@@ -759,6 +763,151 @@
             <h4>Chưa có phiếu bàn giao nào</h4>
             <p>Vui lòng tạo phiếu bàn giao nông sản bằng biểu mẫu phía trên.</p>
           </div>
+        </div>
+      </section>
+
+      <!-- Section: Vận Chuyển & Giám Sát Chuỗi Lạnh (Trips & Telemetry) -->
+      <section id="trips-card" class="content-card">
+        <header class="card-header">
+          <div class="header-left">
+            <div class="module-avatar" style="background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); color: #fff;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+            </div>
+            <div>
+              <h3 class="card-title">Vận Chuyển & Giám Sát Chuỗi Lạnh</h3>
+              <p class="card-subtitle">
+                Khai báo chuyến xe, tự động ghi nhận sự kiện xếp/dỡ vào chuỗi Hash-Chain và giám sát nhiệt độ cảm biến IoT theo thời gian thực.
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <!-- Form khai báo chuyến xe mới -->
+        <form id="trip-form" class="form-wrapper">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="trip-code" class="input-label">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+                Mã chuyến xe <span class="required">*</span>
+              </label>
+              <input id="trip-code" type="text" maxlength="50" required placeholder="Ví dụ: TRIP-2026-001" />
+            </div>
+
+            <div class="form-group">
+              <label for="trip-container" class="input-label">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                Thùng lạnh / Container
+              </label>
+              <input id="trip-container" type="text" maxlength="50" placeholder="Ví dụ: CONT-COLD-01" />
+            </div>
+
+            <div class="form-group">
+              <label for="trip-vehicle-plate" class="input-label">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                Biển số xe chuyên dụng <span class="required">*</span>
+              </label>
+              <input id="trip-vehicle-plate" type="text" maxlength="50" required placeholder="Ví dụ: 29C-123.45" />
+            </div>
+
+            <div class="form-group">
+              <label for="trip-driver-name" class="input-label">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Họ tên tài xế <span class="required">*</span>
+              </label>
+              <input id="trip-driver-name" type="text" maxlength="255" required placeholder="Ví dụ: Nguyễn Văn Vận" />
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label for="trip-batch-select" class="input-label">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                Danh sách Lô hàng xếp lên xe (Giữ phím Ctrl hoặc Shift để chọn nhiều lô)
+              </label>
+              <select id="trip-batch-select" multiple size="4" style="width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px;">
+                <!-- Tự động nạp danh sách lô -->
+              </select>
+              <span style="font-size: 0.8rem; color: #64748b; margin-top: 4px; display: block;">Khi tạo chuyến, hệ thống sẽ tự động ghi sự kiện <code>BATCH_LOADED_TO_TRIP</code> vào chuỗi SHA-256 Hash-Chain của từng lô hàng.</span>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button id="trip-submit" type="submit" class="btn btn--primary">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span>Khởi hành Chuyến Xe Mới</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- Bảng danh sách chuyến xe đang chạy & lịch sử -->
+        <div class="table-container">
+          <div class="table-subhead">
+            <div>
+              <span class="table-heading">Danh sách chuyến xe vận chuyển</span>
+              <span class="table-tag">Giám sát hành trình</span>
+            </div>
+          </div>
+          <div class="responsive-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 70px;">ID</th>
+                  <th style="width: 150px;">MÃ CHUYẾN</th>
+                  <th style="width: 130px;">THÙNG LẠNH</th>
+                  <th style="width: 120px;">BIỂN SỐ XE</th>
+                  <th style="width: 150px;">TÀI XẾ</th>
+                  <th>CÁC LÔ HÀNG ĐANG CHỞ</th>
+                  <th style="width: 150px;" class="is-center">TRẠNG THÁI</th>
+                  <th style="width: 140px;" class="is-center">THAO TÁC</th>
+                </tr>
+              </thead>
+              <tbody id="trip-table-body"></tbody>
+            </table>
+          </div>
+          <div id="trip-empty" class="empty-placeholder" hidden>
+            <p>Chưa có chuyến xe nào được ghi nhận. Hãy sử dụng form phía trên để khởi hành chuyến mới.</p>
+          </div>
+        </div>
+
+        <!-- Widget giả lập cảm biến IoT gửi nhiệt độ -->
+        <div class="split-parent-card" style="margin-top: 24px; background: #f0fdf4; border: 1px solid #bbf7d0;">
+          <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+            <div>
+              <strong style="color: #166534; font-size: 0.95rem; display: flex; align-items: center; gap: 8px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>
+                Widget Giả Lập Cảm Biến IoT (Telemetry Simulator)
+              </strong>
+              <p style="font-size: 0.85rem; color: #15803d; margin-top: 4px;">
+                Mô phỏng thiết bị cảm biến nhiệt độ chuỗi lạnh gửi dữ liệu về backend (tự động nhận diện mốc thời gian mới <code>recorded</code> hoặc trùng/cũ hơn <code>ignored</code>).
+              </p>
+            </div>
+            <span class="role-pill" style="background: #dcfce7; color: #15803d; border: 1px solid #86efac; font-weight: 700;">IoT SENSOR MOCK</span>
+          </div>
+
+          <form id="telemetry-form" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end;">
+            <div>
+              <label for="telemetry-trip-id" style="display: block; font-size: 0.82rem; font-weight: 600; color: #374151; margin-bottom: 4px;">Chuyến xe gắn cảm biến <span class="required">*</span></label>
+              <select id="telemetry-trip-id" style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.9rem;">
+                <option value="">-- Chọn chuyến xe --</option>
+              </select>
+            </div>
+            <div>
+              <label for="telemetry-temp" style="display: block; font-size: 0.82rem; font-weight: 600; color: #374151; margin-bottom: 4px;">Nhiệt độ cảm biến (°C) <span class="required">*</span></label>
+              <input id="telemetry-temp" type="number" step="0.1" value="4.2" required style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.9rem;" />
+            </div>
+            <div>
+              <label for="telemetry-timestamp" style="display: block; font-size: 0.82rem; font-weight: 600; color: #374151; margin-bottom: 4px;">Mốc thời gian đo <span class="required">*</span></label>
+              <input id="telemetry-timestamp" type="datetime-local" required style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.9rem;" />
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button id="btn-send-telemetry" type="submit" class="btn btn--primary" style="background: #16a34a; flex: 1;">
+                <span>Gửi Telemetry</span>
+              </button>
+              <button id="btn-test-duplicate-telemetry" type="button" class="btn btn--secondary" title="Gửi lặp lại mốc thời gian cũ để test trường hợp ignored" style="border: 1px solid #cbd5e1;">
+                <span>Test Trùng/Cũ</span>
+              </button>
+            </div>
+          </form>
+
+          <div id="telemetry-feedback-box" style="margin-top: 14px; padding: 12px 16px; border-radius: 6px; font-family: monospace; font-size: 0.85rem;" hidden></div>
         </div>
       </section>
 

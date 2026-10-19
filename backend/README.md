@@ -164,6 +164,12 @@ curl.exe -s -u admin:123456 http://127.0.0.1:8000/farms
 | PUT | `/batches/{batch_id}` | Cập nhật (thay thế) lô nông sản - đổi được `farm_id` nếu tồn tại | farmer **hoặc** admin | `200` · `401` · `404` lô/farm không tồn tại · `422` |
 | DELETE | `/batches/{batch_id}` | Xoá một lô nông sản | **chỉ admin** | `200` · `401` · `403` sai vai trò · `404` không tìm thấy |
 | GET | `/users` | Danh sách tài khoản (không kèm mật khẩu) | **chỉ admin** | `200` · `401` · `403` sai vai trò |
+| POST | `/trips` | Khởi hành chuyến xe, xếp lô lên xe & ghi sự kiện `BATCH_LOADED_TO_TRIP` vào chuỗi Hash-Chain | farmer **hoặc** admin | `201` · `400` trùng mã · `403` lô của tổ chức khác · `404` |
+| GET | `/trips` | Lấy danh sách chuyến xe (cô lập theo tổ chức Multi-tenant) | farmer **hoặc** admin | `200` |
+| GET | `/trips/{trip_id}` | Xem chi tiết chuyến xe | farmer **hoặc** admin | `200` · `403` · `404` |
+| PATCH | `/trips/{trip_id}/status` | Cập nhật trạng thái chuyến xe (kết thúc `completed`), ghi `BATCH_UNLOADED_FROM_TRIP` | farmer **hoặc** admin | `200` · `403` · `404` |
+| POST | `/telemetry/temperature` | Ghi nhận nhiệt độ IoT (`recorded` nếu mốc mới, `ignored` nếu mốc trùng/cũ) | authenticated user | `200` · `403` · `404` |
+| GET | `/telemetry/temperature` | Tra cứu lịch sử nhiệt độ theo chuyến xe hoặc thùng lạnh | công khai | `200` |
 
 > ✅ **Sprint 5 hoàn thiện CRUD:** cả Farm và Batch đều có đủ `POST` / `GET` /
 > `GET {id}` (Batch) / `PUT` / `DELETE`. `PUT` là cập nhật **thay thế**: client
