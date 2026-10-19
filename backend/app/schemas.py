@@ -979,4 +979,60 @@ class HandoverWorkflowResponse(HandoverResponse):
     )
 
 
+# ----------------------------------------------------------- Trips & Telemetry ---
+class TripBatchItem(BaseModel):
+    """Thông tin tóm tắt lô hàng thuộc chuyến xe."""
+    batch_id: int
+    batch_code: Optional[str] = None
+    product_name: Optional[str] = None
+    quantity: Optional[float] = None
 
+
+class TripCreate(BaseModel):
+    """Dữ liệu khai báo chuyến xe vận chuyển mới (POST /trips)."""
+    code: str = Field(..., min_length=1, max_length=50, description="Mã chuyến xe (duy nhất).", examples=["TRIP-2026-001"])
+    container_code: Optional[str] = Field(default=None, max_length=50, description="Mã thùng lạnh/container.", examples=["CONT-L01"])
+    vehicle_plate: str = Field(..., min_length=1, max_length=50, description="Biển số xe chuyên dụng.", examples=["29C-123.45"])
+    driver_name: str = Field(..., min_length=1, max_length=255, description="Họ tên tài xế.", examples=["Nguyễn Văn Vận"])
+    batch_ids: list[int] = Field(default_factory=list, description="Danh sách ID các lô hàng xếp lên xe.", examples=[[1, 2]])
+
+
+class TripStatusUpdate(BaseModel):
+    """Cập nhật trạng thái chuyến xe (PATCH /trips/{id}/status)."""
+    status: str = Field(..., description="Trạng thái mới của chuyến xe (in_transit hoặc completed).", examples=["completed"])
+
+
+class TripResponse(BaseModel):
+    """Dữ liệu trả về cho một chuyến xe."""
+    id: int
+    code: str
+    container_code: Optional[str] = None
+    vehicle_plate: str
+    driver_name: str
+    status: str
+    organization: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    batch_ids: list[int] = Field(default_factory=list)
+    batches: list[dict] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TelemetryTemperatureCreate(BaseModel):
+    """Dữ liệu gửi từ cảm biến IoT (POST /telemetry/temperature)."""
+    trip_id: Optional[int] = Field(default=None, description="ID chuyến xe (nếu có)")
+    trip_code: Optional[str] = Field(default=None, description="Mã chuyến xe (nếu có)")
+    container_code: Optional[str] = Field(default=None, description="Mã thùng lạnh/container")
+    temperature: float = Field(..., description="Nhiệt độ đo được (°C)", examples=[4.2])
+    timestamp: datetime = Field(..., description="Mốc thời gian đo từ cảm biến IoT", examples=["2026-10-19T10:30:00Z"])
+    location: Optional[str] = Field(default=None, max_length=255, description="Vị trí/tọa độ nếu có")
+
+
+class TelemetryTemperatureResponse(BaseModel):
+    """Kết quả ghi nhận nhiệt độ từ cảm biến IoT."""
+    status: str = Field(..., description="Trạng thái ghi nhận: 'recorded' hoặc 'ignored'")
+    message: str = Field(..., description="Thông báo chi tiết")
+    log_id: Optional[int] = Field(default=None, description="ID bản ghi nhiệt độ nếu được lưu")
+    recorded_temperature: Optional[float] = None
+    timestamp: Optional[str] = None
