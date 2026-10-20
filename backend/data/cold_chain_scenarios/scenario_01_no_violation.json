@@ -1,0 +1,51 @@
+{
+  "scenario_id": "SCENARIO_01_NO_VIOLATION",
+  "name": "Kịch bản 1: Không vượt ngưỡng (Bình thường ổn định)",
+  "description": "Nhiệt độ xe lạnh duy trì ổn định trong dải an toàn [2.0°C - 8.0°C] suốt hành trình 60 phút.",
+  "shipment_code": "SHIP-SCENARIO-01",
+  "product_types": ["Rau lá"],
+  "location": "Tuyến cao tốc Hà Nội - Hải Phòng",
+  "expected_violations_count": 0,
+  "ground_truth": {
+    "violations_count": 0,
+    "has_breach": false,
+    "explanation": "Không có mốc đo nào vượt ra ngoài dải [2.0°C, 8.0°C]. Kết quả đánh giá vi phạm = 0."
+  },
+  "readings": [
+    {
+      "timestamp": "2026-10-20T08:00:00Z",
+      "temperature": 4.2,
+      "humidity": 85.0
+    },
+    {
+      "timestamp": "2026-10-20T08:10:00Z",
+      "temperature": 4.8,
+      "humidity": 84.5
+    },
+    {
+      "timestamp": "2026-10-20T08:20:00Z",
+      "temperature": 5.5,
+      "humidity": 83.0
+    },
+    {
+      "timestamp": "2026-10-20T08:30:00Z",
+      "temperature": 6.0,
+      "humidity": 82.0
+    },
+    {
+      "timestamp": "2026-10-20T08:40:00Z",
+      "temperature": 5.2,
+      "humidity": 83.5
+    },
+    {
+      "timestamp": "2026-10-20T08:50:00Z",
+      "temperature": 4.6,
+      "humidity": 84.0
+    },
+    {
+      "timestamp": "2026-10-20T09:00:00Z",
+      "temperature": 4.1,
+      "humidity": 85.0
+    }
+  ]
+}

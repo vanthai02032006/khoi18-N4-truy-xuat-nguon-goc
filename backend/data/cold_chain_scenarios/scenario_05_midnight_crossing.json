@@ -1,0 +1,56 @@
+{
+  "scenario_id": "SCENARIO_05_MIDNIGHT_CROSSING",
+  "name": "Kịch bản 5: Vượt qua nửa đêm (Chuyển giao ngày 23:45 -> 00:30)",
+  "description": "Nhiệt độ vượt ngưỡng bắt đầu từ 23:45 đêm ngày 20/10 kéo dài đến 00:30 sáng ngày 21/10 (tổng cộng 45 phút). Kiểm tra thuật toán phân tích chính xác delta thời gian vắt qua nửa đêm (không bị lỗi 00:30 < 23:45 do sai lệch định dạng ngày).",
+  "shipment_code": "SHIP-SCENARIO-05",
+  "product_types": ["Rau lá"],
+  "location": "Trạm thu phí Cầu Giẽ - Ninh Bình",
+  "expected_violations_count": 1,
+  "ground_truth": {
+    "violations_count": 1,
+    "has_breach": true,
+    "breach_start": "2026-10-20T23:45:00Z",
+    "breach_end": "2026-10-21T00:30:00Z",
+    "breach_duration_minutes": 45.0,
+    "peak_temperature": 14.2,
+    "delay_threshold_minutes": 15.0,
+    "explanation": "Thời gian vượt ngưỡng là 45 phút vắt qua mốc 00:00 nửa đêm. Vì 45 phút >= 15 phút độ trễ, thuật toán ghi nhận đúng 1 vi phạm chuỗi lạnh."
+  },
+  "readings": [
+    {
+      "timestamp": "2026-10-20T23:30:00Z",
+      "temperature": 4.8,
+      "humidity": 86.0
+    },
+    {
+      "timestamp": "2026-10-20T23:45:00Z",
+      "temperature": 12.5,
+      "humidity": 78.0
+    },
+    {
+      "timestamp": "2026-10-21T00:00:00Z",
+      "temperature": 13.8,
+      "humidity": 74.0
+    },
+    {
+      "timestamp": "2026-10-21T00:15:00Z",
+      "temperature": 14.2,
+      "humidity": 70.0
+    },
+    {
+      "timestamp": "2026-10-21T00:30:00Z",
+      "temperature": 12.0,
+      "humidity": 75.0
+    },
+    {
+      "timestamp": "2026-10-21T00:40:00Z",
+      "temperature": 5.5,
+      "humidity": 84.0
+    },
+    {
+      "timestamp": "2026-10-21T00:50:00Z",
+      "temperature": 4.2,
+      "humidity": 85.0
+    }
+  ]
+}

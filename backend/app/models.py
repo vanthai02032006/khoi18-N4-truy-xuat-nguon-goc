@@ -415,6 +415,10 @@ class ColdChainViolation(Base):
     violation_reason: Mapped[str] = mapped_column(String(255), nullable=False)
     timestamp: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     location: Mapped[str] = mapped_column(String(255), nullable=True, default="Xe lạnh chuyên dụng")
+    # Chi tiết đợt vi phạm theo chuẩn S-42 (bắt đầu, kết thúc, đỉnh)
+    started_at: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    ended_at: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    peak_temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<ColdChainViolation shipment={self.shipment_code!r} temp={self.recorded_temperature} reason={self.violation_reason!r}>"

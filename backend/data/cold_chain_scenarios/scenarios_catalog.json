@@ -1,0 +1,51 @@
+{
+  "metadata": {
+    "title": "Bộ kịch bản chuẩn kiểm tra thuật toán phát hiện vi phạm chuỗi lạnh (Cold-Chain Sensor Scenarios)",
+    "task": "S-41 / SCRUM-41 (Phát hiện vi phạm chuỗi lạnh từ cảm biến IoT)",
+    "tier": "Later (3 SP)",
+    "description": "Tập hợp các kịch bản chuỗi thời điểm và nhiệt độ kèm đáp án số vi phạm biết trước (Ground Truth)",
+    "product_tested": "Rau lá",
+    "standard_threshold": {
+      "temp_min": 2.0,
+      "temp_max": 8.0,
+      "delay_minutes": 15.0
+    }
+  },
+  "scenarios": [
+    {
+      "id": "SCENARIO_01_NO_VIOLATION",
+      "name": "Kịch bản 1: Không vượt ngưỡng",
+      "file": "scenario_01_no_violation.json",
+      "expected_violations": 0,
+      "summary": "Nhiệt độ dao động hoàn toàn trong dải an toàn [2.0°C - 8.0°C]"
+    },
+    {
+      "id": "SCENARIO_02_BREACH_10M",
+      "name": "Kịch bản 2: Vượt 10 phút",
+      "file": "scenario_02_breach_10m.json",
+      "expected_violations": 0,
+      "summary": "Nhiệt độ vượt 8.0°C trong 10 phút, chưa đạt độ trễ 15 phút nên không bị coi là vi phạm"
+    },
+    {
+      "id": "SCENARIO_03_BREACH_45M",
+      "name": "Kịch bản 3: Vượt 45 phút",
+      "file": "scenario_03_breach_45m.json",
+      "expected_violations": 1,
+      "summary": "Nhiệt độ vượt 8.0°C liên tục 45 phút (> 15 phút độ trễ), ghi nhận đúng 1 vi phạm"
+    },
+    {
+      "id": "SCENARIO_04_TWO_SPIKES_5M_GAP",
+      "name": "Kịch bản 4: Hai lần vượt cách nhau 5 phút",
+      "file": "scenario_04_two_spikes_5m_gap.json",
+      "expected_violations": 2,
+      "summary": "2 đợt vượt nhiệt độ độc lập (mỗi đợt 20 phút >= 15m delay) xen kẽ bởi 5 phút hạ nhiệt"
+    },
+    {
+      "id": "SCENARIO_05_MIDNIGHT_CROSSING",
+      "name": "Kịch bản 5: Vượt qua nửa đêm",
+      "file": "scenario_05_midnight_crossing.json",
+      "expected_violations": 1,
+      "summary": "Vượt ngưỡng từ 23:45 đến 00:30 (45 phút) vắt qua nửa đêm, kiểm tra tính toán ngày chính xác"
+    }
+  ]
+}

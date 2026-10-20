@@ -1,0 +1,54 @@
+{
+  "scenario_id": "SCENARIO_02_BREACH_10M",
+  "name": "Kịch bản 2: Vượt ngưỡng 10 phút (Dưới độ trễ cho phép)",
+  "description": "Nhiệt độ tăng lên trên 8.0°C trong 10 phút (từ 08:15 đến 08:25) do mở cửa thùng xe giao hàng, sau đó hạ về bình thường. Do 10 phút < độ trễ 15 phút, thuật toán không ghi nhận vi phạm.",
+  "shipment_code": "SHIP-SCENARIO-02",
+  "product_types": ["Rau lá"],
+  "location": "Điểm dỡ hàng số 1 - Siêu thị Nông Sản Sạch",
+  "expected_violations_count": 0,
+  "ground_truth": {
+    "violations_count": 0,
+    "has_breach": true,
+    "breach_duration_minutes": 10.0,
+    "peak_temperature": 11.0,
+    "delay_threshold_minutes": 15.0,
+    "explanation": "Thời gian vượt ngưỡng là 10 phút, chưa đạt độ trễ 15 phút. Dao động ngắn được coi là hợp lệ (không vi phạm)."
+  },
+  "readings": [
+    {
+      "timestamp": "2026-10-20T08:00:00Z",
+      "temperature": 4.5,
+      "humidity": 85.0
+    },
+    {
+      "timestamp": "2026-10-20T08:10:00Z",
+      "temperature": 4.8,
+      "humidity": 84.0
+    },
+    {
+      "timestamp": "2026-10-20T08:15:00Z",
+      "temperature": 10.2,
+      "humidity": 78.0
+    },
+    {
+      "timestamp": "2026-10-20T08:20:00Z",
+      "temperature": 11.0,
+      "humidity": 75.0
+    },
+    {
+      "timestamp": "2026-10-20T08:25:00Z",
+      "temperature": 10.5,
+      "humidity": 76.0
+    },
+    {
+      "timestamp": "2026-10-20T08:30:00Z",
+      "temperature": 6.2,
+      "humidity": 82.0
+    },
+    {
+      "timestamp": "2026-10-20T08:40:00Z",
+      "temperature": 5.0,
+      "humidity": 84.0
+    }
+  ]
+}

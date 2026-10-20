@@ -21,17 +21,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.cold_chain_engine import evaluate_cold_chain_violations
 from app.database import get_db
 from app.models import ColdChainThreshold, ColdChainViolation, User
 from app.schemas import (
     ColdChainThresholdCreate,
     ColdChainThresholdResponse,
     ColdChainThresholdUpdate,
+    ColdChainViolationItem,
     ColdChainViolationResponse,
     MultiProductEffectiveThresholdRequest,
     MultiProductEffectiveThresholdResponse,
     TelemetryCheckRequest,
     TelemetryCheckResponse,
+    TelemetryStreamEvaluateRequest,
+    TelemetryStreamEvaluateResponse,
 )
 from app.security import get_current_user, require_admin
 
@@ -274,8 +278,15 @@ def check_telemetry(
         is_violated = True
         reason = f"Nhiệt độ {temp}°C thấp hơn ngưỡng dưới ({eff_min}°C) trong {duration} phút (vượt độ trễ {eff_delay} phút)."
 
+    started_at = None
+    ended_at = None
+    peak_temp = temp
+
     if is_violated:
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        now_iso = now_dt.isoformat()
+        started_at = now_iso
+        ended_at = now_iso
         violation = ColdChainViolation(
             shipment_code=data.shipment_code,
             product_types_json=json.dumps(clean_types, ensure_ascii=False),
@@ -287,6 +298,9 @@ def check_telemetry(
             violation_reason=reason,
             timestamp=now_iso,
             location=data.location or "Xe lạnh chuyên dụng",
+            started_at=started_at,
+            ended_at=ended_at,
+            peak_temperature=peak_temp,
         )
         db.add(violation)
         db.commit()
@@ -304,6 +318,113 @@ def check_telemetry(
         is_violated=is_violated,
         violation_reason=reason,
         violation_id=violation_id,
+        started_at=started_at,
+        ended_at=ended_at,
+        peak_temperature=peak_temp if is_violated else None,
+    )
+
+
+@router.post(
+    "/evaluate-stream",
+    response_model=TelemetryStreamEvaluateResponse,
+    summary="Phân tích toàn bộ chuỗi telemetry cảm biến theo chuẩn S-42 (Cửa sổ >30m, Debounce gap 5m)",
+)
+def evaluate_telemetry_stream(
+    data: TelemetryStreamEvaluateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TelemetryStreamEvaluateResponse:
+    """Đánh giá toàn bộ chuỗi dữ liệu nhiệt độ cảm biến theo chuẩn S-42:
+
+    1. Lấy ngưỡng hiệu dụng chặt nhất cho loại sản phẩm (ví dụ Rau lá: [2°C, 8°C]).
+    2. Áp dụng quy tắc cửa sổ vi phạm kéo dài (breach_window_minutes = 30 phút):
+       - Vượt ngưỡng liên tục >= 30 phút -> ghi nhận vi phạm kèm bắt đầu, kết thúc, đỉnh.
+       - Dao động ngắn thoáng qua (< 30 phút, như mở cửa xe) -> KHÔNG sinh vi phạm.
+    3. Áp dụng quy tắc Debounce Gap (debounce_gap_minutes = 5 phút):
+       - Hai lần vượt cách nhau <= 5 phút -> gộp liền mạch thành 1 đợt vi phạm duy nhất.
+       - Hai lần vượt cách nhau > 5 phút -> tính là 2 đợt riêng biệt.
+    4. Tự động lưu vết vi phạm vào CSDL (bất biến) nếu auto_save_violations=True.
+    """
+    clean_types = [t.strip() for t in data.product_types if t.strip()]
+    stmt = select(ColdChainThreshold).where(ColdChainThreshold.product_type.in_(clean_types))
+    configs = list(db.scalars(stmt).all())
+    found_types = {c.product_type for c in configs}
+
+    missing = [t for t in clean_types if t not in found_types]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Chưa có cấu hình ngưỡng cho loại sản phẩm: {', '.join(missing)}.",
+        )
+
+    eff_min = max(c.temp_min for c in configs)
+    eff_max = min(c.temp_max for c in configs)
+
+    # Chạy thuật toán lõi S-42
+    raw_violations = evaluate_cold_chain_violations(
+        readings=data.readings,
+        temp_min=eff_min,
+        temp_max=eff_max,
+        breach_window_minutes=data.breach_window_minutes,
+        debounce_gap_minutes=data.debounce_gap_minutes,
+    )
+
+    violation_items: list[ColdChainViolationItem] = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for rv in raw_violations:
+        v_id = None
+        if data.auto_save_violations:
+            violation_record = ColdChainViolation(
+                shipment_code=data.shipment_code,
+                product_types_json=json.dumps(clean_types, ensure_ascii=False),
+                recorded_temperature=rv["peak_temperature"],
+                duration_minutes=rv["duration_minutes"],
+                applied_temp_min=eff_min,
+                applied_temp_max=eff_max,
+                applied_delay_minutes=int(data.breach_window_minutes),
+                violation_reason=rv["reason"],
+                timestamp=now_iso,
+                location=data.location or "Xe lạnh chuyên dụng",
+                started_at=rv["started_at"],
+                ended_at=rv["ended_at"],
+                peak_temperature=rv["peak_temperature"],
+            )
+            db.add(violation_record)
+            db.commit()
+            db.refresh(violation_record)
+            v_id = violation_record.id
+
+        violation_items.append(
+            ColdChainViolationItem(
+                violation_type=rv["violation_type"],
+                severity=rv["severity"],
+                started_at=rv["started_at"],
+                ended_at=rv["ended_at"],
+                duration_minutes=rv["duration_minutes"],
+                peak_temperature=rv["peak_temperature"],
+                threshold_temp=rv["threshold_temp"],
+                reason=rv["reason"],
+                violation_id=v_id,
+            )
+        )
+
+    summary_text = (
+        f"Phân tích {len(data.readings)} mốc đo: Phát hiện {len(violation_items)} vi phạm kéo dài "
+        f"(ngưỡng [{eff_min}°C, {eff_max}°C], cửa sổ vi phạm >= {data.breach_window_minutes}m, debounce gap {data.debounce_gap_minutes}m)."
+    )
+
+    return TelemetryStreamEvaluateResponse(
+        shipment_code=data.shipment_code,
+        product_types=clean_types,
+        applied_temp_min=eff_min,
+        applied_temp_max=eff_max,
+        breach_window_minutes=data.breach_window_minutes,
+        debounce_gap_minutes=data.debounce_gap_minutes,
+        readings_count=len(data.readings),
+        violations_count=len(violation_items),
+        violations=violation_items,
+        summary=summary_text,
     )
 
 
@@ -347,6 +468,9 @@ def list_violations(
                 violation_reason=r.violation_reason,
                 timestamp=r.timestamp,
                 location=r.location,
+                started_at=r.started_at,
+                ended_at=r.ended_at,
+                peak_temperature=r.peak_temperature,
             )
         )
     return result
