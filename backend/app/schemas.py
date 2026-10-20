@@ -8,7 +8,7 @@ Tách riêng schemas (Pydantic) khỏi models (SQLAlchemy) giúp:
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -676,6 +676,9 @@ class TelemetryCheckResponse(BaseModel):
     is_violated: bool
     violation_reason: str | None = None
     violation_id: int | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    peak_temperature: float | None = None
 
 
 class ColdChainViolationResponse(BaseModel):
@@ -695,6 +698,60 @@ class ColdChainViolationResponse(BaseModel):
     violation_reason: str
     timestamp: str
     location: str | None = None
+    # Chi tiết đợt vi phạm theo chuẩn S-42 (bắt đầu, kết thúc, đỉnh)
+    started_at: str | None = None
+    ended_at: str | None = None
+    peak_temperature: float | None = None
+
+
+class ColdChainViolationItem(BaseModel):
+    """Chi tiết đợt vi phạm chuỗi lạnh kéo dài theo chuẩn S-42."""
+
+    violation_type: str
+    severity: str
+    started_at: str
+    ended_at: str
+    duration_minutes: float
+    peak_temperature: float
+    threshold_temp: float
+    reason: str
+    violation_id: int | None = None
+
+
+class TelemetryReadingItem(BaseModel):
+    """Mốc đo nhiệt độ từ cảm biến IoT gửi về."""
+
+    timestamp: str = Field(..., description="Thời điểm ghi nhận (chuỗi thời gian/ISO 8601)")
+    temperature: float = Field(..., description="Nhiệt độ đo được (°C)")
+    humidity: float | None = Field(None, description="Độ ẩm đo được (%)")
+    location: str | None = Field(None, description="Vị trí ghi nhận")
+
+
+class TelemetryStreamEvaluateRequest(BaseModel):
+    """Yêu cầu đánh giá luồng dữ liệu cảm biến IoT theo chuẩn S-42 (Cửa sổ 30m, Debounce 5m)."""
+
+    shipment_code: str = Field(..., min_length=1, max_length=50)
+    product_types: list[str] = Field(..., min_length=1)
+    readings: list[TelemetryReadingItem] = Field(..., min_length=1, description="Danh sách các mốc đo cảm biến")
+    breach_window_minutes: float = Field(default=30.0, ge=0, description="Cửa sổ thời gian liên tục vượt ngưỡng (mặc định 30 phút)")
+    debounce_gap_minutes: float = Field(default=5.0, ge=0, description="Khoảng cách an toàn để gộp vi phạm (mặc định 5 phút)")
+    auto_save_violations: bool = Field(default=True, description="Tự động lưu vi phạm vào CSDL")
+    location: str | None = "Xe lạnh chuyên dụng"
+
+
+class TelemetryStreamEvaluateResponse(BaseModel):
+    """Kết quả phân tích toàn bộ luồng cảm biến theo chuẩn S-42."""
+
+    shipment_code: str
+    product_types: list[str]
+    applied_temp_min: float
+    applied_temp_max: float
+    breach_window_minutes: float
+    debounce_gap_minutes: float
+    readings_count: int
+    violations_count: int
+    violations: list[ColdChainViolationItem]
+    summary: str
 
 
 # ----------------------------------------------------------- Public Tracking Map (S-06) ---

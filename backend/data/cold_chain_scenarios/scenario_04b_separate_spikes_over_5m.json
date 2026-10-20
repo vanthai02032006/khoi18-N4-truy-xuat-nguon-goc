@@ -1,0 +1,81 @@
+{
+  "scenario_id": "SCENARIO_04B_SEPARATE_SPIKES_OVER_5M",
+  "name": "Kịch bản 4B: Hai lần vượt cách xa hơn 5 phút (Tính là 2 vi phạm)",
+  "description": "Hai đợt vượt nhiệt độ độc lập cách xa nhau hơn 5 phút (khoảng cách an toàn 15 phút): Đợt 1 kéo dài 35 phút (12:00 - 12:35, đỉnh 13.5°C >= 30m) -> Vi phạm 1; hạ nhiệt an toàn 15 phút (12:35 - 12:50 ở 4.5°C); Đợt 2 kéo dài 35 phút (12:50 - 13:25, đỉnh 14.0°C >= 30m) -> Vi phạm 2. Do khoảng cách 15m > 5m debounce gap, hệ thống tính là 2 vi phạm độc lập.",
+  "shipment_code": "SHIP-SCENARIO-04B",
+  "product_types": ["Rau lá"],
+  "location": "Trạm dừng nghỉ Phủ Lý - Hà Nam",
+  "expected_violations_count": 2,
+  "breach_window_minutes": 30.0,
+  "debounce_gap_minutes": 5.0,
+  "ground_truth": {
+    "violations_count": 2,
+    "has_breach": true,
+    "gap_between_spikes_minutes": 15.0,
+    "spike_1": {
+      "started_at": "2026-10-20T12:00:00Z",
+      "ended_at": "2026-10-20T12:35:00Z",
+      "duration_minutes": 35.0,
+      "peak_temperature": 13.5
+    },
+    "spike_2": {
+      "started_at": "2026-10-20T12:50:00Z",
+      "ended_at": "2026-10-20T13:25:00Z",
+      "duration_minutes": 35.0,
+      "peak_temperature": 14.0
+    },
+    "explanation": "Khoảng cách giữa 2 đợt là 15 phút (> 5 phút debounce gap), mỗi đợt kéo dài 35 phút (>= 30 phút). Hệ thống ghi nhận đúng 2 vi phạm độc lập."
+  },
+  "readings": [
+    {
+      "timestamp": "2026-10-20T11:50:00Z",
+      "temperature": 4.5,
+      "humidity": 85.0
+    },
+    {
+      "timestamp": "2026-10-20T12:00:00Z",
+      "temperature": 11.5,
+      "humidity": 78.0
+    },
+    {
+      "timestamp": "2026-10-20T12:15:00Z",
+      "temperature": 13.5,
+      "humidity": 74.0
+    },
+    {
+      "timestamp": "2026-10-20T12:35:00Z",
+      "temperature": 12.0,
+      "humidity": 76.0
+    },
+    {
+      "timestamp": "2026-10-20T12:40:00Z",
+      "temperature": 4.5,
+      "humidity": 85.0
+    },
+    {
+      "timestamp": "2026-10-20T12:45:00Z",
+      "temperature": 4.8,
+      "humidity": 84.0
+    },
+    {
+      "timestamp": "2026-10-20T12:50:00Z",
+      "temperature": 11.8,
+      "humidity": 76.0
+    },
+    {
+      "timestamp": "2026-10-20T13:10:00Z",
+      "temperature": 14.0,
+      "humidity": 72.0
+    },
+    {
+      "timestamp": "2026-10-20T13:25:00Z",
+      "temperature": 12.5,
+      "humidity": 75.0
+    },
+    {
+      "timestamp": "2026-10-20T13:35:00Z",
+      "temperature": 5.0,
+      "humidity": 84.0
+    }
+  ]
+}

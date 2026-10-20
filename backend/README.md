@@ -556,4 +556,40 @@ Xem nhanh bảng tài khoản (cột `password` là hash SHA-256, không phải 
 | Sprint 3 | Module **Batch** (quản lý lô nông sản): model `Batch` → bảng `batches` (FK `farm_id` → `farms.id`, quan hệ `Farm 1 ---- N Batch`), schemas `BatchCreate`/`BatchResponse`, router `app/routers/batches.py` với `POST /batches` (**201**, trả **404** nếu `farm_id` không tồn tại), `GET /batches` (**200**) và `GET /batches/{batch_id}` (**200**/**404**). `GET /health`, `POST /farms`, `GET /farms` giữ nguyên. |
 | Sprint 4 | **Đăng nhập + phân quyền cơ bản (không JWT):** model `User` → bảng `users` (`username` unique, mật khẩu băm SHA-256, `role`), `seed_default_users()` tạo sẵn `admin`/`farmer` (mật khẩu `123456`); module `app/security.py` với `hash_password`/`verify_password`/`authenticate_user` và dependency `get_current_user` (**401**), `require_admin` (**403**), `require_farmer`; router `POST /auth/login` (**200**/**401**) và `GET /users` (**200**, chỉ admin); áp `require_farmer` cho `GET /farms`, `POST /farms`, `POST /batches`. Cơ chế xác thực là **HTTP Basic** (Swagger có nút **Authorize**), không token/refresh token. |
 | Sprint 5 | **Hoàn thiện CRUD + phân quyền xoá:** thêm `PUT /farms/{farm_id}` (**200**/**404**/**422**), `DELETE /farms/{farm_id}` (**200**, **chỉ admin**, xoá kèm mọi lô của vùng nhờ `cascade="all, delete-orphan"`), `PUT /batches/{batch_id}` (**200**, **404** nếu lô hoặc `farm_id` mới không tồn tại), `DELETE /batches/{batch_id}` (**200**, **chỉ admin**); schemas `FarmUpdate`/`BatchUpdate` (kế thừa `*Create`) và `DeleteResponse` (`message`, `deleted_id`, `deleted_batches`); `require_admin` áp cho cả 2 endpoint `DELETE`. Frontend: sửa lỗi `[hidden]` bị `display` đè (trước đây dashboard vẫn hiện khi chưa đăng nhập), ẩn toàn bộ dashboard/form khi chưa login, cột **Thao tác** (Sửa cho farmer + admin, Xoá **chỉ admin**), form dùng chung cho thêm/sửa (PUT khi đang sửa) và dashboard 3 thẻ (tổng vùng trồng, tổng lô nông sản, tổng sản lượng kg). |
+| S-41 (Tier Later - 3 SP) | **Giả lập cảm biến IoT & Đối soát vi phạm chuỗi lạnh bằng đáp án biết trước:** Bộ script giả lập cảm biến (`backend/scripts/simulate_sensor_scenarios.py`) đọc chuỗi thời gian & nhiệt độ từ kịch bản JSON, gọi endpoint S-41 (`POST /cold-chain/check-telemetry`) và xác minh với CSDL (`GET /cold-chain/violations`). Kèm 5 kịch bản mẫu chuẩn: (1) Không vượt, (2) Vượt 10 phút, (3) Vượt 45 phút, (4) Hai lần vượt cách nhau 5 phút, (5) Vượt qua nửa đêm. Hỗ trợ chạy in-memory / live API và bộ test tự động `tests/test_sensor_simulation.py`. |
+| S-42 (Tier Later - 5 SP) | **Bộ lọc vi phạm chuỗi lạnh kéo dài (Khử báo động giả mở cửa xe):** Thuật toán `evaluate_cold_chain_violations` trong `backend/app/cold_chain_engine.py`: chỉ vượt ngưỡng liên tục **quá 30 phút** mới tính vi phạm; vượt ngắn (< 30 phút) bị bỏ qua; hai lần vượt cách nhau **dưới 5 phút** (Debounce Gap) được gộp thành 1 vi phạm duy nhất; cách xa hơn 5 phút tính là 2 vi phạm độc lập. Bản ghi vi phạm lưu trữ đầy đủ: mốc bắt đầu (`started_at`), kết thúc (`ended_at`), nhiệt độ đỉnh (`peak_temperature`), thời lượng (`duration_minutes`). Mở rộng endpoint `POST /cold-chain/evaluate-stream` và cập nhật ORM `ColdChainViolation`. |
+
+---
+
+## 8. Hướng dẫn chạy Giả lập Cảm biến IoT & Kiểm chứng Thuật toán S-42
+
+### Quy tắc nghiệp vụ S-42:
+1. **Cửa sổ vi phạm kéo dài (Breach Window > 30 phút):** Vượt ngưỡng liên tục >= 30 phút mới cấu thành vi phạm chuỗi lạnh.
+2. **Khử báo động giả mở cửa xe (< 30 phút):** Các biến động nhiệt tạm thời (ví dụ mở cửa xe dỡ hàng 10-20 phút) rồi trở lại an toàn sẽ không bị tính là vi phạm.
+3. **Cơ chế Debounce Gap 5 phút:** Hai lần vượt cách nhau $\le 5$ phút được gộp liền mạch thành 1 vi phạm; hai lần vượt cách xa hơn 5 phút được tính là 2 vi phạm độc lập.
+4. **Bản ghi vi phạm chi tiết:** Ghi nhận rõ mốc bắt đầu (`started_at`), kết thúc (`ended_at`), nhiệt độ đỉnh (`peak_temperature`).
+
+### Chạy trực tiếp qua dòng lệnh:
+
+```powershell
+# Chế độ In-memory (Mặc định - không cần bật server)
+$env:PYTHONPATH = "backend"
+python backend/scripts/simulate_sensor_scenarios.py
+
+# Xem chi tiết từng mốc đo nhiệt độ của cảm biến
+python backend/scripts/simulate_sensor_scenarios.py -v
+
+# Chạy với server thật đang bật tại port 8000
+python backend/scripts/simulate_sensor_scenarios.py --base-url http://127.0.0.1:8000
+
+# Chạy một kịch bản riêng lẻ
+python backend/scripts/simulate_sensor_scenarios.py --scenario backend/data/cold_chain_scenarios/scenario_03_breach_45m.json
+```
+
+### Chạy bộ kiểm thử tự động (Pytest):
+
+```powershell
+$env:PYTHONPATH = "backend"
+python -m pytest tests/test_cold_chain_thresholds.py tests/test_sensor_simulation.py -v
+```
 

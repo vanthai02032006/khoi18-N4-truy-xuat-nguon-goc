@@ -1,0 +1,55 @@
+{
+  "scenario_id": "SCENARIO_03_BREACH_45M",
+  "name": "Kịch bản 3: Vượt ngưỡng 45 phút (Vi phạm kéo dài)",
+  "description": "Lốc làm lạnh xe tải gặp sự cố, nhiệt độ tăng vọt lên 11.2°C - 14.8°C liên tục trong 45 phút (10:15 đến 11:00). Vì 45 phút >= độ trễ 15 phút, hệ thống ghi nhận đúng 1 vi phạm chuỗi lạnh nghiêm trọng.",
+  "shipment_code": "SHIP-SCENARIO-03",
+  "product_types": ["Rau lá"],
+  "location": "Đèo Hải Vân - Tuyến QL1A",
+  "expected_violations_count": 1,
+  "ground_truth": {
+    "violations_count": 1,
+    "has_breach": true,
+    "breach_duration_minutes": 45.0,
+    "peak_temperature": 14.8,
+    "delay_threshold_minutes": 15.0,
+    "applied_temp_max": 8.0,
+    "explanation": "Nhiệt độ vượt ngưỡng trên (8.0°C) kéo dài liên tục 45 phút, vượt quá độ trễ cho phép 15 phút. Ghi nhận chính xác 1 vi phạm."
+  },
+  "readings": [
+    {
+      "timestamp": "2026-10-20T10:00:00Z",
+      "temperature": 4.5,
+      "humidity": 85.0
+    },
+    {
+      "timestamp": "2026-10-20T10:15:00Z",
+      "temperature": 11.2,
+      "humidity": 78.0
+    },
+    {
+      "timestamp": "2026-10-20T10:30:00Z",
+      "temperature": 13.5,
+      "humidity": 72.0
+    },
+    {
+      "timestamp": "2026-10-20T10:45:00Z",
+      "temperature": 14.8,
+      "humidity": 68.0
+    },
+    {
+      "timestamp": "2026-10-20T11:00:00Z",
+      "temperature": 12.0,
+      "humidity": 74.0
+    },
+    {
+      "timestamp": "2026-10-20T11:10:00Z",
+      "temperature": 6.0,
+      "humidity": 82.0
+    },
+    {
+      "timestamp": "2026-10-20T11:20:00Z",
+      "temperature": 4.8,
+      "humidity": 85.0
+    }
+  ]
+}
